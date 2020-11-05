@@ -28,7 +28,7 @@ The installation is now simple. First, clone columba from the Github address
 
     git clone "https://github.com/biointec/columba.git"
 
-From this directory, run the following commands:
+From the columba directory, run the following commands:
 ```bash
 mkdir build
 cd build
