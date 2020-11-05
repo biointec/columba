@@ -25,14 +25,20 @@
 // CLASS SEARCHSTRATEGY
 // ============================================================================
 
-// This is an abstract class. It has one member: a pointer to a bidirectional
-// bwt. Every concrete derived class should overload the matchApprox
-// memberfunction which matches a pattern approximately using the bidirectional
-// bwt
+// This is an abstract class. Every derived class should be able to create
+// searches for a given value of k. This abstract base class handles the
+// partitioning (either with values provided in the derived class or default
+// uniform values) and approximate matching (either hamming or edit distance)
+
+enum PartitionStrategy { UNIFORM, STATIC, DYNAMIC };
 
 class SearchStrategy;
 typedef void (SearchStrategy::*PartitionPtr)(const std::string&,
                                              std::vector<Substring>&);
+typedef void (SearchStrategy::*StartIdxPtr)(const Search&, const BiAppMatchSA&,
+                                            std::vector<BiAppMatchSA>&,
+                                            std::vector<Substring>&,
+                                            const int&) const;
 
 class SearchStrategy {
   protected:
@@ -47,16 +53,39 @@ class SearchStrategy {
                                                // exact matches of the parts
 
     PartitionPtr partitionPtr; // pointer to the partition method
+    StartIdxPtr
+        startIdxPtr;    // pointer to start method (hamming or edit distance)
     int lastMaxED = -1; // the last maxED so that searches do not need to be
                         // recalculated for next read
 
-    SearchStrategy(BidirecFMIndex* argument, bool uniformRange) {
+    /**
+     * Constructor
+     * @param argument, pointer to the bidirectional FM index to use
+     * @param p, partition strategy
+     * @param edit, true if edit distance should be used, false if hamming
+     * distance should be used
+     */
+    SearchStrategy(BidirecFMIndex* argument, PartitionStrategy p, bool edit) {
         index = argument;
-        if (uniformRange) {
-            partitionPtr = &SearchStrategy::partitionUniformRange;
 
+        switch (p) {
+        case UNIFORM:
+            partitionPtr = &SearchStrategy::partitionUniform;
+            break;
+        case DYNAMIC:
+            partitionPtr = &SearchStrategy::partitionUniformRange;
+            break;
+        case STATIC:
+            partitionPtr = &SearchStrategy::partitionOptimalStatic;
+            break;
+        default:
+            break;
+        }
+
+        if (edit) {
+            startIdxPtr = &SearchStrategy::startIndexEdit;
         } else {
-            partitionPtr = &SearchStrategy::partitionUniformSize;
+            startIdxPtr = &SearchStrategy::startIndexHamming;
         }
     }
 
@@ -104,7 +133,12 @@ class SearchStrategy {
 
         (this->*partitionPtr)(pattern, parts);
     }
-
+    /**
+     * Helper function for optimal static partitioning. This function creates
+     * the optimal static parts
+     * @param pattern, the pattern to partition
+     * @param parts, empty vector to which the parts are added
+     */
     void setParts(const std::string& pattern, std::vector<Substring>& parts) {
         const std::vector<double>& begins = getBegins();
 
@@ -120,16 +154,46 @@ class SearchStrategy {
     }
 
     /**
-     * Splits the pattern into numParts parts, such that each part
-     * has (approximately) the same size. The exactRanges are also set for
-     * these parts.
+     * Splits the pattern into numParts parts, such that each part has the same
+     * size
      * @param pattern the pattern to be split
      * @param parts an empty vector which will be filled with the different
      * parts
      * @param maxED, the maximum allowed edit distance
      */
-    void partitionUniformSize(const std::string& pattern,
-                              std::vector<Substring>& parts) {
+    void partitionUniform(const std::string& pattern,
+                          std::vector<Substring>& parts) {
+
+        for (int i = 0; i < numParts; i++) {
+            parts.emplace_back(pattern, i * pattern.size() / numParts,
+                               (i + 1) * pattern.size() / numParts);
+        }
+        // set end of final part correct
+        parts.back().setEnd(pattern.size());
+
+        // match the exactRanges for each part
+        index->setDirection(FORWARD);
+        SARangePair initialRanges = index->getCompleteRange();
+
+        exactMatchRanges.resize(numParts);
+        std::vector<bool> partNumberSeen(numParts, false);
+
+        for (int i = 0; i < numParts; i++) {
+            exactMatchRanges[i] =
+                index->matchStringBidirectionally(parts[i], initialRanges);
+        }
+    }
+
+    /**
+     * Splits the pattern into numParts parts, such that each search carries the
+     * same weight (on average)
+     * @param pattern the pattern to be split
+     * @param parts an empty vector which will be filled with the different
+     * parts
+     * @param maxED, the maximum allowed edit distance
+     */
+    void partitionOptimalStatic(const std::string& pattern,
+                                std::vector<Substring>& parts) {
 
         setParts(pattern, parts);
 
@@ -146,6 +210,13 @@ class SearchStrategy {
         }
     }
 
+    /**
+     * Function that retrieves the seeding positions for dynamic partitioning.
+     * If derived class does not implement this function then uniform seeds are
+     * given.
+     * @returns vector with doubles indicating the position (relative to the
+     * length of the pattern) where a seed should be placed.
+     */
     virtual std::vector<double> getSeedingPositions() const {
 
         double u = 1.0 / (numParts - 1);
@@ -156,6 +227,12 @@ class SearchStrategy {
         return s;
     }
 
+    /**
+     * Helper function for dynamic partitioning. Seeds the parts.
+     * @param pattern, the pattern to partition
+     * @param parts, empty vector tro which the seeds are added
+     * @returns the number of characters used by the seeding operation
+     */
     int seed(const std::string& pattern, std::vector<Substring>& parts) {
         int pSize = pattern.size();
         int wSize = index->getWordSize();
@@ -185,6 +262,12 @@ class SearchStrategy {
         return numParts * wSize;
     }
 
+    /**
+     * Function that retrieves the weights for dynamic partitioning.
+     * If derived class does not implement this function then uniform weights
+     * are given.
+     * @returns vector with weights
+     */
     virtual std::vector<int> getWeights() const {
         std::vector<int> w(numParts, 1);
         return w;
@@ -265,6 +348,13 @@ class SearchStrategy {
         }
     }
 
+    /**
+     * Helper function for dynamic partitioning. This function extends the parts
+     * so that nothing of the pattern is not allocated to any part. This does
+     * not keep track of the ranges over the suffix array, so should only be
+     * called if this does not matter (e.g. when the parts that can be extended
+     * all correspond to empty ranges)
+     */
     void extendParts(const std::string& pattern,
                      std::vector<Substring>& parts) const {
         for (length_t i = 0; i < parts.size(); i++) {
@@ -282,6 +372,13 @@ class SearchStrategy {
         }
     }
 
+    /**
+     * Function that retrieves the begin postiiions for optimal static
+     * partitioning. If derived class does not implement this function then
+     * uniform positions are given.
+     * @returns vector with doubles indicating the position (relative to the
+     * length of the pattern) where a seed should be placed.
+     */
     virtual const std::vector<double> getBegins() const {
         std::vector<double> b;
         double u = 1.0 / numParts;
@@ -291,7 +388,43 @@ class SearchStrategy {
         return b;
     }
 
-  public:
+    /**
+     * Starts the index with hamming distance
+     * @param s, the search to follow
+     * @param startMatch, the startMatch that corresponds to the first piece
+     * @param occ, vector to add occurrences to
+     * @param parts, the parts of the pattern
+     * @param idx, the index in the search to match next
+     */
+    void startIndexHamming(const Search& s, const BiAppMatchSA& startMatch,
+                           std::vector<BiAppMatchSA>& occ,
+                           std::vector<Substring>& parts,
+                           const int& idx) const {
+        index->recApproxMatchHamming(s, startMatch, occ, parts, idx);
+    }
+
+    /**
+     * Starts the index with edit distance
+     * @param s, the search to follow
+     * @param startMatch, the startMatch that corresponds to the first piece
+     * @param occ, vector to add occurrences to
+     * @param parts, the parts of the pattern
+     * @param idx, the index in the search to match next
+     */
+
+    void startIndexEdit(const Search& s, const BiAppMatchSA& startMatch,
+                        std::vector<BiAppMatchSA>& occ,
+                        std::vector<Substring>& parts, const int& idx) const {
+        index->recApproxMatch(s, startMatch, occ, parts, idx);
+    }
+    /**
+     * Executes the search recursively. If U[0] != 1, then the search will start
+     * at pi[0], else the search will start with idx i and U[i]!=0 and U[j]=0
+     * with j < i
+     * @param s, the search to follow
+     * @param parts, the parts of the pattern
+     * @param allMatches, vector to add occurrences to
+     */
     void doRecSearch(const Search& s, std::vector<Substring>& parts,
                      std::vector<BiAppMatchSA>& allMatches) const {
 
@@ -300,7 +433,7 @@ class SearchStrategy {
             setPartsDirections(s, parts);
             SARangePair startRange = index->getCompleteRange();
             BiAppMatchSA startMatch = makeBiAppMatchSA(startRange, 0, 0);
-            index->recApproxMatch(s, startMatch, allMatches, parts, 0);
+            (this->*startIdxPtr)(s, startMatch, allMatches, parts, 0);
             return;
         }
 
@@ -329,17 +462,27 @@ class SearchStrategy {
             BiAppMatchSA startMatch =
                 makeBiAppMatchSA(startRange, 0, exactLength);
 
-            index->recApproxMatch(s, startMatch, allMatches, parts,
-                                  partInSearch);
+            (this->*startIdxPtr)(s, startMatch, allMatches, parts,
+                                 partInSearch);
         }
     }
 
+  public:
+    /**
+     * Retrieves the name of this strategy, derived classes should set a
+     * meaningful name
+     */
     std::string getName() const {
         return name;
     }
 
+    /**
+     * Mathces a pattern approximately using this strategy
+     * @param pattern, the pattern to match
+     * @param maxED, the maximal allowed edit distance (or  hamming distance)
+     */
     std::vector<AppMatch> matchApprox(const std::string& pattern,
-                                      length_t maxED, std::ofstream& ofs) {
+                                      length_t maxED) {
         index->resetCounters();
 
         if (maxED == 0) {
@@ -373,15 +516,11 @@ class SearchStrategy {
 
         index->reserveStacks(numParts, pattern.length());
         // do all searches
+
         for (const Search& s : searches) {
 
-            length_t nodes = index->getNodes();
             doRecSearch(s, parts, allMatches);
-
-            length_t n = index->getNodes();
-            ofs << n - nodes << "\t";
         }
-        ofs << "\n";
 
         // return all matches mapped to the text
         return index->mapOccurencesInSAToOccurencesInText(allMatches, maxED);
@@ -425,8 +564,7 @@ class KucherovKplus1 : public SearchStrategy {
         {1, 1}, {2, 1, 2}, {1, 1, 1, 1}, {7, 2, 1, 3, 5}};
 
     const std::vector<std::vector<double>> staticPositions = {
-        {0.5}, {0.33, 0.66}, {0.25, 0.50, 0.75}, {0.2, 0.4, 0.6, 0.80}};
-
+        {0.5}, {0.40, 0.66}, {0.26, 0.50, 0.75}, {0.26, 0.46, 0.61, 0.80}};
     void calculateNumParts(unsigned int maxED) {
         numParts = maxED + 1;
     }
@@ -448,8 +586,9 @@ class KucherovKplus1 : public SearchStrategy {
     }
 
   public:
-    KucherovKplus1(BidirecFMIndex* index, bool uniformRange = false)
-        : SearchStrategy(index, uniformRange) {
+    KucherovKplus1(BidirecFMIndex* index, PartitionStrategy p = DYNAMIC,
+                   bool edit = true)
+        : SearchStrategy(index, p, edit) {
         name = "Kucherov K + 1";
     };
 };
@@ -516,8 +655,9 @@ class KucherovKplus2 : public SearchStrategy {
     }
 
   public:
-    KucherovKplus2(BidirecFMIndex* index, bool uniformRange = false)
-        : SearchStrategy(index, uniformRange) {
+    KucherovKplus2(BidirecFMIndex* index, PartitionStrategy p = DYNAMIC,
+                   bool edit = true)
+        : SearchStrategy(index, p, true) {
         name = "Kucherov K + 2";
     };
 };
@@ -572,8 +712,9 @@ class OptimalKianfar : public SearchStrategy {
     }
 
   public:
-    OptimalKianfar(BidirecFMIndex* index, bool uniformRange = false)
-        : SearchStrategy(index, uniformRange) {
+    OptimalKianfar(BidirecFMIndex* index, PartitionStrategy p = DYNAMIC,
+                   bool edit = true)
+        : SearchStrategy(index, p, edit) {
         name = "Optimal Kianfar";
     };
 };
@@ -630,9 +771,9 @@ class O1StarSearchStrategy : public SearchStrategy {
         {11, 10, 1}, {1, 1, 1, 1}, {1, 1, 1, 1, 1}, {1, 2, 2, 2, 2, 1}};
 
     const std::vector<std::vector<double>> staticPositions = {
-        {0.33, 0.66},
-        {0.25, 0.50, 0.75},
-        {0.2, 0.4, 0.6, 0.8},
+        {0.50, 0.96},
+        {0.32, 0.69, 0.9},
+        {0.25, 0.5, 0.75, 0.96},
         {0.16, 0.33, 0.49, 0.66, 0.82}};
 
     const std::vector<double> getBegins() const override {
@@ -647,13 +788,13 @@ class O1StarSearchStrategy : public SearchStrategy {
     }
 
   public:
-    O1StarSearchStrategy(BidirecFMIndex* index, bool uniformRange = false)
-        : SearchStrategy(index, uniformRange) {
+    O1StarSearchStrategy(BidirecFMIndex* index, PartitionStrategy p = DYNAMIC,
+                         bool edit = true)
+        : SearchStrategy(index, p, edit) {
         name = "01*0";
     };
 };
 
-// man best for ed 4 otherwise 01*0
 class ManBestStrategy : public SearchStrategy {
   private:
     const std::vector<Search> ED4 = {
@@ -671,32 +812,27 @@ class ManBestStrategy : public SearchStrategy {
         searches = ED4;
     }
 
-    const std::vector<std::vector<double>> seedingPositions = {
-        {0.94}, {0.5, 0.75}, {0.33, 0.66, 0.88}, {0.39, 0.6, 0.68, 0.9}};
+    const std::vector<double> seedingPositions = {0.39, 0.6, 0.68, 0.9};
 
-    const std::vector<std::vector<int>> weights = {
-        {11, 10, 1}, {1, 1, 1, 1}, {1, 1, 1, 1, 1}, {15, 4, 3, 1, 2, 1}};
+    const std::vector<int> weights = {15, 4, 3, 1, 2, 1};
 
-    const std::vector<std::vector<double>> staticPositions = {
-        {0.33, 0.66},
-        {0.25, 0.50, 0.75},
-        {0.2, 0.4, 0.6, 0.8},
-        {0.16, 0.33, 0.49, 0.66, 0.82}};
+    const std::vector<double> staticPositions = {0.26, 0.48, 0.66, 0.76, 0.96};
 
     const std::vector<double> getBegins() const override {
-        return staticPositions[numParts - 3];
+        return staticPositions;
     }
     std::vector<int> getWeights() const override {
-        return weights[numParts - 3];
+        return weights;
     }
 
     virtual std::vector<double> getSeedingPositions() const override {
-        return seedingPositions[numParts - 3];
+        return seedingPositions;
     }
 
   public:
-    ManBestStrategy(BidirecFMIndex* index, bool uniformRange = false)
-        : SearchStrategy(index, uniformRange) {
+    ManBestStrategy(BidirecFMIndex* index, PartitionStrategy p = DYNAMIC,
+                    bool edit = true)
+        : SearchStrategy(index, p, edit) {
         name = "manbest";
     };
 };
@@ -744,8 +880,9 @@ class PigeonHoleSearchStrategy : public SearchStrategy {
     }
 
   public:
-    PigeonHoleSearchStrategy(BidirecFMIndex* index, bool uniformRange = false)
-        : SearchStrategy(index, uniformRange) {
+    PigeonHoleSearchStrategy(BidirecFMIndex* index,
+                             PartitionStrategy p = DYNAMIC, bool edit = true)
+        : SearchStrategy(index, p, edit) {
         name = "Pigeon";
     };
 };
@@ -780,8 +917,9 @@ class BackTrackStrategyNaive : public SearchStrategy {
         return bwt->approxMatches(pattern, maxED);
     }
 
-    BackTrackStrategyNaive(BidirecFMIndex* index, bool uniformRange = false)
-        : SearchStrategy(index, uniformRange) {
+    BackTrackStrategyNaive(BidirecFMIndex* index, PartitionStrategy p = DYNAMIC,
+                           bool edit = true)
+        : SearchStrategy(index, p, edit) {
         name = "Naive backtracking";
         bwt = (FMIndex*)index;
     };

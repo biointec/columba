@@ -108,7 +108,7 @@ class Alphabet {    // e.g. S = 5 for DNA (A,C,G,T + $)
      * @return character
      */
     char i2c(int cIdx) const {
-        assert(cIdx < S);
+        assert(cIdx < (int)S);
         return indexToChar[cIdx];
     }
 

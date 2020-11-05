@@ -16,208 +16,257 @@
  * You should have received a copy of the GNU Affero General Public License   *
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.     *
  ******************************************************************************/
+
+#include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <vector>
 
-#include "customtypedefs.h"
+#include "bwtrepr.h"
 
-void printHelp() {
+using namespace std;
 
-    std::cout << "Usage: ./columba-build <base filename>\n\n";
-    std::cout << "Following files are required:\n";
-    std::cout << "\t<base filename>.txt: input text T\n";
-    std::cout << "\t<base filename>.sa: suffix array of T\n";
-    std::cout << "\t<base filename>.rev.sa: suffix array of reverse of T\n\n";
+typedef uint32_t length_t;
 
-    std::cout << "Report bugs to luca.renders@ugent.be" << std::endl;
+void showUsage() {
+    cout << "Usage: ./fmidx-build <base filename>\n\n";
+    cout << "Following files are required:\n";
+    cout << "\t<base filename>.txt: input text T\n";
+    cout << "\t<base filename>.sa: suffix array of T\n";
+    cout << "\t<base filename>.rev.sa: suffix array of reverse of T\n\n";
+
+    cout << "Report bugs to jan.fostier@ugent.be" << endl;
 }
 
-void createBWT(const std::string& text, const std::vector<length_t>& sa,
-               std::string& bwt, std::vector<length_t>& counts,
-               std::vector<unsigned char>& indexToChar,
-               std::vector<int>& charToIndex) {
+bool parseArguments(int argc, char* argv[], string& baseFN) {
+    if (argc != 2)
+        return false;
 
-    std::vector<length_t> charToCount(256, 0);
-    bwt.reserve(sa.size());
-
-    for (auto saIt = sa.cbegin(); saIt != sa.cend(); saIt++) {
-        // get the previous character
-        char c;
-        if ((*saIt) != 0) {
-            c = text[*saIt - 1];
-        } else {
-            // if the entry in the suffix array is zero, then the final
-            // character is the special end character
-            c = '$';
-        }
-
-        // append this char to the bwt
-        bwt += c;
-
-        // increase count of c
-        charToCount[c]++;
-    }
-    // create the alphabet
-    std::vector<int> allChars(256, -1);
-    length_t charNumber = 0;
-    for (int c = 0; c < 256; c++) {
-        if (charToCount[(unsigned char)c] > 0) {
-            allChars[(unsigned char)c] = charNumber++;
-            indexToChar.push_back(c);
-        }
-    }
-
-    charToIndex.swap(allChars);
-    counts.swap(charToCount);
+    baseFN = argv[1];
+    return true;
 }
 
-void createIndex(const std::string& name, const std::string& output) {
+void readText(const string& filename, string& buf) {
+    ifstream ifs(filename);
+    if (!ifs)
+        throw runtime_error("Cannot open file: " + filename);
 
-    std::cout << "Read in the textfile " << name << ".txt" << std::endl;
-    std::string text = readString(name + ".txt");
-    if (text[text.size() - 1] == '\n') {
-        text.erase(text.end() - 1);
+    ifs.seekg(0, ios::end);
+    buf.resize(ifs.tellg());
+    ifs.seekg(0, ios::beg);
+    ifs.read((char*)buf.data(), buf.size());
+}
+
+void readSATextMode(const string& filename, vector<length_t>& sa,
+                    size_t saSizeHint) {
+    ifstream ifs(filename);
+    if (!ifs)
+        throw runtime_error("Cannot open file: " + filename);
+
+    sa.reserve(saSizeHint);
+    length_t el;
+    while (ifs >> el)
+        sa.push_back(el);
+}
+
+void readSA(const string& filename, vector<length_t>& sa, size_t saSizeHint) {
+    ifstream ifs(filename, ios::binary);
+    if (!ifs)
+        throw runtime_error("Cannot open file: " + filename);
+
+    ifs.seekg(0, ios::end);
+    size_t numElements = ifs.tellg() / sizeof(length_t);
+
+    if (numElements == saSizeHint) { // file is likely binary
+        sa.resize(ifs.tellg() / sizeof(length_t));
+        ifs.seekg(0, ios::beg);
+        ifs.read((char*)sa.data(), sa.size() * sizeof(length_t));
+    } else { // try to read SA in text mode
+        readSATextMode(filename, sa, saSizeHint);
     }
-    std::cout << "Textsize: " << text.size() << std::endl;
-    std::vector<length_t> sa;
-    bool dollarPresent = text[text.size() - 1] == '$';
-    if (!dollarPresent) {
-        throw std::runtime_error("No sentinel ($) at end of file");
+}
+
+void sanityCheck(const string& T, vector<length_t>& sa) {
+    // check T for correctness
+    if (T.back() == '\n')
+        throw runtime_error("T should end with a \'$\' character, "
+                            "not with a newline");
+
+    if (T.back() != '$')
+        throw runtime_error("T should end with a \'$\' character");
+
+    if (sa.size() != T.size())
+        throw runtime_error("Text and suffix array contain a "
+                            "different number of elements");
+
+    // briefly check the suffix array
+    length_t min = *min_element(sa.begin(), sa.end());
+    length_t max = *max_element(sa.begin(), sa.end());
+
+    if (min == 1 && max == T.size()) { // rebase to [0..T.size()-1]
+        for (auto& el : sa)
+            el--;
+        min--;
+        max--;
     }
 
-    std::cout << "Read in suffix array" << std::endl;
-    try {
-        readArray(name + ".sa", text.size(), sa);
-    } catch (const std::exception& e) {
-        // retry with .1 extensions
-        readArray(name + ".sa.1", text.size(), sa);
+    if (min != 0 || max != T.size() - 1)
+        throw runtime_error("Suffix array must contain numbers between "
+                            "[0 and " +
+                            to_string(T.size() - 1) + "]");
+
+    // check if all numbers in the suffix array are present
+    Bitvec bv(sa.size());
+    for (length_t i : sa)
+        bv[i] = true;
+
+    for (size_t i = 0; i < bv.size(); i++)
+        if (!bv[i])
+            throw runtime_error("Suffix " + to_string(i) +
+                                " seems "
+                                "to be missing from suffix arrray");
+
+    // extra check:
+    //      we could check T to see if the SA correctly sorts suffixes of T
+}
+
+void createFMIndex(const string& baseFN) {
+    // read the text file from disk
+    cout << "Reading " << baseFN << ".txt..." << endl;
+    string T;
+    readText(baseFN + ".txt", T);
+
+    // count the frequency of each characters in T
+    vector<size_t> charCounts(256, 0);
+    for (char c : T)
+        charCounts[(unsigned char)c]++;
+
+    // count the number of unique characters in T
+    int nUniqueChar = 0;
+    for (size_t count : charCounts)
+        if (count > 0)
+            nUniqueChar++;
+
+    cout << "\tText has length " << T.size() << "\n";
+    cout << "\tText has " << nUniqueChar << " unique characters\n";
+
+    if (nUniqueChar > ALPHABET) {
+        cerr << "FATAL ERROR: the number of unique characters in the "
+             << "text exceeds the alphabet size. Please recompile"
+             << "Columba using a higher value for ALPHABET " << endl;
+        exit(EXIT_FAILURE);
     }
 
-    std::cout << "Size of SA: " << sa.size() << std::endl;
-    if (sa.size() != text.size()) {
-        throw std::runtime_error(
-            "The suffix array and text do not have the same size!");
+    if (nUniqueChar < ALPHABET) {
+        cout << "WARNING: the number of unique characters in the "
+             << "text is less than the ALPABET size specified when "
+             << "Columba was compiled. Performance may be affected\n";
     }
 
-    std::cout << "Creating alphabet and BWT" << std::endl;
-    std::string bwt;
+    Alphabet<ALPHABET> sigma(charCounts);
 
-    std::vector<size_t> charToCount(256, 0);
-    bwt.reserve(sa.size());
+    // read the suffix array
+    cout << "Reading " << baseFN << ".sa..." << endl;
+    vector<length_t> SA;
+    readSA(baseFN + ".sa", SA, T.size());
 
-    for (auto saIt = sa.cbegin(); saIt != sa.cend(); saIt++) {
-        // get the previous character
-        char c;
-        if ((*saIt) != 0) {
-            c = text[*saIt - 1];
-        } else {
-            // if the entry in the suffix array is zero, then the final
-            // character is the special end character
-            c = '$';
-        }
+    // perform a sanity check on the suffix array
+    cout << "\tPerforming sanity checks..." << endl;
+    sanityCheck(T, SA);
+    cout << "\tSanity checks OK" << endl;
 
-        // append this char to the bwt
-        bwt += c;
+    // build the BWT
+    cout << "Generating BWT..." << endl;
+    string BWT(T.size(), '\0');
+    for (size_t i = 0; i < SA.size(); i++)
+        if (SA[i] > 0)
+            BWT[i] = T[SA[i] - 1];
+        else
+            BWT[i] = T.back();
 
-        // increase count of c
-        charToCount[c]++;
-    }
-
-    // initialize the alphabet
-    Alphabet<ALPHABET> sigma(charToCount);
-
-    std::cout << "Alphabet contains " << sigma.size() << " characters"
-              << std::endl;
-
-    std::cout << "Writing counts to disk" << std::endl;
-    std::ofstream ofs(output + ".cct", std::ios::binary);
-
-    ofs.write((char*)&charToCount[0], charToCount.size() * sizeof(size_t));
+    ofstream ofs(baseFN + ".bwt");
+    ofs.write((char*)BWT.data(), BWT.size());
     ofs.close();
 
-    std::cout << "Writing BWT to disk" << std::endl;
-    ofs = std::ofstream(output + ".bwt");
-    ofs.write((char*)&bwt[0], bwt.size());
-    ofs.close();
+    cout << "Wrote file " << baseFN << ".bwt\n";
 
-    // create sparse suffix arryas
-    std::cout << "Create sparse versions of the suffix array" << std::endl;
-    for (int saSF = 1; saSF <= 256; saSF *= 2) {
-        std::vector<length_t> spSA((sa.size() + saSF - 1) / saSF);
-
-        for (size_t i = 0; i < spSA.size(); i++) {
-            spSA[i] = sa[i * saSF];
-        }
-
-        ofs = std::ofstream(output + ".sa." + std::to_string(saSF));
-        ofs.write((char*)&spSA[0], spSA.size() * sizeof(length_t));
-
+    // write the character counts table
+    {
+        ofstream ofs(baseFN + ".cct", ios::binary);
+        ofs.write((char*)charCounts.data(), charCounts.size() * sizeof(size_t));
         ofs.close();
-        std::cout << "Wrote sparse file for factor: " << saSF << std::endl;
     }
 
-    // no need for SA anymore
-    sa.clear();
+    cout << "Wrote file " << baseFN << ".cct\n";
 
-    // create occ en cumocc tab
-    std::cout << "Writing occ en cumOcc tables" << std::endl;
-    BWTRepr<5> fwdRepr(sigma, bwt);
-
-    fwdRepr.write(output + ".brt");
-
-    std::cout << "Read reverse sa" << std::endl;
-    std::vector<length_t> revSA;
-    readArray(name + ".rev.sa", text.size(), revSA);
-    if (revSA.size() != text.size()) {
-        throw std::runtime_error(
-            "The reverse suffix array and text do no have the same size!");
-    }
-    std::cout << "Build reverse BWT" << std::endl;
-    std::string revBWT;
-    revBWT.reserve(text.size());
-
-    for (auto saIt = revSA.begin(); saIt != revSA.end(); saIt++) {
-        // get the previous character
-        char c;
-        if ((*saIt) != 0) {
-            c = text[text.size() - *saIt];
-        } else {
-            // if the entry in the suffix array is zero, take the first
-            // character of the text (= final of rev text)
-            c = text[0];
+    // create sparse suffix arrays
+    for (int saSF = 1; saSF <= 128; saSF *= 2) {
+        vector<length_t> spSA((SA.size() + saSF - 1) / saSF);
+        for (size_t i = 0; i < spSA.size(); i++)
+            spSA[i] = SA[i * saSF];
+        string spSAFilename = baseFN + ".sa." + to_string(saSF);
+        {
+            ofstream ofs(spSAFilename);
+            ofs.write((char*)spSA.data(), spSA.size() * sizeof(length_t));
+            ofs.close();
+            cout << "Wrote file: " << spSAFilename << endl;
         }
-
-        // append this char to the reversed bwt
-        revBWT += c;
     }
+    SA.clear();
 
-    std::cout << "Writing reversed occurrences" << std::endl;
-    BWTRepr<ALPHABET> revRepr(sigma, revBWT);
+    // create succint BWT bitvector table
+    BWTRepr<ALPHABET> fwdBWT(sigma, BWT);
+    fwdBWT.write(baseFN + ".brt");
+    cout << "Wrote file: " << baseFN << ".brt" << endl;
 
-    revRepr.write(output + ".rev.brt");
+    BWT.clear();
+
+    // read the reverse suffix array
+    cout << "Reading " << baseFN << ".rev.sa..." << endl;
+    vector<length_t> revSA;
+    readSA(baseFN + ".rev.sa", revSA, T.size());
+
+    // perform a sanity check on the suffix array
+    cout << "\tPerforming sanity checks..." << endl;
+    sanityCheck(T, revSA);
+    cout << "\tSanity checks OK" << endl;
+
+    // build the reverse BWT
+    string rBWT(T.size(), '\0');
+    rBWT.resize(T.size());
+    for (size_t i = 0; i < revSA.size(); i++)
+        if (revSA[i] > 0)
+            rBWT[i] = T[T.size() - revSA[i]];
+        else
+            rBWT[i] = T.front();
+    revSA.clear();
+
+    // create succint reverse BWT bitvector table
+    BWTRepr<ALPHABET> revBWT(sigma, rBWT);
+    revBWT.write(baseFN + ".rev.brt");
+    cout << "Wrote file: " << baseFN << ".rev.brt" << endl;
 }
 
 int main(int argc, char* argv[]) {
+    string baseFN;
 
-    if (argc != 2 && argc != 3) {
-        std::cout << argc;
-        printHelp();
+    if (!parseArguments(argc, argv, baseFN)) {
+        showUsage();
         return EXIT_FAILURE;
     }
 
-    std::string name = argv[1];
-    std::string output = name;
-    if (argc == 3) {
-        output = argv[2];
-    }
+    cout << "Welcome to Columba's index construction!\n";
+    cout << "Alphabet size is " << ALPHABET - 1 << " + 1\n";
 
     try {
-        createIndex(name, output);
+        createFMIndex(baseFN);
     } catch (const std::exception& e) {
-        std::cerr << "Error while creating index: " << e.what() << std::endl;
+        cerr << "Fatal error: " << e.what() << endl;
         return EXIT_FAILURE;
     }
-    std::cout << "successs" << std::endl;
+
+    cout << "Exiting... bye!" << endl;
     return EXIT_SUCCESS;
 }

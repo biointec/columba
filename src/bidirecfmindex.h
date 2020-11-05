@@ -613,10 +613,27 @@ class BidirecFMIndex : public FMIndex {
                         ? &BidirecFMIndex::findRangesWithExtraCharForward
                         : &BidirecFMIndex::findRangesWithExtraCharBackward;
     }
+    /**
+     * Matches a search recursively with a depth first approach (each branch of
+     * the tree is fully examined untill the backtracking condition is met)
+     using hamming distance metric
+     * @param search, the search to folloow
+     * @param startMatch, the approximate match found for all previous partions
+     * of the search
+     * @param occ, a vector with matches of the complete search, if a such a
+     * match is found is a pushed upon this vector
+     * @param idx, the index of the partition to match, defaults to 1 as an
+     * exact search for the zeroth partition is assumed
+     */
+    void recApproxMatchHamming(const Search& s, const BiAppMatchSA& startMatch,
+                               std::vector<BiAppMatchSA>& occ,
+                               const std::vector<Substring>& parts,
+                               const int& idx = 1);
 
     /**
      * Matches a search recursively with a depth first approach (each branch of
      * the tree is fully examined untill the backtracking condition is met)
+     * using the edit distance metric
      * @param search, the search to folloow
      * @param startMatch, the approximate match found for all previous partions
      * of the search

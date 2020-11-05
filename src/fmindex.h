@@ -208,24 +208,24 @@ class FMIndex {
                           int remainingED,
                           const Substring& stringToCheck) const;
 
-    /**
-    * Converts a match in the suffix array to matches in the text. Also
-    * verifies wheter these matches go over a sentinel character. If that
-    is
-    * the case, it is checked if without the sentinel (and characters
-    before or
-    * after it) it still forms a match. This is the match that will be
-    added to the list of matches.
-    *
-    * REMARK: if two sentinels/word delimiting chracter are present in
-    match this is incorrect however for genomes the distance between
-    sentinels is magnitudes larger than the size of the reads, since entrire
-    chromosomes cannot be read in at once
-    *
-    * @param matchInSA the match that will be converted
-    * @param pattern the patter for which this was a match
-    * @param ED the max allowed edit distance
-    */
+     /**
+     * Converts a match in the suffix array to matches in the text. Also
+     * verifies wheter these matches go over a sentinel character. If that
+     is
+     * the case, it is checked if without the sentinel (and characters
+     before or
+     * after it) it still forms a match. This is the match that will be
+     added to the list of matches.
+     *
+     * REMARK: if two sentinels/word delimiting chracter are present in
+     match this is incorrect however for genomes the distance between
+     sentinels is magnitudes larger than the size of the reads, since entrire
+     chromosomes cannot be read in at once
+     *
+     * @param matchInSA the match that will be converted
+     * @param pattern the patter for which this was a match
+     * @param ED the max allowed edicdt distance
+     */
     std::vector<AppMatch> convertToMatchesInText(const AppMatchSA& matchInSA);
 
   public:

@@ -226,9 +226,6 @@ void doBench(vector<pair<string, string>>& reads, BidirecFMIndex* mapper,
          << ED << endl;
     cout.precision(2);
 
-    ofstream f;
-    f.open("metrics.txt");
-
     vector<vector<AppMatch>> matchesPerRead = {};
     matchesPerRead.reserve(reads.size());
 
@@ -245,7 +242,7 @@ void doBench(vector<pair<string, string>>& reads, BidirecFMIndex* mapper,
             cout.flush();
         }
 
-        matches = strategy->matchApprox(read, ED, f);
+        matches = strategy->matchApprox(read, ED);
         auto counters = mapper->getCounters();
 
         nodes.push_back(get<0>(counters));
@@ -256,52 +253,57 @@ void doBench(vector<pair<string, string>>& reads, BidirecFMIndex* mapper,
         matchesPerRead.push_back(matches);
 
         // correctness check, comment this out if you want to check
-        // this is slow
-
+        // For each reported match the reported edit distance is checked and
+        // compared to a recalculated value using a single banded matrix this is
+        // slow
+        // WARNING: this checks the EDIT DISTANCE, for it might be that the
+        // hamming distance is higher
         /*for (auto match : matches) {
-            cout << match.range.begin << endl;
+
             string O = text.substr(match.range.begin,
                                    match.range.end - match.range.begin);
-            cout << O << endl;
+
             int trueED = editDistDP(read, O, ED);
             int foundED = match.editDist;
             if (foundED != trueED) {
-                cout << i;
+                cout << i << "\n";
                 cout << "Wrong ED!!"
                      << "\n";
                 cout << "P: " << read << "\n";
                 cout << "O: " << O << "\n";
                 cout << "true ED " << trueED << ", found ED " << foundED << "\n"
                      << match.range.begin << "\n";
-                cin >> O;
             }
         }*/
 
-        bool originalFound = true;
+        // this block checks if at least one occurrence is found and if the
+        // identifier is a number and then checks if this position is found as a
+        // match (for checking correctness) if you want to check if the position
+        // is found as a match make sure that the identifier of the read is the
+        // position. Out comment this block for the check
+        /* bool originalFound = true;
+         try {
+              length_t pos = stoull(originalPos);
+              originalFound = false;
 
-        // this block checks if the identifier is a number and then checks
-        // if this position is found as a match (for checking correctness)
-        try {
-            length_t pos = stoull(originalPos);
-            originalFound = false;
+              for (auto match : matches) {
 
-            for (auto match : matches) {
+                  if (match.range.begin >= pos - (ED + 2) &&
+                      match.range.begin <= pos + (ED + 2)) {
+                      originalFound = true;
+                      break;
+                  }
+              }
+          } catch (const std::exception& e) {
+              // nothing to do, identifier is  not the orignal position
+          }
 
-                if (match.range.begin >= pos - (ED + 2) &&
-                    match.range.begin <= pos + (ED + 2)) {
-                    originalFound = true;
-                    break;
-                }
-            }
-        } catch (const std::exception& e) {
-            // nothing to do, identifier is  not the orignal position
-        }
-
-        // check if at least one occurrence was found (for reads that were
-        // sampled from actual reference)
-        if (matches.size() == 0 || (!originalFound)) {
-            cout << "Could not find occurrence for " << originalPos << endl;
-        }
+         // check if at least one occurrence was found (for reads that were
+         // sampled from actual reference) Out-cooment this block if you want to
+         // do this.
+         if (matches.size() == 0 || (!originalFound)) {
+              cout << "Could not find occurrence for " << originalPos << endl;
+          }*/
     }
     auto finish = chrono::high_resolution_clock::now();
     chrono::duration<double> elapsed = finish - start;
@@ -321,7 +323,7 @@ void doBench(vector<pair<string, string>>& reads, BidirecFMIndex* mapper,
     cout << "Average total number of reported matches "
          << avgVec(totalreportedmatches) << endl;
     cout << "Total reported matches: " << sum(totalreportedmatches) << "\n";
-    f.close();
+
     size_t lastindex = readsFile.find_last_of(".");
     string rawname = readsFile.substr(0, lastindex);
 
@@ -334,8 +336,11 @@ void showUsage() {
     cout << "  -e  --max-ed\t\tmaximum edit distance [default = 0]\n";
     cout << "  -s  --sa-sparseness\tsuffix array sparseness factor "
             "[default = "
-            "1]\n\n";
-    cout << "  -st  --static\tAdd flag to do static partitioning [default = "
+            "1]\n";
+    cout << "  -p  --partitioning \tAdd flag to do uniform/static/dynamic "
+            "partitioning [default = "
+            "dynamic]\n";
+    cout << "  -h   --hamming\tAdd flag to use hamming distance [default = "
             "false]\n";
     cout << "  -ss --search-scheme\tChoose the search scheme\n  options:\n\t"
          << "kuch1\tKucherov k + 1\n\t"
@@ -344,7 +349,7 @@ void showUsage() {
          << "manbest\t Manual best improvement for kianfar scheme (only for ed "
             "= 4)\n\t"
          << "pigeon\t Pigeon hole scheme\n\t"
-         << "01*0\t01*0 search scheme\n";
+         << "01*0\t01*0 search scheme\n\n";
 
     cout << "[ext]\n"
          << "\tone of the following: fq, fastq, FASTA, fasta, fa";
@@ -381,14 +386,31 @@ int main(int argc, char* argv[]) {
     string maxED = "0";
     string searchscheme = "kuch1";
 
-    bool uniformRange = true;
+    PartitionStrategy pStrat = DYNAMIC;
+    bool edit = true;
 
     // process optional arguments
     for (int i = 1; i < argc - requiredArguments; i++) {
         const string& arg = argv[i];
 
-        if (arg == "-st" || arg == "--static") {
-            uniformRange = false;
+        if (arg == "-p" || arg == "--partitioning") {
+            if (i + 1 < argc) {
+                string s = argv[++i];
+                if (s == "uniform") {
+                    pStrat = UNIFORM;
+                } else if (s == "dynamic") {
+                    pStrat = DYNAMIC;
+                } else if (s == "static") {
+                    pStrat = STATIC;
+                } else {
+                    throw runtime_error(
+                        s + " is not a partitioning option\nOptions are: "
+                            "uniform, static, dynamic");
+                }
+
+            } else {
+                throw runtime_error(arg + " takes 1 argument as input");
+            }
         } else if (arg == "-s" || arg == "--sa-sparseness") {
             if (i + 1 < argc) {
                 saSparse = argv[++i];
@@ -413,6 +435,8 @@ int main(int argc, char* argv[]) {
                 throw runtime_error(arg + " takes 1 argument as input");
             }
 
+        } else if (arg == "-h" || arg == "-hamming") {
+            edit = false;
         }
 
         else {
@@ -434,15 +458,28 @@ int main(int argc, char* argv[]) {
              << endl;
     }
 
-    if (uniformRange) {
-        cout << "Partioning with uniform range\n";
-    } else {
-        cout << "Partioning with uniform size\n";
+    cout << "Partitioning strategy: ";
+    switch (pStrat) {
+    case UNIFORM:
+        cout << "UNIFORM";
+        break;
+    case DYNAMIC:
+        cout << "DYNAMIC";
+        break;
+    case STATIC:
+        cout << "STATIC";
+        break;
+
+    default:
+        break;
     }
- if(ed != 4 && searchscheme == "manbest"){
+    cout << "\n";
+
+    cout << "Using " << (edit ? "edit " : "hamming ") << "distance\n";
+    if (ed != 4 && searchscheme == "manbest") {
         throw runtime_error("manbest only supports 4 allowed errors");
     }
-    
+
     string prefix = argv[argc - 2];
     string readsFile = argv[argc - 1];
 
@@ -457,23 +494,21 @@ int main(int argc, char* argv[]) {
     }
     cout << "Start creation of BWT approximate matcher" << endl;
 
-   
-
     BidirecFMIndex bwt = BidirecFMIndex(prefix, saSF);
 
     SearchStrategy* strategy;
     if (searchscheme == "kuch1") {
-        strategy = new KucherovKplus1(&bwt, uniformRange);
+        strategy = new KucherovKplus1(&bwt, pStrat, edit);
     } else if (searchscheme == "kuch2") {
-        strategy = new KucherovKplus2(&bwt, uniformRange);
+        strategy = new KucherovKplus2(&bwt, pStrat, edit);
     } else if (searchscheme == "kianfar") {
-        strategy = new OptimalKianfar(&bwt, uniformRange);
+        strategy = new OptimalKianfar(&bwt, pStrat, edit);
     } else if (searchscheme == "manbest") {
-        strategy = new ManBestStrategy(&bwt, uniformRange);
+        strategy = new ManBestStrategy(&bwt, pStrat, edit);
     } else if (searchscheme == "01*0") {
-        strategy = new O1StarSearchStrategy(&bwt, uniformRange);
+        strategy = new O1StarSearchStrategy(&bwt, pStrat, edit);
     } else if (searchscheme == "pigeon") {
-        strategy = new PigeonHoleSearchStrategy(&bwt, uniformRange);
+        strategy = new PigeonHoleSearchStrategy(&bwt, pStrat, edit);
     } else {
         // should not get here
         throw runtime_error(searchscheme +
@@ -481,4 +516,5 @@ int main(int argc, char* argv[]) {
     }
     doBench(reads, &bwt, strategy, readsFile, ed);
     delete strategy;
+    cout << "Bye...\n";
 }

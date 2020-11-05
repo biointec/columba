@@ -411,6 +411,58 @@ void BidirecFMIndex::goDeeper(
     }
 }
 
+void BidirecFMIndex::recApproxMatchHamming(const Search& s,
+                                           const BiAppMatchSA& startMatch,
+                                           std::vector<BiAppMatchSA>& occ,
+                                           const std::vector<Substring>& parts,
+                                           const int& idx) {
+
+    const Substring& p = parts[s.order[idx]];
+    const int& pSize = p.size();
+    const Direction& d = s.directions[idx];
+    const int& maxED = s.upperBounds[idx];
+    const int& minED = s.lowerBounds[idx];
+    setDirection(d);
+
+    // create vector
+    std::vector<int> vec(p.size() + 1, 0);
+    vec[0] = startMatch.editDist;
+    auto& stack = stacks[idx];
+
+    pushChildren(startMatch.ranges, stack);
+
+    while (!stack.empty()) {
+        const Node node = stack.back();
+        stack.pop_back();
+
+        // update the vector
+        int row = node.getRow();
+        vec[row] = vec[row - 1] + (node.getCharacter() != p[row - 1]);
+        if (vec[row] > maxED) {
+            // backtrack
+            continue;
+        }
+
+        if (row == pSize) {
+            // end of part
+            if (vec[row] >= minED) {
+                // valid occurrence
+                BiAppMatchSA match = makeBiAppMatchSA(
+                    node.getRanges(), vec[row], startMatch.depth + pSize);
+                if (idx == (int)s.order.size() - 1) {
+                    // end of search
+                    occ.push_back(match);
+                } else {
+                    // contine search
+                    recApproxMatchHamming(s, match, occ, parts, idx + 1);
+                }
+            }
+            continue;
+        }
+        pushChildren(node.getRanges(), stack, row);
+    }
+}
+
 void BidirecFMIndex::pushChildren(const SARangePair& parentRanges,
                                   vector<Node>& stack, int row) {
 
