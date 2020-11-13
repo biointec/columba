@@ -58,6 +58,9 @@ class SearchStrategy {
     int lastMaxED = -1; // the last maxED so that searches do not need to be
                         // recalculated for next read
 
+    PartitionStrategy partitionStrategy;
+    bool isEdit;
+
     /**
      * Constructor
      * @param argument, pointer to the bidirectional FM index to use
@@ -67,7 +70,8 @@ class SearchStrategy {
      */
     SearchStrategy(BidirecFMIndex* argument, PartitionStrategy p, bool edit) {
         index = argument;
-
+        partitionStrategy = p;
+        isEdit = edit;
         switch (p) {
         case UNIFORM:
             partitionPtr = &SearchStrategy::partitionUniform;
@@ -476,6 +480,28 @@ class SearchStrategy {
         return name;
     }
 
+    std::string getPartitioningStrategy() const {
+        switch (partitionStrategy) {
+        case UNIFORM:
+            return "UNIFORM";
+            break;
+        case DYNAMIC:
+            return "DYNAMIC";
+            break;
+        case STATIC:
+            return "STATIC";
+            break;
+
+        default:
+            // should not get here
+            return "";
+        }
+    }
+
+    std::string getEditOrHamming() const {
+        return isEdit ? "EDIT" : "HAMMING";
+    }
+
     /**
      * Mathces a pattern approximately using this strategy
      * @param pattern, the pattern to match
@@ -589,7 +615,7 @@ class KucherovKplus1 : public SearchStrategy {
     KucherovKplus1(BidirecFMIndex* index, PartitionStrategy p = DYNAMIC,
                    bool edit = true)
         : SearchStrategy(index, p, edit) {
-        name = "Kucherov K + 1";
+        name = "KUCHEROV K + 1";
     };
 };
 
@@ -658,7 +684,7 @@ class KucherovKplus2 : public SearchStrategy {
     KucherovKplus2(BidirecFMIndex* index, PartitionStrategy p = DYNAMIC,
                    bool edit = true)
         : SearchStrategy(index, p, true) {
-        name = "Kucherov K + 2";
+        name = "KUCHEROV K + 2";
     };
 };
 
@@ -715,7 +741,7 @@ class OptimalKianfar : public SearchStrategy {
     OptimalKianfar(BidirecFMIndex* index, PartitionStrategy p = DYNAMIC,
                    bool edit = true)
         : SearchStrategy(index, p, edit) {
-        name = "Optimal Kianfar";
+        name = "OPTIMAL KIANFAR";
     };
 };
 
@@ -833,7 +859,7 @@ class ManBestStrategy : public SearchStrategy {
     ManBestStrategy(BidirecFMIndex* index, PartitionStrategy p = DYNAMIC,
                     bool edit = true)
         : SearchStrategy(index, p, edit) {
-        name = "manbest";
+        name = "MANBEST";
     };
 };
 // ============================================================================
@@ -883,7 +909,7 @@ class PigeonHoleSearchStrategy : public SearchStrategy {
     PigeonHoleSearchStrategy(BidirecFMIndex* index,
                              PartitionStrategy p = DYNAMIC, bool edit = true)
         : SearchStrategy(index, p, edit) {
-        name = "Pigeon";
+        name = "PIGEON HOLE";
     };
 };
 

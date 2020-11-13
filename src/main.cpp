@@ -195,7 +195,7 @@ length_t sum(vector<length_t> const& v) {
 void writeToOutput(const string& file, const vector<vector<AppMatch>>& mPerRead,
                    const vector<pair<string, string>>& reads) {
 
-    cout << "Writing to output file..." << endl;
+    cout << "Writing to output file " << file << " ..." << endl;
     ofstream f2;
     f2.open(file);
 
@@ -222,8 +222,10 @@ void doBench(vector<pair<string, string>>& reads, BidirecFMIndex* mapper,
 
     vector<AppMatch> matches;
 
-    cout << "Benchmarking with " << strategy->getName() << " strategy for ED "
-         << ED << endl;
+    cout << "Benchmarking with " << strategy->getName()
+         << " strategy for max distance " << ED << " with "
+         << strategy->getPartitioningStrategy() << " partitioning and using "
+         << strategy->getEditOrHamming() << " distance " << endl;
     cout.precision(2);
 
     vector<vector<AppMatch>> matchesPerRead = {};
@@ -312,17 +314,16 @@ void doBench(vector<pair<string, string>>& reads, BidirecFMIndex* mapper,
 
     cout << "Total duration: " << fixed << elapsed.count() << "s\n";
 
-    cout << "Average nodes: " << avgVec(nodes) << endl;
-    cout << "Total Nodes: " << sum(nodes) << "\n";
-    cout << "Average matrix elements written: " << avgVec(matrixElements)
+    cout << "Average no. nodes: " << avgVec(nodes) << endl;
+    cout << "Total no. Nodes: " << sum(nodes) << "\n";
+    cout << "Average no. matrix elements written: " << avgVec(matrixElements)
          << endl;
-    cout << "Total matrix elements: " << sum(matrixElements) << "\n";
-    cout << "Average number of unique matches: " << avgVec(uniqueMatches)
+    cout << "Total no. matrix elements: " << sum(matrixElements) << "\n";
+    cout << "Average no. unique matches: " << avgVec(uniqueMatches) << endl;
+    cout << "Total no. unique matches: " << sum(uniqueMatches) << "\n";
+    cout << "Average no. reported matches " << avgVec(totalreportedmatches)
          << endl;
-    cout << "Total number unique matches: " << sum(uniqueMatches) << "\n";
-    cout << "Average total number of reported matches "
-         << avgVec(totalreportedmatches) << endl;
-    cout << "Total reported matches: " << sum(totalreportedmatches) << "\n";
+    cout << "Total no. reported matches: " << sum(totalreportedmatches) << "\n";
 
     size_t lastindex = readsFile.find_last_of(".");
     string rawname = readsFile.substr(0, lastindex);
@@ -458,24 +459,6 @@ int main(int argc, char* argv[]) {
              << endl;
     }
 
-    cout << "Partitioning strategy: ";
-    switch (pStrat) {
-    case UNIFORM:
-        cout << "UNIFORM";
-        break;
-    case DYNAMIC:
-        cout << "DYNAMIC";
-        break;
-    case STATIC:
-        cout << "STATIC";
-        break;
-
-    default:
-        break;
-    }
-    cout << "\n";
-
-    cout << "Using " << (edit ? "edit " : "hamming ") << "distance\n";
     if (ed != 4 && searchscheme == "manbest") {
         throw runtime_error("manbest only supports 4 allowed errors");
     }
