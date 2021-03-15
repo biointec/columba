@@ -60,6 +60,7 @@ To build the FM-index run the following command in the `build` folder.
 After installing columba, the columba directory should look like this:
 
     .
+    ├── cmake
     ├── build
     ├── search_schemes
     └── src
@@ -78,6 +79,7 @@ rev genome.hs.chr_21.txt > genome.hs.chr_21.rev.txt
 After reversing the text your directory structure should look like:
 
     .
+    ├── cmake
     ├── build
     ├── example
     |   ├── genome.hs.chr_21.rev.txt
@@ -98,6 +100,7 @@ Where `[pathToRadixSA]` is the path to where you installed radixSA.
 After this operation your directory structure will look like:
 
     .
+    ├── cmake
     ├── build
     ├── example
     |   ├── genome.hs.chr_21.rev.sa
@@ -115,6 +118,7 @@ To build the FM-index, navigate to the `build` folder and run the following comm
 The index files are then written to the same folder. Your directory structure will look like:
  ```
     .
+    ├── cmake
     ├── build
     ├── example 
     |   ├── genome.hs.chr_21.brt
@@ -194,7 +198,8 @@ If you want to align these reads using the Pigeonhole scheme with k = 3 and usin
 ```
 
 After this operation your directory structure will look like:
-```    .
+``` .
+    ├── cmake
     ├── build
     ├── example 
     |   ├── genome.hs.chr_21.brt
@@ -257,7 +262,7 @@ The second line should contain space-seperated integers corresponding to the wei
 ### Folder Structure Example
 Consider a search scheme which supports maximal edit/hamming distances 1, 2 and 4. For distance 1 no static or dynamic partitioning values are known. For distance 2 only static partitioning values are known and for distance 4 both static and dynamic partitioning values are known. The folder structure of this search scheme should look like this:
 
-```    .
+``` .
     ├── 1
     |   ├── searches.txt
     ├── 2 
@@ -328,7 +333,7 @@ w.close()
 
 This python script takes an input name and requested output name. It samples 100 000 reads and writes them to a fastq file [output].fastq, it is assumed that the input file is a fastq file. Of course sampling of the reads can be achieved in a myriad of ways.
 
-The sampled dataset we used for the results in the paper is available at **TODO link to dataset**
+The sampled dataset we used for the results in the paper is available [here](https://github.com/biointec/columba/releases/download/example/sampled_illumina_reads.fastq).
 
 ## Partitioning strategies
 To reproduce the results from table 1, run Columba with `kuch1` as option for search scheme and the different partitioning strategies `[part]` and maximal edit distances `[k]`, from the `build` folder.
@@ -394,7 +399,7 @@ where `[search scheme]` is one of: `kuch2`, `kianfar`, `manbest`, `pigeon`, `01*
 ## Results on PacBio Data
 Table 5 contains results on 100 000 PacBio seeds. These seeds are sampled from  [this PacBio experiment](ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR130/001/SRR1304331/SRR1304331_subreads.fastq.gz).
 
-The sampled dataset we used for the results in the paper is available at **TODO link dataset**.
+The sampled dataset we used for the results in the paper is available [here](https://github.com/biointec/columba/releases/download/example/sampled_pacbio_seeds.fastq)
 To reproduce the results run 
 ```
 ./columba -ss kuch1 -e [k] -partitioning [part] basefile readsfile
