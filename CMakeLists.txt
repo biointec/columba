@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.0)
 
 project(fmindex)
 
-add_executable(columba src/main.cpp src/fmindex.cpp src/bidirecfmindex.cpp src/customtypedefs.cpp src/nucleotide.cpp)
+add_executable(columba src/main.cpp src/fmindex.cpp  src/searchstrategy.cpp src/nucleotide.cpp)
 add_executable(columba_build src/buildIndex.cpp )
 
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pedantic -mpopcnt -std=gnu++11")
@@ -37,6 +37,21 @@ else (SPARSEHASH_FOUND)
             "-DSPARSEHASH_INCLUDE_DIR=<path-to-sparsehash>/include .")
 endif(SPARSEHASH_FOUND)
 
+# check if zlib is present
+find_package(ZLIB)
+if (ZLIB_FOUND)
+    add_definitions(-DHAVE_ZLIB)
+    include_directories(${ZLIB_INCLUDE_DIR})
+endif(ZLIB_FOUND)
+
+target_link_libraries(columba pthread)
+
+if (ZLIB_FOUND)
+        target_link_libraries(columba ${ZLIB_LIBRARY})
+endif (ZLIB_FOUND)
+
 install(TARGETS columba DESTINATION bin)
 install(TARGETS columba_build DESTINATION bin)
+
+
 

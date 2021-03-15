@@ -1,7 +1,7 @@
 /******************************************************************************
  *  Columba: Approximate Pattern Matching using Search Schemes                *
- *  Copyright (C) 2020 - Luca Renders <luca.renders@ugent.be> and             *
- *                       Jan Fostier <jan.fostier@ugent.be>                   *
+ *  Copyright (C) 2020-2021 - Luca Renders <luca.renders@ugent.be> and        *
+ *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
  *  it under the terms of the GNU Affero General Public License as            *
@@ -19,224 +19,1342 @@
 #ifndef FMINDEX_H
 #define FMINDEX_H
 
-#include "bandmatrix.h"
+#include "tkmer.h"
+#include <google/sparse_hash_map>
 
-#include "customtypedefs.h"
+#include "alphabet.h"
+#include "bandmatrix.h"
+#include "bwtrepr.h"
+
 #include <algorithm> //used for sorting
-#include <cstdint>
-#include <fstream>  // used for reading in files
-#include <iostream> // used for printing
-#include <map>      // used to store the static alphabet
-#include <math.h>   //for taking the log
-#include <numeric>  // for summing over vector
-#include <set>
-#include <sstream> // used for splitting strings
+#include <fstream>   // used for reading in files
+#include <iostream>  // used for printing
+#include <map>       // used to store the static alphabet
+#include <math.h>    //for taking the log
+#include <numeric>   // for summing over vector
+#include <sstream>   // used for splitting strings
 #include <string>
 #include <vector>
+
+// compute |a-b| in a safe manner
+template <typename T> T abs_diff(T a, T b) {
+    return a > b ? a - b : b - a;
+}
+
+// ============================================================================
+// (TYPE) DEFINITIONS AND PROTOTYPES
+// ============================================================================
+
+typedef uint32_t length_t;
+
+// ============================================================================
+// CLASS RANGE
+// ============================================================================
+
+class Range {
+  private:
+    length_t begin; // begining of the range
+    length_t end;   // end of the range (non-inclusive)
+
+  public:
+    /**
+     * Constructor
+     * @param b, the beginning of the range
+     * @param e, the end of the range (non-inclusive)
+     */
+    Range(length_t b, length_t e) : begin(b), end(e) {
+    }
+
+    /**
+     * Default constructor, initializes an empty range
+     */
+    Range() : begin(0), end(0) {
+    }
+
+    length_t getBegin() const {
+        return begin;
+    }
+    length_t getEnd() const {
+        return end;
+    }
+    /**
+     * Check if this range is empty
+     * @returns true if the range is empty, false otherwise
+     */
+    bool empty() const {
+        return end <= begin;
+    }
+
+    /**
+     * Gets the width of the range (end - begin)
+     * @returns the width of this range
+     */
+    length_t width() const {
+        return (empty()) ? 0 : end - begin;
+    }
+
+    /**
+     * Operator overloading, two ranges are equal if their begin and end field
+     * are equal
+     */
+    bool operator==(const Range& o) const {
+        return o.getBegin() == begin && o.getEnd() == end;
+    }
+    friend std::ostream& operator<<(std::ostream& os, const Range& r);
+};
+
+/**
+ * Operator overloading. Outputs the range as [begin, end) ot the outputstream
+ * @param output, the output stream
+ * @param r, the range to pring
+ */
+std::ostream& operator<<(std::ostream& output, const Range& r);
+// ============================================================================
+// CLASS TextOccurrence
+// ============================================================================
+class TextOccurrence {
+  private:
+    Range range;        // the range in the text
+    int distance;       // the distance to this range (edit or hamming)
+    std::string output; // the corresponding output for this occurrence (for now
+                        // a custom format)
+
+  public:
+    /**
+     * Constructor
+     * @param range, the range of this occurrence in the text
+     * @param distance, the (edit or hamming) distance to the mapped read of
+     * this occurrence
+     */
+    TextOccurrence(Range range, int distance)
+        : range(range), distance(distance), output() {
+    }
+
+    /**
+     * Generates the output of this occurrence, for now in format:
+     * startposition\twidth\tdistance, where startposition is the
+     * beginning of the textoccurrence, width is the length of this occurrence,
+     * distance is the (edit or hamming) distance to the mapped read
+     * @param reverse flag to indicate if the occurrence was found for the
+     * reverse complement or not
+     */
+    void generateOutput() {
+        output = std::to_string(range.getBegin()) + "\t" +
+                 std::to_string(range.width()) + "\t" +
+                 std::to_string(distance);
+    }
+
+    const Range& getRange() const {
+        return range;
+    }
+    const int& getDistance() const {
+        return distance;
+    }
+
+    const std::string& getOutput() const {
+        return output;
+    }
+
+    /**
+     * Operator overloading for sorting the occurrences.
+     * Occurrences are first sorted on their begin position, then on their
+     * distance and finally on their width
+     */
+    bool operator<(const TextOccurrence& r) {
+        if (range.getBegin() != r.getRange().getBegin()) {
+            return range.getBegin() < r.getRange().getBegin();
+        } else {
+            // begin is equal, better ed is smarter
+            if (distance != r.getDistance()) {
+                return distance < r.getDistance();
+            } else {
+                // shorter read is smaller...
+                return range.width() < r.getRange().width();
+            }
+        }
+    }
+};
+
+// ============================================================================
+// CLASS SARANGEPAIR
+// ============================================================================
+
+/**
+ * A pair of ranges. The first range is range over the suffix array of the text.
+ * The second range is the corresponding range over the suffix array of the
+ * reversed text
+ */
+class SARangePair {
+  private:
+    Range rangeSA;    // the range over the suffix array
+    Range rangeSARev; // the range over the suffix array of the reversed text
+
+  public:
+    /**
+     * Default constructor, creates two empty ranges
+     */
+    SARangePair() : rangeSA(Range()), rangeSARev(Range()) {
+    }
+    SARangePair(Range rangeSA, Range rangeSARev)
+        : rangeSA(rangeSA), rangeSARev(rangeSARev) {
+    }
+
+    const Range& getRangeSA() const {
+        return rangeSA;
+    }
+
+    const Range& getRangeSARev() const {
+        return rangeSARev;
+    }
+    /**
+     * @returns true if the ranges are empty, false otherwise
+     */
+    bool empty() const {
+        return rangeSA.empty();
+    }
+
+    length_t width() const {
+        return rangeSA.width();
+    }
+    /**
+     * Operator overloading
+     * @returns true if this is equal to rhs
+     */
+    bool operator==(const SARangePair& o) const {
+        // only the first range matters as the ranges imply each other
+        return o.getRangeSA() == rangeSA;
+    }
+};
+// ============================================================================
+// CLASS FMPos
+// ============================================================================
+/**
+ * A position in the bidirectional FM-index.
+ */
+class FMPos {
+  protected:
+    SARangePair ranges; // the ranges over the suffix arrays
+    int depth; // the depth of the prefix of the suffixes of this position
+
+  public:
+    /**
+     * Default constructor for empty position (= empty ranges and depth of zero)
+     */
+    FMPos() : ranges(SARangePair()), depth(0) {
+    }
+
+    FMPos(SARangePair& ranges, int depth) : ranges(ranges), depth(depth) {
+    }
+
+    const SARangePair& getRanges() const {
+        return ranges;
+    }
+
+    const int& getDepth() const {
+        return depth;
+    }
+
+    void setRanges(SARangePair ranges) {
+        this->ranges = ranges;
+    }
+
+    void setDepth(int depth) {
+        this->depth = depth;
+    }
+
+    /**
+     * Operator overloading, two FMPos are equal if their ranges and depth are
+     * equal
+     * @param rhs the FMPos to compare to this
+     * @returns true if this is equal to rhs
+     */
+    bool operator==(const FMPos& rhs) const {
+        return ranges == rhs.getRanges() && depth == rhs.getDepth();
+    }
+    /**
+     * @returns true if the ranges are not empty, false otherwise
+     */
+    bool isValid() const {
+        return !ranges.empty();
+    }
+};
+// ============================================================================
+// CLASS FMOcc
+// ============================================================================
+
+/**
+ * An occurrence in the bidirectional FM-index
+ */
+class FMOcc {
+  private:
+    FMPos pos;      // The FM position of this occurrence
+    int distance;   // the distance (hamming or edit)
+    length_t shift; // A right-sift to the corresponding positions in the text
+
+  public:
+    FMOcc() : pos(), distance(0), shift(0) {
+    }
+    /**
+     * Make a biderictional approximate match in the suffix array
+     * @param ranges the ranges of this approximate match (range in SA and in
+     * SA')
+     * @param distance the (edit or hamming) distance of this approximate match
+     * @param depth the depth (=length) of this approximate match
+     * @param shift The right shift to the corresponding positions in the text,
+     * defaults to zero
+     */
+    FMOcc(SARangePair ranges, int distance, int depth, int shift = 0)
+        : pos(ranges, depth), distance(distance), shift(shift) {
+    }
+    /**
+     * Make a biderictional approximate match in the suffix array
+     * @param pos, the position in the FMIndex of this approximate match
+     * @param distance the (edit or hamming) distance of this approximate match
+     * @param shift The right shift to the corresponding positions in the text,
+     * defaults to zero
+     */
+    FMOcc(FMPos pos, int distance, int shift = 0)
+        : pos(pos), distance(distance), shift(shift) {
+    }
+
+    const SARangePair& getRanges() const {
+        return pos.getRanges();
+    }
+    const int& getDistance() const {
+        return distance;
+    }
+
+    const int& getDepth() const {
+        return pos.getDepth();
+    }
+
+    const length_t& getShift() const {
+        return shift;
+    }
+
+    void setRanges(SARangePair ranges) {
+        pos.setRanges(ranges);
+    }
+
+    void setDistance(int distance) {
+        this->distance = distance;
+    }
+
+    void setDepth(int depth) {
+        pos.setDepth(depth);
+    }
+    /**
+     * @returns true if the position is valid, false otherwise
+     */
+    bool isValid() const {
+        return pos.isValid();
+    }
+    /**
+     * Operator overloading to sort FMOcc
+     * First the FMOcc are sorted on the begin of the range over the suffix
+     * array of their position Then they are sorted on their distance
+     * Lastly they are sorted on the width of their ranges
+     * @param rhs the FMOcc to compare to this
+     * @returns true if this is smaller than rhs
+     */
+    bool operator<(const FMOcc& rhs) const {
+        if (pos.getRanges().getRangeSA().getBegin() !=
+            rhs.getRanges().getRangeSA().getBegin()) {
+            return getRanges().getRangeSA().getBegin() <
+                   rhs.getRanges().getRangeSA().getBegin();
+        } else {
+            // begin is equal, better ed is smarter
+            if (distance != rhs.getDistance()) {
+                return distance < rhs.getDistance();
+            } else {
+                // shorter read is smaller...
+                return getRanges().width() < rhs.getRanges().width();
+            }
+        }
+    }
+    /**
+     * Operator overlading
+     * Two FMocc are equal if their ranges, distance and depth are all equal
+     * @param returns true if this is equal to rhs
+     */
+    bool operator==(const FMOcc& rhs) {
+        return getRanges() == rhs.getRanges() &&
+               distance == rhs.getDistance() && getDepth() == rhs.getDepth();
+    }
+    friend std::ostream& operator<<(std::ostream& os, const FMOcc& biocc);
+};
+
+// ============================================================================
+// CLASS FMPosExt
+// ============================================================================
+/**
+ * A single node in the bidirectional FM-index. Its depth is the depth from the
+ * startmatch for a particular phase of a search
+ */
+class FMPosExt : public FMPos {
+  private:
+    char c;                // the character of this node
+    bool reported = false; // has this particular node already reported?
+  public:
+    /**
+     * Create a node of the search tree
+     * @param character the character of this node
+     * @param ranges the ranges over the suffix and reversed suffix array
+     * that go to this node
+     * @param row the row of this node in the allignment matrix = depth of
+     * this node
+     */
+    FMPosExt(char character, SARangePair ranges, length_t row)
+        : FMPos(ranges, row), c(character), reported(false) {
+    }
+
+    /**
+     * Default constructor, this Node will have empty ranges
+     */
+    FMPosExt() : FMPos(), c(char(0)) {
+    }
+
+    /**
+     * Sets the report flag to true
+     */
+    void report() {
+        reported = true;
+    }
+
+    /**
+     * Reports the match (with added depth) at this node,
+     * @param occ the match will be stored here
+     * @param startDepth the depth to add to the match
+     * @param EDFound the found edit distance for this node
+     * @param noDoubleReports false if this node is allowed to report more than
+     * once, defaults to false
+     * @param shift, right shift of the matche, defaults to zero
+     */
+    void report(FMOcc& occ, const length_t& startDepth, const length_t& EDFound,
+                const bool& noDoubleReports = false, length_t shift = 0) {
+        if (!reported) {
+            occ = FMOcc(getRanges(), EDFound, depth + startDepth, shift);
+
+            // if finalPiece, report only once
+            if (noDoubleReports) {
+                report();
+            }
+        }
+    }
+
+    /**
+     * Gets the ranges of this node
+     * @returns the ranges of this node
+     */
+    const SARangePair& getRanges() const {
+        return ranges;
+    }
+
+    /**
+     * Get the character of this node
+     * @returns the character of this node
+     */
+    const char getCharacter() const {
+        return c;
+    }
+
+    /**
+     * Get the row of this node
+     * @returns the row of this node
+     */
+    unsigned int getRow() const {
+        return depth;
+    }
+};
+
+/**
+ * An enum for the direction of the search
+ */
+enum Direction { FORWARD, BACKWARD };
+
+// ============================================================================
+// CLASS CLUSTER
+// ============================================================================
+
+class Cluster {
+  private:
+    std::vector<int> eds;        // the edit distances of this cluster
+    std::vector<FMPosExt> nodes; // the nodes of this cluster
+
+    int lastCell;   // the lastCell of the cluster that was filled in
+    int maxED;      // the maxEd for this cluster
+    int startDepth; // the startdepth for this cluster (= depth of match before
+                    // matrix of this cluster)
+
+    int shift; // the right shift of the occurrences in the text
+  public:
+    /**
+     * Constructor
+     * @param size, the size of the cluster
+     * @param maxED, the maximal allowed edit distance
+     * @param startDepth, the depth before this cluster
+     * @param shift, the right shift of the occurrences in the text
+     */
+    Cluster(int size, int maxED, int startDepth, int shift)
+        : eds(size, maxED + 1), nodes(size), lastCell(-1), maxED(maxED),
+          startDepth(startDepth), shift(shift) {
+    }
+
+    /**
+     * Sets the ed and node at index idx to ed and node. Also updates lastCell
+     * to be idx
+     * @param idx, the idx to change
+     * @param node, the node to set at index idx
+     * @param ed, the ed to set at index idx
+     */
+    void setValue(int idx, const FMPosExt& node, const int& ed) {
+        eds[idx] = ed;
+        nodes[idx] = node;
+        lastCell = idx;
+    }
+
+    /**
+     * Returns the size of this cluster
+     */
+    const unsigned int size() const {
+        return eds.size();
+    }
+
+    /**
+     * @returns vector with all nodes in the cluster that are a centre and under
+     * the maximal allowed distance, be aware that if there are multiple centers
+     * in the cluster it is very likely that only one of them will be
+     * non-redundant, but the others might eliminate another occurrence
+     */
+    std::vector<FMOcc> reportCentersAtEnd() {
+
+        std::vector<FMOcc> centers;
+
+        for (int i = 0; i <= lastCell; i++) {
+            if (eds[i] <= maxED && (i == 0 || eds[i] <= eds[i - 1]) &&
+                (i == lastCell || eds[i] <= eds[i + 1])) {
+                FMOcc m;
+                nodes[i].report(m, startDepth, eds[i], true, shift);
+                centers.emplace_back(m);
+            }
+        }
+        return centers;
+    }
+
+    /**
+     * @returns approximate match that corresponds to the ranges of the deepest
+     * global minimum of this cluster, but with the depth of the highest global
+     * minimum of this cluster If the direction is backward a shift will be set
+     * such that the occurrence in the text will be as short as possible
+     *
+     */
+    FMOcc reportDeepestMinimum(Direction dir) {
+        int minED = maxED + 1;
+        int highestBestIdx = -1;
+        int deepestBestIdx = -1;
+
+        for (int i = 0; i <= lastCell; i++) {
+            if (eds[i] < minED) {
+                minED = eds[i];
+                highestBestIdx = i;
+                deepestBestIdx = i;
+            }
+            if (eds[i] == minED) {
+                deepestBestIdx = i;
+            }
+        }
+        FMOcc m;
+        if (minED <= maxED) {
+            nodes[deepestBestIdx].report(
+                m, startDepth - (deepestBestIdx - highestBestIdx), minED, true,
+                ((dir == BACKWARD) ? (deepestBestIdx - highestBestIdx) : 0) +
+                    shift);
+        }
+        return m;
+    }
+
+    /**
+     * This method returns a match that corresponds to the highest cluster
+     * centre. Its descendants and the corresponding initalization eds are
+     * updated. Eds of descendants that are part of a cluster centre which is
+     * lower than the lowerbound will be updated in the initEds vector
+     * @param lowerBound, the lowerbound for this iteration
+     * @param desc, the descendants of the highest cluster centre, these will be
+     * inserted during the method
+     * @param initEds, the initialization eds for the next iteration, these
+     * correspond to the eds of the highest centre and its descendants, where
+     * eds part of a cluster of which the centre is below the lowerbound are
+     * updated. These values will be inserted during the method
+     * @returns The occurrence corresponding to the upper cluster centre which
+     * has a valid distance
+     */
+    FMOcc getClusterCentra(int lowerBound, std::vector<FMPosExt>& desc,
+                           std::vector<int>& initEds) {
+        desc.reserve(eds.size());
+        initEds.reserve(eds.size());
+        FMOcc m;
+        for (int i = 0; i <= lastCell; i++) {
+            if (eds[i] > maxED || eds[i] < lowerBound) {
+                continue;
+            }
+            bool betterThanParent = (i == 0) || eds[i] <= eds[i - 1];
+            bool betterThanChild = (i == lastCell) || eds[i] <= eds[i + 1];
+
+            if (betterThanParent && betterThanChild) {
+                // this is a valid centre
+                nodes[i].report(m, startDepth, eds[i], false, shift);
+
+                // get all the descendants
+                initEds.push_back(eds[i]);
+                for (int j = i + 1; j <= lastCell; j++) {
+                    desc.push_back(nodes[j]);
+                    initEds.push_back(eds[j]);
+                }
+
+                // replace the clusters under the lowerbound
+                for (unsigned int k = 1; k < initEds.size(); k++) {
+                    if (initEds[k] < lowerBound &&
+                        initEds[k] <= initEds[k - 1] &&
+                        (k == initEds.size() - 1 ||
+                         initEds[k] <= initEds[k + 1])) {
+                        // this is a centre under the lowerbound
+
+                        unsigned int highestPoint = k;
+                        unsigned int lowestPoint = initEds.size() - 1;
+                        // find highest point of this cluster
+                        for (unsigned int l = k - 1; l > 0; l--) {
+                            if (initEds[l] != initEds[l - 1] - 1) {
+                                highestPoint = l;
+                                break;
+                            }
+                        }
+                        // replace values higher than centre
+                        for (unsigned int l = highestPoint; l <= k; l++) {
+                            initEds[l] = initEds[l - 1] + 1;
+                        }
+
+                        // find lowest point of this cluster
+                        for (unsigned int l = k; l < initEds.size() - 1; l++) {
+                            if (initEds[l] != initEds[l + 1] - 1) {
+                                lowestPoint = l;
+                                break;
+                            }
+                        }
+
+                        // replace values below centre
+                        int increase = -1;
+                        if (lowestPoint == initEds.size() - 1) {
+                            increase = 1;
+                        }
+                        for (unsigned int l = k + 1; l <= lowestPoint; l++) {
+                            initEds[l] = initEds[l - 1] + increase;
+                        }
+                    }
+                }
+                // stop searching
+                break;
+            }
+        }
+
+        return m;
+    }
+};
+
+// ============================================================================
+// CLASS SUBSTRING
+// ============================================================================
+class Substring {
+  private:
+    const std::string* text; // pointer to the string this is a substring of
+    unsigned int startIndex; // the startIndex of this substring in the text
+    unsigned int
+        endIndex; // the endIndex of this substring in the text (non-inclusive)
+    Direction d;  // The direction of this substring
+
+  public:
+    /**
+     * Constructor, the start and end index default ot 0 and the size of the
+     * text
+     * @param t, the text to point to
+     * @param dir, the direction (defaults to FORWARD)
+     */
+    Substring(const std::string& t, Direction dir = FORWARD)
+        : startIndex(0), endIndex(t.size()), d(dir) {
+        text = &t;
+    }
+
+    /**
+     * Constructor, the direction defaults to FORWARD
+     * @param t, the text to point to
+     * @param start, the start index of this substring in t
+     * @param end, the end index of this substring in t (non-inclusive)
+     * @param dir, the direction (defaults to FORWARD)
+     */
+    Substring(const std::string* t, unsigned int start, unsigned int end,
+              Direction dir = FORWARD)
+        : text(t), startIndex(start), endIndex(end), d(dir) {
+    }
+
+    /**
+     * Constructs a substring of the text another substrin points to
+     * @param s, pointer to the other substring
+     * @param start, the start index of this new substring in the original text
+     * @param end, the end index of this new stubstring
+     */
+    Substring(const Substring* s, unsigned int start, unsigned int end)
+        : startIndex(start), endIndex(end) {
+        text = s->text;
+        d = s->d;
+    }
+    /**
+     * Constructs a substring of the text another substrin points to
+     * @param s, the other substring
+     * @param start, the start index of this new substring in the original text
+     * @param end, the end index of this new stubstring
+     */
+    Substring(const Substring& s, unsigned int start, unsigned int end)
+        : startIndex(start), endIndex(end) {
+        text = s.text;
+        d = s.d;
+    }
+
+    /**
+     * Set the direction of this substring
+     * @param nd, the new direction
+     */
+    void setDirection(Direction nd) {
+        d = nd;
+    }
+
+    /**
+     * Creates a substring of a substring, skipping the first skip characters
+     * (relative to the direction)
+     * @param skip, the number of characters to skip
+     */
+    const Substring getSubPiece(unsigned int skip) const {
+        if (d == FORWARD) {
+            return Substring(this, startIndex + skip, endIndex);
+        } else {
+            return Substring(this, startIndex, endIndex - skip);
+        }
+    }
+
+    /**
+     * Get the character at index i of this substring
+     * @param i the index to get the character from
+     * @returns the character at index i
+     */
+    char operator[](int i) const {
+        return (d == FORWARD) ? text->at(startIndex + i)
+                              : text->at(endIndex - 1 - i);
+    }
+
+    /**
+     * Get the size of this substring
+     * @returns the size of this substring
+     */
+    unsigned int size() const {
+        if (empty()) {
+            return 0;
+        }
+        return endIndex - startIndex;
+    }
+
+    /**
+     * Get the length of this substring (equals the size)
+     * @returns the length of this substring
+     */
+    unsigned int length() const {
+        return size();
+    }
+
+    /**
+     * Check if this substring is empty
+     * @returns a bool that indicates wheter the substring was empty
+     */
+    bool empty() const {
+        return endIndex <= startIndex;
+    }
+
+    /**
+     * Get the end of this substring
+     * @returns the end Index of this substring (non-inclusive)
+     */
+    unsigned int end() const {
+        return endIndex;
+    }
+
+    /**
+     * Get the begin of this substring
+     * @returns the begin index of the substring
+     */
+    unsigned int begin() const {
+        return startIndex;
+    }
+
+    Substring& operator=(const Substring& other) {
+        this->text = other.text;
+        this->startIndex = other.begin();
+        this->endIndex = other.end();
+        this->d = other.d;
+
+        return *this;
+    }
+
+    /**
+     * Converts the Substring to a c++ string
+     * @returns, the Substring as a c++ string
+     */
+    std::string tostring() const {
+        if (empty()) {
+            return "";
+        }
+        return text->substr(startIndex, endIndex - startIndex);
+    }
+
+    void setEnd(unsigned int newEnd) {
+        endIndex = newEnd;
+    }
+
+    void setBegin(unsigned int n) {
+        startIndex = n;
+    }
+
+    void incrementEnd() {
+        endIndex++;
+    }
+
+    void decrementBegin() {
+        startIndex--;
+    }
+};
+
+// ============================================================================
+// CLASS SEARCH
+// ============================================================================
+class Search {
+  private:
+    std::vector<int> lowerBounds;      // the vector with lowerbounds
+    std::vector<int> upperBounds;      // the vector with upperbounds
+    std::vector<int> order;            // the vector with the order of the parts
+    std::vector<Direction> directions; // the directions of each phase
+    std::vector<bool>
+        directionSwitch; // has the direction switched for each phase
+
+    Search(std::vector<int>& order, std::vector<int>& lowerBounds,
+           std::vector<int>& upperBounds, std::vector<Direction>& directions,
+           std::vector<bool>& dSwitch)
+        : lowerBounds(lowerBounds), upperBounds(upperBounds), order(order),
+          directions(directions), directionSwitch(dSwitch) {
+    }
+
+  public:
+    /**
+     * Static function to construct a search. The directions and switches of the
+     * search are calculated
+     * @param order, the order of the search
+     * @param lowerBounds, the lowerbounds of the search
+     * @param upperBounds, the upperbounds of the search
+     */
+    static Search makeSearch(std::vector<int> order,
+                             std::vector<int> lowerBounds,
+                             std::vector<int> upperBounds) {
+        // check correctness of sizes
+        if (order.size() != lowerBounds.size() ||
+            order.size() != upperBounds.size()) {
+            throw std::runtime_error("Could not create search, the sizes of "
+                                     "all vectors are not equal");
+        }
+
+        // compute the directions
+        std::vector<Direction> directions;
+        directions.reserve(order.size());
+        directions.push_back((order[1] > order[0]) ? FORWARD : BACKWARD);
+
+        for (length_t i = 1; i < order.size(); i++) {
+            Direction d = (order[i] > order[i - 1]) ? FORWARD : BACKWARD;
+            directions.push_back(d);
+        }
+
+        // compute the directionswitches
+        std::vector<bool> directionSwitch;
+        directionSwitch.reserve(order.size());
+        // first partition is not a swithc
+        directionSwitch.push_back(false);
+
+        // second partition is never a switch
+        // TODO check in case of Kianfar
+        directionSwitch.push_back(false);
+
+        // add the other partitions
+        for (length_t i = 2; i < directions.size(); i++) {
+            directionSwitch.push_back(directions[i] != directions[i - 1]);
+        }
+
+        return Search(order, lowerBounds, upperBounds, directions,
+                      directionSwitch);
+    }
+
+    /**
+     * Sets the directions of the parts to the directions of the search
+     * @param parts, the parts to set the direction of
+     */
+    void setDirectionsInParts(std::vector<Substring>& parts) const {
+        // set the directions for the parts
+        for (length_t i = 0; i < order.size(); i++) {
+            parts[order[i]].setDirection(directions[i]);
+        }
+    }
+
+    /**
+     * @returns the lowerbound for the idx'th part
+     */
+    int getLowerBound(int idx) const {
+        assert(idx < (int)lowerBounds.size());
+        return lowerBounds[idx];
+    }
+
+    /**
+     * @returns the upperbound for the idx'th part
+     */
+    int getUpperBound(int idx) const {
+        assert(idx < (int)upperBounds.size());
+        return upperBounds[idx];
+    }
+    /**
+     * @returns  the idx'th part
+     */
+    int getPart(int idx) const {
+        assert(idx < (int)order.size());
+        return order[idx];
+    }
+
+    /**
+     * @returns the direction for the idxith part
+     */
+    Direction getDirection(int idx) const {
+        assert(idx < (int)directions.size());
+        return directions[idx];
+    }
+    /**
+     * @returns if the direction switches at the idxth part
+     */
+    bool getDirectionSwitch(int idx) const {
+        assert(idx < (int)directionSwitch.size());
+        return directionSwitch[idx];
+    }
+
+    /**
+     * Get the number of parts in this search
+     * @return the number of parts
+     */
+    int getNumParts() const {
+        return order.size();
+    }
+
+    /**
+     * Checks if the idxth part is the first or last part of pattern
+     * @returns true if the idxth part is the first or last part, false
+     * otherwise
+     */
+    bool isEdge(int idx) const {
+        return order[idx] == 0 || order[idx] == getNumParts() - 1;
+    }
+
+    /**
+     * Checks if the idxth part is the final part of the search
+     * @returns true if idx is the final part of the search, false otherwise
+     */
+    bool isEnd(int idx) const {
+        return idx == (int)order.size() - 1;
+    }
+
+    bool connectivitySatisfied() const {
+        int highestSeen = order[0];
+        int lowestSeen = order[0];
+        for (length_t i = 1; i < order.size(); i++) {
+            if (order[i] == highestSeen + 1) {
+                highestSeen++;
+            } else if (order[i] == lowestSeen - 1) {
+                lowestSeen--;
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool noDecreasingInBounds() const {
+        for (length_t i = 1; i < order.size(); i++) {
+            if (lowerBounds[i] < lowerBounds[i - 1]) {
+                return false;
+            }
+            if (upperBounds[i] < upperBounds[i - 1]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool zeroBased() const {
+        return *std::min(order.begin(), order.end()) == 0;
+    }
+};
+/**
+ * Operator overloading. Outputs the search to the outputstream
+ * @param os, the output stream
+ * @param obj, the search to print
+ */
+std::ostream& operator<<(std::ostream& os, const Search& obj);
 
 // ============================================================================
 // CLASS FMIndex
 // ============================================================================
 
-//
+class FMIndex;
+typedef bool (FMIndex::*ExtraCharPtr)(length_t, const SARangePair&,
+                                      SARangePair&) const;
 
 class FMIndex {
-  protected:
-    // define the special end character
-    static const char DOLLAR = '$';
+  private:
+    // info about the text
+    const std::string baseFile; //  The basefile of the reference text
+    length_t textLength;        // the length of the text
 
-    // alphabet that is used (ASCII or DNA)
+    Alphabet<ALPHABET> sigma; // the alphabet
 
-    Alphabet<ALPHABET> sigma;
+    // info about the suffix array
     length_t sparseFactorSA =
         32; // the sparseness factor of the suffix array, defaults to 32
-
     int logSparseFactorSA = 5; // the log of the sparse factor
 
-    std::string bwt;            // the bwt string of the reference genome
-    std::vector<size_t> counts; // the counts array of the reference genome
+    // bidirectional fm index data structures
+    std::string bwt;              // the bwt string of the reference genome
+    std::vector<length_t> counts; // the counts array of the reference genome
     std::vector<length_t>
         sa; // the (sparse) suffix array of the reference genome
-    BWTRepr<ALPHABET> fwdRepr; // the prefix occurences table
+    BWTRepr<ALPHABET> fwdRepr; // the baseFile occurences table
+    BWTRepr<ALPHABET> revRepr; // the baseFile occurences of the rev BWT
 
-    const std::string
-        prefix; // remember the prefix for retrieving the text again
-    length_t textLength = 0;
+    // performance counters
+    thread_local static length_t nodeCounter;
+    thread_local static length_t matrixElementCounter;
+    thread_local static length_t positionsInPostProcessingCounter;
 
-    length_t nodeCounter = 0; // a nodeCounter for counting how many nodes are
-                              // visited during a specific matching procedure
-    length_t matrixElementCounter =
-        0; // a counter for counting how many matrix elements are filled in
-    length_t positionsInPostProcessingCounter =
-        0; // a counter that checks how many start positions were reported
-           // (= length of all reported ranges over the suffix array)
+    // direction variables
+    thread_local static Direction dir; // the direction of the index
+    thread_local static ExtraCharPtr
+        extraChar; // pointer to extra char method (for direction)
+
+    // stacks for search schemes
+    thread_local static std::vector<std::vector<FMPosExt>>
+        stacks; // stacks of nodes for the different partitions
+
+    // sparse hash info
+    static const size_t wordSize =
+        4; // the size the mers to be stored in a table
+    google::sparse_hash_map<Kmer, SARangePair, KmerHash>
+        table; // hashtable that contains all wordSize-mers
 
     // ----------------------------------------------------------------------------
-    // INITIALIZATION ROUTINES
+    // PREPROCESSING ROUTINES
     // ----------------------------------------------------------------------------
+
     /**
      * Private helper function that reads in all the necessary files
-     * @param prefix the prefix of the files that will be read in
+     * @param baseFile the baseFile of the files that will be read in
+     * @param verbose if true the steps will we written to cout
      */
-    void fromFiles(const std::string& prefix);
+    void fromFiles(const std::string& baseFile, bool verbose);
+
+    /**
+     * Read a binary file and stores content in array
+     * @param filename File name
+     * @param array Suffix array (contents will be overwritten)
+     * @returns True if successful, false otherwise
+     */
+    static bool readArray(const std::string& filename,
+                          std::vector<length_t>& array) {
+        std::ifstream ifs(filename, std::ios::binary);
+        if (!ifs)
+            return false;
+
+        ifs.seekg(0, std::ios::end);
+        array.resize(ifs.tellg() / sizeof(length_t));
+        ifs.seekg(0, std::ios::beg);
+        ifs.read((char*)&array[0], array.size() * sizeof(length_t));
+
+        return true;
+    }
+
+    /**
+     * Read a text file (e.g. input text, BWT, ...)
+     * @param filename File name
+     * @param buf Buffer (contents will be overwritten)
+     * @returns True if successful, false otherwise
+     */
+    static bool readText(const std::string& filename, std::string& buf) {
+        std::ifstream ifs(filename);
+        if (!ifs)
+            return false;
+
+        ifs.seekg(0, std::ios::end);
+        buf.resize(ifs.tellg());
+        ifs.seekg(0, std::ios::beg);
+        ifs.read((char*)&buf[0], buf.size());
+
+        return true;
+    }
+    /**
+     * Populate the hash table
+     * @param verbose if steps are written to cout
+     */
+    void populateTable(bool verbose);
 
     // ----------------------------------------------------------------------------
     // ROUTINES FOR ACCESSING DATA STRUCTURE
     // ----------------------------------------------------------------------------
 
     /**
-     * Function that returns the nummber of occurences before the index of
-     * all symbols smaller than this symbol in the bwt
-     * @param symbol the symbol to count the occrences of smaller symbols of
-     * at index index
-     * @param index the index whose entry for symbol in the prefixoccurences
-     * table is asked
-     * @return the number of occurences of symbols smaller than symbol
-     * before index in the bwt
+     * Finds the LF mapping of the character at index k in the bwt string
+     * @param k the index to find the LF mapping off
+     * @param reversed boolean to indicate if the reversed bwt should be
+     * used or the normal bwt
+     * @returns the row that is the LF mapping of k. It is so that the entry
+     * in the suffix array of this return value is one less than the entry
+     * in the sufffix array at index k
      */
-    length_t getNumberOfPrefOcc(char symbol, length_t index) const;
+    length_t findLF(length_t k, bool reversed) const;
 
     /**
-     * Function that returns the nummber of occurences before the index of
-     * this symbol in the bwt
-     * @param symbol the symbol to count the occrences of at index index
+     * Function that returns the nummber of occurences before an index of
+     * the symbol at symbolindex in the alphabet
+     * @param symbolIndex the index of the the symbol in the alphabet to
+     * count the occrences of at index index
      * @param index the index whose entry for symbol in the occurences table
      * is asked
      * @return the number of occurences of the symbol before index in the
      * bwt
      */
-    length_t getNumberOfOcc(char symbol, length_t index) const;
+    length_t getNumberOfOcc(length_t symbolIndex, length_t index) const {
+        return fwdRepr.occ(symbolIndex, index);
+    }
+    /**
+     * Same as BiBWT::getNumberOfOccurences, but now in the bwt of the
+     * reversed text
+     * @param symbolIndex the index in the alphabet to get the number of
+     * occurences of
+     * @param index the index in the occurences table, for which the number
+     * of occurences of the symbol at symbolindex is asked.
+     * @return the number of occurences at index index in the occurences
+     * table of the bwt of the reversed text for the symbol at symbolIndex
+     * in the alphabet
+     */
+    length_t getNumberOfOccRev(length_t symbolIndex, length_t index) const {
+        return revRepr.occ(symbolIndex, index);
+    }
 
     /**
-     * Finds the LF mapping of the character at index k in the bwt string
-     * @param k the index to find the LF mapping off
-     * @returns the row that is the LF mapping of k. It is so that the entry
-     * in the suffix array of this return value is one less than the entry
-     * in the sufffix array at index k
+     * Function that returns the nummber of occurences before the index of
+     * all symbols smaller than the symbol at symbolindex in the  bwt
+     * @param symbolIndex the index in the alphabet whose number of baseFile
+     * occurences is queried.
+     * @param index the index whose entry for symbol in the prefixoccurences
+     * table is asked
+     * @return the number of occurences of symbols smaller than symbol at
+     * symbolindex before index index in the bwt
      */
-    length_t findLF(length_t k) const;
-
-    // ----------------------------------------------------------------------------
-    // ROUTINES FOR PATTERN MATCHING
-    // ----------------------------------------------------------------------------
+    length_t getNumberOfCumOcc(length_t symbolIndex, length_t index) const {
+        return fwdRepr.cumOcc(symbolIndex, index);
+    }
 
     /**
-     * Private helper function for ReadMapper::exactMatches. This finds the
-     * range in the suffix array that corresponds to matches in the
-     * reference genome
-     * @param s the string to be matched in the reference genome
-     * @returns a Range containing the start and end values of the range
-     * ([start, end[)
+     * Function that returns the nummber of occurences before the index of
+     * all symbols smaller than the symbol at symbolindex in the  bwt of the
+     * reversed text
+     * @param symbolIndex the index in the alphabet whose number of baseFile
+     * occurences is queried.
+     * @param index the index whose entry for symbol in the
+     * rprefixoccurences table of the reverse text is asked
+     * @return the number of occurences of symbols smaller than symbol at
+     * symbolindex before index index in the bwt
      */
-    Range matchString(const std::string& s);
+    length_t getNumberOfCumOccRev(length_t symbolIndex, length_t index) const {
+        return revRepr.cumOcc(symbolIndex, index);
+    }
+
+    SARangePair getRangeForCharacter(char c) {
+        if (sigma.inAlphabet(c)) {
+            int posInAlphabet = sigma.c2i(c);
+            length_t b = counts[posInAlphabet];
+            length_t e = (posInAlphabet + 1 == (int)sigma.size())
+                             ? bwt.size()
+                             : counts[posInAlphabet + 1];
+            return SARangePair(Range(b, e), Range(b, e));
+        }
+        return SARangePair();
+    }
 
     // ----------------------------------------------------------------------------
-    // ROUTINES FOR APPROXIMAE PATTERN MATCHING
-    // ----------------------------------------------------------------------------
-
-    /**
-     * Private helper function that gets all possible next characters and
-     * their ranges given the ranges of the current pattern
-     * @param rangesOfParent the ranges of the parent in the bwt
-     * @returns a vector with pairs of ranges and charachters, these are the
-     * ranges of all possible previous/next characters
-     */
-    std::vector<std::pair<Range, char>> getCharExtensions(const Range& range);
-
-    /**
-     * Private helper function that recursively calculates which ranges in
-     * the suffix array correspond to approximate matches to a pattern.
-     * @param range the initial range we are considering, this is a range in
-     * the sorted text
-     * @param P the pattern to match
-     * @param M the banded matrix for keeping track of the edit distance
-     * @param bestED the bestED untill this position
-     * @param occ a vector of found matches, these contain ranges in the
-     * suffix array and their ED and depth
-     * @param depth how many iterations (= length of matched substring
-     * untill now)
-     */
-    void recApproxMatchesNaive(const Range& range, const std::string& P,
-                               EditMatrix& M, const int& maxED,
-                               std::vector<AppMatchSA>& occ, length_t depth);
-
-    /**
-     * Private helper function for the recApproxMatchesNaive, this functions
-     * goes over all children (all possible prefixes) of the current matched
-     * pattern. It will update the chdED and chdReported vectors during the
-     * execution. This function will call the recAppproxMatches for the
-     * children
-     * @param nextChar a vector with all the children that need to be check
-     * (a child has a range in the alphabetic ordering and a char)
-     * @param chED a vector containing the edit distances found at the
-     * children, this will be update during this function
-     * @param chdRepoted a vector containg bools that tell if a child found
-     * a match
-     * @param P the pattern to match
-     * @param grandParentED the bestED found at the grandparent
-     * @param M the BandMatrix filled in for all rows previous to these
-     * children
-     * @param row the rownumber of these children in the matrix (this is
-     * also the length of the matched substring )
-     * @param occ the vector with all matches that have been found
-     */
-    void checkChildren(std::vector<std::pair<Range, char>>& nextChar,
-                       std::vector<EditDistance>& chdED,
-                       std::vector<bool>& chdReported, const std::string& P,
-                       const EditDistance& grandparentED, EditMatrix& M,
-                       length_t row, std::vector<AppMatchSA>& occ);
-
-    // ----------------------------------------------------------------------------
-    // POST-PROCESSING ROUTINES FOR APPROXIMATE PATTERN MATCHING
+    // HELP ROUTINES FOR APPROXIMATE PATTERN MATCHING
     // ----------------------------------------------------------------------------
 
     /**
-     * Checks the edit distance between a given string and a piece of the
-     * original text.
-     * @param startPosition the position in the text where the check needs
-     * to happen
-     * @param endPosition the position just after the piece of the text that
-     * needs to be checked, if no restrictions are wanted, set this to the
-     * size of the text
-     * @param remainingED the maximal allowed ED for this verification
-     * @param stringToCheck the string that will be checked against the text
-     * from startPosition to endPosition
-     * @returns a match in the text with found ed not greater to remaininged
-     * or a match with an empty range and ed higher than remaininged
+     * Finds the ranges of cP using the principle explained in the paper of Lahm
+     * @param positionInAlphabet the postition in alphabet of the character
+     * that is added in the front
+     * @param rangesOfP the ranges of pattern P
+     * @returns the ranges cP
      */
-    AppMatch verifyInText(length_t startPosition, length_t endPosition,
-                          int remainingED,
-                          const Substring& stringToCheck) const;
+    bool findRangesWithExtraCharBackward(length_t positionInAlphabet,
+                                         const SARangePair& rangesOfP,
+                                         SARangePair& childRanges) const;
 
-     /**
-     * Converts a match in the suffix array to matches in the text. Also
-     * verifies wheter these matches go over a sentinel character. If that
-     is
-     * the case, it is checked if without the sentinel (and characters
-     before or
-     * after it) it still forms a match. This is the match that will be
-     added to the list of matches.
-     *
-     * REMARK: if two sentinels/word delimiting chracter are present in
-     match this is incorrect however for genomes the distance between
-     sentinels is magnitudes larger than the size of the reads, since entrire
-     chromosomes cannot be read in at once
-     *
+    /**
+     * Finds the ranges of Pc using the principle explained in the paper of Lahm
+     * @param positionInAlphabet the postition in alhabet of the character c
+     * that is added in the back
+     * @param rangesOfP the ranges of pattern P
+     * @returns the ranges of Pc
+     */
+    bool findRangesWithExtraCharForward(length_t positionInAlphabet,
+                                        const SARangePair& rangesOfP,
+                                        SARangePair& childRanges) const;
+
+    // ----------------------------------------------------------------------------
+    // HELPER ROUTINES FOR APPROXIMATE MATCHING (ITERATIVELY)
+    // ----------------------------------------------------------------------------
+    /**
+     * Goes deeper in a search if a valid approximate match is found in the
+     * cluster
+     * @param cluster, the cluster to search for a valid approximate
+     * @param nextP, the  idx of next part to research
+     * @param s, the search
+     * @param parts, the parts of the pattern
+     * @param occ, the vector with all occurrences of the entrie pattern, if the
+     * current partition is the final partition of the search then the match (if
+     * one found) will be pushed onto this vector
+     * @param lowerbound, the lowerbound for this partition
+     * @param descendantsOtherD, the desencdants of the other direction,
+     * defaults to empty vector
+     * @param ininEdsOtherD, the initialization eds of the other direction,
+     * defaults to empty vector
+     * @param remainingDesc, the remaining descendants on the current branch,
+     * that are already created but aren't checked yet and need to be checked
+     * for the next part, defaults to an empty vector
+     */
+    void goDeeper(Cluster& cluster, const length_t& nextp, const Search& s,
+                  const std::vector<Substring>& parts, std::vector<FMOcc>& occ,
+                  const length_t& lowerBound,
+                  const std::vector<FMPosExt>& descendantsOtherD = {},
+                  const std::vector<int>& initEdsOtherD = {},
+
+                  const std::vector<FMPosExt>& remainingDesc = {});
+
+    /**
+     * Helper function for the approximate matching. This function fills in the
+     * matrix for the current node at the current row and goes deeper for the
+     * next part is that is necessary
+     * The function returns zero if no branching is needed, 1 if the search went
+     * deeper and -1 if maxED was exceeded
+     * @param matrix, the matrix to fill in
+     * @param clus, the cluster corresponding to the final column of the matrix
+     * @param currentnode, the node for which the matrix is filled in
+     * @param s, the current search
+     * @param idx, the idx of the current part
+     * @param parts, the parts of the pattern
+     * @param occ, vector to push occurrences to
+     * @param initOther, eds of descendants in other direction
+     * @param descOther, descendants in other direction
+     * @param remainingDesc, the remaining descendants on the current
+     * branch, that are already created but aren't checked yet and might need to
+     * be checked for the next part, defaults to an empty vector
+     * @return false if the search can continue along this branch for the
+     * current part, true if the search can backtrack
+     */
+    bool branchAndBound(BandMatrix& matrix, Cluster& clus,
+                        const FMPosExt& currentNode, const Search& s,
+                        const int& idx, const std::vector<Substring>& parts,
+                        std::vector<FMOcc>& occ,
+                        const std::vector<int>& initOther,
+                        const std::vector<FMPosExt>& descOther,
+                        const std::vector<FMPosExt> remainingDesc = {});
+
+    /**
+     * Pushes all the children corresponding to the node with ranges equal to
+     * ranges
+     * @param ranges the ranges to get the children of
+     * @param stack, the stack to push the children on
+     * @param row, the row of the parentNode (defaults to 0)
+     */
+    void extendFMPos(const SARangePair& ranges, std::vector<FMPosExt>& stack,
+                     int row = 0);
+
+    /**
+     * Pushes all the children corresponding to the this position
+     * @param pos, the position to get the children of
+     * @param stack, the stack to push the children on
+     */
+    void extendFMPos(const FMPosExt& pos, std::vector<FMPosExt>& stack);
+
+    /**
+     * Converts a match in the suffix array to matches in the text.
      * @param matchInSA the match that will be converted
-     * @param pattern the patter for which this was a match
-     * @param ED the max allowed edicdt distance
+     * @returns a vector with the corresponging text occurrences
      */
-    std::vector<AppMatch> convertToMatchesInText(const AppMatchSA& matchInSA);
+    std::vector<TextOccurrence> convertToMatchesInText(const FMOcc& matchInSA);
+
+    /**
+     * Finds the entry in the suffix array of this index. This is computed
+     * from the sparse suffix array and the bwt
+     * @param index the index to find the entry in the SA off
+     * @returns the entry in the SA of the index
+     */
+    length_t findSA(length_t index) const;
 
   public:
+    // ----------------------------------------------------------------------------
+    // INITIALIZATION ROUTINES
+    // ----------------------------------------------------------------------------
+
     /**
-     * Get the counters
-     * @returns a tuple (nodeCounter, matrixElementCounter,
-     * positionsInPostProcessingCounter)
+     * Constructor
+     * @param baseFile baseFile of the files that contain the info
+     * @param sa_spase sparseness factor of suffix array. It is assumed this
+     * is a power of two
+     * @param verbose, will write to cout
      */
-    std::tuple<length_t, length_t, length_t> getCounters() {
-        return std::make_tuple(nodeCounter, matrixElementCounter,
-                               positionsInPostProcessingCounter);
+    FMIndex(const std::string& baseFile, int sa_sparse = 1, bool verbose = true)
+        : baseFile(baseFile), sparseFactorSA(sa_sparse),
+          logSparseFactorSA(log2(sa_sparse)) {
+        // read in files
+        fromFiles(baseFile, verbose);
+
+        // populate table
+        populateTable(verbose);
+    }
+
+    /**
+     * Get the complete range of this index
+     * @returns an SARangePair with both ranges the complete range of the
+     * index
+     */
+    SARangePair getCompleteRange() const {
+        return SARangePair(Range(0, bwt.size()), Range(0, bwt.size()));
+    }
+
+    // ----------------------------------------------------------------------------
+    // ROUTINES FOR ACCESSING THE DATASTRUCTURE
+    // ----------------------------------------------------------------------------
+
+    /**
+     * Get the original text
+     */
+    std::string getText() const {
+        std::string text;
+        text.reserve(bwt.size());
+        readText(baseFile + ".txt", text);
+        return text;
     }
 
     /**
@@ -247,45 +1365,69 @@ class FMIndex {
         matrixElementCounter = 0;
         positionsInPostProcessingCounter = 0;
     }
+    length_t getNodes() const {
+        return nodeCounter;
+    }
 
-    /**
-     * Constructor with default values for the sparseness factors
-     * @param prefix prefix of the files that contain the info
-     */
-    FMIndex(const std::string& prefix) : prefix(prefix) {
-        // read in all the files
-        fromFiles(prefix);
+    length_t getMatrixElements() const {
+        return matrixElementCounter;
+    }
+
+    length_t getTotalReported() const {
+        return positionsInPostProcessingCounter;
     }
 
     /**
-     * Constructor
-     * @param prefix prefix of the files that contain the info
-     * @param sa_spase sparseness factor of suffix array. It is assumed this
-     * is a power of two
+     * @returns the wordsize of the mers stored in the table
      */
-
-    FMIndex(const std::string& prefix, int sa_sparse) : prefix(prefix) {
-        // set the correct sparsefactors
-        this->sparseFactorSA = sa_sparse;
-
-        this->logSparseFactorSA =
-            log2(sa_sparse); // assumed sa_sparse is power of two
-
-        // read in all the files
-        fromFiles(prefix);
+    int getWordSize() const {
+        return wordSize;
     }
 
     /**
-     * Get the original text
+     * @returns the ranges of a single character in this index
      */
-    std::string getText() const {
-        return readString(prefix + ".txt");
+    SARangePair getRangeOfSingleChar(char c) const {
+        unsigned int i = sigma.c2i(c);
+        if (i < sigma.size() - 1) {
+            return SARangePair(Range(counts[i], counts[i + 1]),
+                               Range(counts[i], counts[i + 1]));
+        }
+        return SARangePair(Range(counts[i], bwt.size()),
+                           Range(counts[i], bwt.size()));
     }
 
-    // --------------------------------------------------------------------
-    // ROUTINES FOR PATTERN MATCHING
-    // --------------------------------------------------------------------
+    /**
+     * Looks up the SARangePair corresponding to p in the hashtable. Assumes p
+     * is of size wordSize
+     * @param p, the substring to find the ranges of
+     * @returns the ranges corresponding to substring p, if no pair can be found
+     * returns empty ranges
+     */
+    SARangePair lookUpInKmerTable(const Substring& p) const {
+        Kmer k(p.tostring());
 
+        auto it = table.find(k);
+        if (it != table.end()) {
+            return it->second;
+        }
+
+        return SARangePair();
+    }
+
+    // ----------------------------------------------------------------------------
+    // ROUTINES FOR EXACT MATCHING
+    // ----------------------------------------------------------------------------
+
+    /**
+     * Private helper function for exactMatches. This finds the
+     * range in the suffix array that corresponds to matches in the
+     * reference genome
+     * @param s the string to be matched in the reference genome
+     * @returns a Range containing the start and end values of the range
+     * ([start, end[)
+     */
+    Range matchString(const std::string& s);
     /**
      * Calculates the positions in the reference genome where exact matches
      * to the argument string start.
@@ -295,9 +1437,54 @@ class FMIndex {
      */
     std::vector<length_t> exactMatches(const std::string& s);
 
-    // --------------------------------------------------------------------
-    // ROUTINES FOR APPROXIMATE PATTERN MATCHING
-    // --------------------------------------------------------------------
+    /**
+     * This function matches a string exactly and returns the ranges in the
+     * sa and saRev
+     * @param pattern the string to match
+     * @returns the pair of ranges of this pattern
+     */
+    SARangePair matchStringBidirectionally(const Substring& pattern) {
+        return matchStringBidirectionally(pattern, getCompleteRange());
+    }
+
+    /**
+     * This function matches a string exactly starting form startRange
+     * @param pattern the string to match
+     * @param startRange, the range to search in
+     * @returns the pair of ranges
+     */
+    SARangePair matchStringBidirectionally(const Substring& pattern,
+                                           SARangePair startRange);
+    /**
+     * Adds one character and updates the range. If the character can't be
+     * added the range will be set to an empty range
+     * @param c the character to be added (in the current direction of the
+     * index)
+     * @param range the range to extend
+     */
+    bool addChar(const char& c, SARangePair& range);
+
+    // ----------------------------------------------------------------------------
+    // PREPROCESSING ROUTINES FOR APPROXIMATE MATCHING
+    // ----------------------------------------------------------------------------
+
+    /**
+     * Resizes to the required number of stacks and reserves space on each
+     * stack, so that each stack can match the entire pattern
+     * @param number, the number of stacks required
+     * @param size, the size of the pattern
+     */
+    void reserveStacks(const length_t number, const int size) {
+        stacks.resize(number);
+        length_t stackSize = size * sigma.size();
+        for (auto& stack : stacks) {
+            stack.reserve(stackSize);
+        }
+    }
+
+    // ----------------------------------------------------------------------------
+    // ROUTINES FOR APPROXIMATE MATCHING
+    // ----------------------------------------------------------------------------
 
     /**
      * Matches the pattern approximately. All matches are at most a certain
@@ -308,29 +1495,104 @@ class FMIndex {
      * the text that matched) and the edit distance this substring is away
      * from the pattern
      */
-    virtual std::vector<AppMatch> approxMatches(const std::string& pattern,
-                                                int maxED);
-    // --------------------------------------------------------------------
-    // ROUTINES FOR APPROXIMATE PATTERN MATCHING
-    // --------------------------------------------------------------------
+    std::vector<TextOccurrence> approxMatchesNaive(const std::string& pattern,
+                                                   length_t maxED);
 
     /**
-     * Maps the found occurences in the suffix array to actual occurences in
-     * the text. It also filters out redundant matches using the maximal allowed
+     * Sets the search direction of the fm-index
+     * @param d the direction to search in, either FORWARD or BACKWARD
+     */
+    void setDirection(Direction d) {
+        dir = d;
+        extraChar = (d == FORWARD) ? &FMIndex::findRangesWithExtraCharForward
+                                   : &FMIndex::findRangesWithExtraCharBackward;
+    }
+    /**
+     * Matches a search recursively with a depth first approach (each branch of
+     * the tree is fully examined untill the backtracking condition is met)
+     * using hamming distance metric
+     * @param search, the search to follow
+     * @param startMatch, the approximate match found for all previous parts
+     * of the search
+     * @param occ, a vector with matches of the complete search, if a such a
+     * match is found it is pushed upon this vector
+     * @param idx, the index of the partition to match, defaults to 1 as an
+     * exact search for the zeroth part is assumed
+     */
+    void recApproxMatchHamming(const Search& s, const FMOcc& startMatch,
+                               std::vector<FMOcc>& occ,
+                               const std::vector<Substring>& parts,
+                               const int& idx = 1);
+
+    /**
+     * Matches a search recursively with a depth first approach (each branch of
+     * the tree is fully examined untill the backtracking condition is met)
+     * using the edit distance metric. This function uses all optimizations for
+     * eliminating redundancy in the edit distance metric
+     * @param search, the search to folloow
+     * @param startMatch, the approximate match found for all previous partions
+     * of the search
+     * @param occ, a vector with matches of the complete search, if such a
+     * match is found is a pushed upon this vector
+     * @param idx, the index of the partition to match, defaults to 1 as an
+     * exact search for the zeroth partition is assumed
+     * @param descPrevDir, the descendants of the previous direction, defaults
+     * to empty vector
+     * @param initPrevDir, the initialization eds of the previous direction,
+     * defaults to empty vector
+     * @param descNotPrevDir, the descendants of the other direction, defaults
+     * to empty vector
+     * @param initNotPrevDir, the initialization eds of the other direciton,
+     * defaults to empty vector
+     */
+    void recApproxMatchEditOptimized(
+        const Search& search, const FMOcc& startMatch, std::vector<FMOcc>& occ,
+        const std::vector<Substring>& parts, const int& idx = 1,
+        const std::vector<FMPosExt>& descPrevDir = std::vector<FMPosExt>(),
+        const std::vector<int>& initPrevDir = std::vector<int>(),
+        const std::vector<FMPosExt>& descNotPrevDir = std::vector<FMPosExt>(),
+        const std::vector<int>& initNotPrevDir = std::vector<int>());
+
+    /**
+     * Matches a search recursively with a depth first approach (each branch of
+     * the tree is fully examined untill the backtracking condition is met)
+     * using the edit distance metric. This function does not use any
+     * optimizations for eliminating redundancy in the edit distance metric. It
+     * simply matches the current part starting from startrange and each node
+     * found that has an edit distance between the lower and upperbound is used
+     * to start a search for the next part
+     * @param search, the search to folloow
+     * @param startMatch, the approximate match found for all previous partions
+     * of the search
+     * @param occ, a vector with matches of the complete search, if such a
+     * match is found is a pushed upon this vector
+     * @param idx, the index of the partition to match, defaults to 1 as an
+     * exact search for the zeroth partition is assumed
+     */
+    void recApproxMatchEditNaive(const Search& s, const FMOcc& startMatch,
+                                 std::vector<FMOcc>& occ,
+                                 const std::vector<Substring>& parts,
+                                 const int& idx);
+    // ----------------------------------------------------------------------------
+    // POST-PROCESSING ROUTINES FOR APPROXIMATE MATCHING
+    // ----------------------------------------------------------------------------
+
+    /**
+     * This function maps matches in the sa to matches in the text. It takes
+     * the ranges of the matches and together with the depth this is matched
+     * to a range in the text (this new range has a width of depth). The
+     * edit distance is also mapped to this new range in the text. This
+     * function also filters out the redundant matches using the maximal
+     * allowed edit distance
+     * @param occurrences, the vector with all approximate matches and their
+     * ranges in the SA and revSA
+     * @param maxED, the maximal allowed edit distance
+     * @returns a vector of matches in the text containing a range and the
      * edit distance
-     * @param occurences the found occurences in the suffix array
-     * @param maxED the maximal allowed edit distance
      */
-    std::vector<AppMatch> mapOccurencesInSAToOccurencesInText(
-        const std::vector<AppMatchSA>& occurences, const int& maxED);
-
-    /**
-     * Finds the entry in the suffix array of this index. This is computed
-     * from the sparse suffix array and the bwt
-     * @param index the index to find the entry in the SA off
-     * @returns the entry in the SA of the index
-     */
-    length_t findSA(length_t index) const;
+    std::vector<TextOccurrence>
+    mapOccurencesInSAToOccurencesInText(std::vector<FMOcc>& occurences,
+                                        const int& maxED);
 };
 
 #endif

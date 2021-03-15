@@ -1,7 +1,7 @@
 /******************************************************************************
  *  Columba: Approximate Pattern Matching using Search Schemes                *
- *  Copyright (C) 2020 - Luca Renders <luca.renders@ugent.be> and             *
- *                       Jan Fostier <jan.fostier@ugent.be>                   *
+ *  Copyright (C) 2020-2021 - Luca Renders <luca.renders@ugent.be> and        *
+ *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
  *  it under the terms of the GNU Affero General Public License as            *
@@ -30,7 +30,7 @@
 // ============================================================================
 // CLASS ALPHABET (convert ASCII value <-> character index)
 // ============================================================================
-
+typedef uint32_t length_t;
 template <size_t S> // S is the size of the alphabet (including '$')
 class Alphabet {    // e.g. S = 5 for DNA (A,C,G,T + $)
 
@@ -43,7 +43,7 @@ class Alphabet {    // e.g. S = 5 for DNA (A,C,G,T + $)
      * @param charCounts Vector containing the counts for each character,
      * thus indicating the presence / absence of each character
      */
-    void initialize(const std::vector<size_t>& charCounts) {
+    void initialize(const std::vector<length_t>& charCounts) {
         charToIndex = std::vector<int>(NUM_CHAR, -1);
         for (size_t i = 0, j = 0; i < charCounts.size(); i++) {
             if (charCounts[i] > 0) {
@@ -79,7 +79,7 @@ class Alphabet {    // e.g. S = 5 for DNA (A,C,G,T + $)
      * Build an alphabet given the character counts
      * @param charCounts Character counts
      */
-    Alphabet(const std::vector<size_t>& charCounts) {
+    Alphabet(const std::vector<length_t>& charCounts) {
         initialize(charCounts);
     }
 

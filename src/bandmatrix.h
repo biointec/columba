@@ -1,7 +1,7 @@
 /******************************************************************************
  *  Columba: Approximate Pattern Matching using Search Schemes                *
- *  Copyright (C) 2020 - Luca Renders <luca.renders@ugent.be> and             *
- *                       Jan Fostier <jan.fostier@ugent.be>                   *
+ *  Copyright (C) 2020-2021 - Luca Renders <luca.renders@ugent.be> and        *
+ *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
  *  it under the terms of the GNU Affero General Public License as            *
@@ -19,7 +19,6 @@
 #ifndef BANDMATRIX_H
 #define BANDMATRIX_H
 
-#include "customtypedefs.h"
 #include <cstdio>
 #include <iostream>
 #include <vector>
@@ -138,14 +137,82 @@ class EditDistance {
 class BandMatrix {
   private:
     std::vector<length_t> matrix;
-    length_t W;
-    length_t m;
-    const static int Wprod = 16;
-    int finalCellFirstCol;
+    length_t W; // The off diagonal width of this bandmatrix
+    length_t m; // number of rows
     length_t n; // number of columns
-    int rowsPerColumn;
+    const static int Wprod = 16;
+
+    int finalCellFirstCol; // the final row of the zeroth column
+    int rowsPerColumn; // the number of rows per column (starting from the Wth
+                       // column)
+
+    void initializeMatrix(const std::vector<int>& eds, const int& increase) {
+
+        // initialize the first column
+        length_t row = 0;
+        for (auto rIt = eds.begin(); rIt != eds.end(); ++rIt) {
+            operator()(row++, 0) = *rIt + increase;
+        }
+        for (; operator()(row - 1, 0) <= eds[0] + increase + W; row++) {
+            operator()(row, 0) = operator()(row - 1, 0) + 1;
+        }
+
+        // intialize the first row
+        for (length_t i = 1; i <= W; i++) {
+            operator()(0, i) = i + eds[0] + increase;
+        }
+        // initialize the cells to the right of band
+        for (length_t c = W + 1; c < m; c++) {
+            operator()(c - (W + 1), c) = W + eds[0] + increase + 1;
+        }
+
+        // initialize the cells to the left of band
+        for (length_t r = 1; r + row <= m; r++) {
+            operator()(r + row - 1, r) = W + eds[0] + increase + 1;
+        }
+        finalCellFirstCol = row - 2;
+    }
+
+    void initializeMatrix(length_t startValue) {
+        finalCellFirstCol = W;
+        for (length_t i = 0; i <= W + 1; i++) {
+            operator()(0, i) = i + startValue;
+            operator()(i, 0) = i + startValue;
+        }
+        // set max elements at sides
+        // first the elements on rows [1, W]
+        for (length_t i = 1; i <= W; i++) {
+            // right of band
+            operator()(i, i + W + 1) = W + 1 + startValue;
+        }
+
+        // then the elements on rows [W + 1, x]
+
+        for (length_t i = W + 1; i + W + 1 < n; i++) {
+            // right of band
+            operator()(i, i + W + 1) = W + 1 + startValue;
+            // left of band
+            operator()(i, i - (W + 1)) = W + 1 + startValue;
+        }
+
+        for (length_t i = std::max<int>((int)n - (W + 1), W + 1); i < m; i++) {
+            // left of band
+            operator()(i, i - (W + 1)) = W + 1 + startValue;
+        }
+    }
 
   public:
+    /**
+     * Constructor
+     * @param pieceSize, the size of the piece to match, this will initialize
+     * the top row
+     * @param W, the width needed for this matrix
+     * @param startValue, the value found at the startmatch, this should be the
+     * minimum value of the vector eds if this vector is not empty
+     * @param eds, a vector to initialize the first column, if an empty vector
+     * is provided the first column will be initialized starting from startvalue
+     * and up to W
+     */
     BandMatrix(length_t pieceSize, int W, int startValue,
                const std::vector<int>& eds)
         : W(W), n(pieceSize + 1) {
@@ -165,17 +232,23 @@ class BandMatrix {
 
         initializeMatrix(eds, startValue);
     }
+
     /**
      * Constructor
-     * @param m Number of rows
-     * @param W Number of off-diagonal elements (one sided)
+     * @param pieceSize, the size of the piece to match, this will initialize
+     * the top row
+     * @param W, the width needed for this matrix
+     * @param startValue, the value found at the startmatch, this will be put at
+     * the origin
      */
-    BandMatrix(length_t m, int W, int startValue) : W(W), m(m) {
+    BandMatrix(length_t pieceSize, int W, int startValue)
+        : W(W), m(pieceSize + W + 1), n(pieceSize + 1) {
         matrix.resize(m * Wprod);
-        n = m - W;
         rowsPerColumn = 2 * W + 1;
         initializeMatrix(startValue);
+        return;
     }
+
     /**
      * Constructor
      * @param m Number of rows
@@ -235,80 +308,40 @@ class BandMatrix {
         std::cout << "----------------------------------------------\n";
     }
 
-    void initializeMatrix(const std::vector<int>& eds, const int& increase) {
-
-        // initialize the first column
-        length_t row = 0;
-        for (auto rIt = eds.begin(); rIt != eds.end(); ++rIt) {
-            operator()(row++, 0) = *rIt + increase;
-        }
-        for (; operator()(row - 1, 0) <= eds[0] + increase + W; row++) {
-            operator()(row, 0) = operator()(row - 1, 0) + 1;
-        }
-
-        // intialize the first row
-        for (length_t i = 1; i <= W; i++) {
-            operator()(0, i) = i + eds[0] + increase;
-        }
-        // initialize the cells to the right of band
-        for (length_t c = W + 1; c < m; c++) {
-            operator()(c - (W + 1), c) = W + eds[0] + increase + 1;
-        }
-
-        // initialize the cells to the left of band
-        for (length_t r = 1; r + row <= m; r++) {
-            operator()(r + row - 1, r) = W + eds[0] + increase + 1;
-        }
-        finalCellFirstCol = row - 2;
-    }
-
-    void initializeMatrix(length_t startValue) {
-        finalCellFirstCol = W;
-        for (length_t i = 0; i <= W + 1; i++) {
-            operator()(0, i) = i + startValue;
-            operator()(i, 0) = i + startValue;
-        }
-        // set max elements at sides
-        // first the elements on rows [1, W]
-        for (length_t i = 1; i <= W; i++) {
-            // right of band
-            operator()(i, i + W + 1) = W + 1 + startValue;
-        }
-
-        // then the elements on rows [W + 1, x]
-
-        for (length_t i = W + 1; i <= m - (2 * W + 2); i++) {
-            // right of band
-            operator()(i, i + W + 1) = W + 1 + startValue;
-            // left of band
-            operator()(i, i - (W + 1)) = W + 1 + startValue;
-        }
-
-        for (length_t i = m - 2 * W - 1; i < m; i++) {
-            // left of band
-            operator()(i, i - (W + 1)) = W + 1 + startValue;
-        }
-    }
-
     /**
      * Update the matrix by calculating the element at position row, column.
      * @param match whether the character was a match
      * @param row the row of the elment to update
      * @param collumn the collumn of the element to update
+     * @returns the new value at row, column
      */
-    void updateMatrix(bool notMatch, unsigned int row, unsigned int column) {
+    length_t updateMatrix(bool notMatch, unsigned int row,
+                          unsigned int column) {
         length_t diag = operator()(row - 1, column - 1) + notMatch;
         length_t gapX = operator()(row, column - 1) + 1;
         length_t gapY = operator()(row - 1, column) + 1;
 
-        operator()(row, column) =
+        length_t returnValue =
             std::min<length_t>(diag, std::min<length_t>(gapX, gapY));
+
+        operator()(row, column) = returnValue;
+        return returnValue;
     }
 
+    /**
+     * Retrieves the first column that needs to be filled in for the row
+     * @param row the row to fill in
+     * @returns the first column to fill in
+     */
     const int getFirstColumn(int row) const {
         // leftmost cell of band
         return std::max(1, row - finalCellFirstCol);
     }
+    /**
+     * Retrieves the last column that needs to be filled in for the row
+     * @param row the row to fill in
+     * @returns the last column to fill in
+     */
     const int getLastColumn(int row) const {
         // rightmost cell of band
         return std::min(n - 1, W + row);
@@ -321,14 +354,6 @@ class BandMatrix {
     const int getSizeOfFinalColumn() const {
         if (n > W) {
             return rowsPerColumn;
-        }
-        return finalCellFirstCol + n;
-    }
-
-    const int getSizeOfFinalColumn(int row) const {
-        if (n > W) {
-            // assume row filled in final column
-            return rowsPerColumn - (m - 1 - row);
         }
         return finalCellFirstCol + n;
     }

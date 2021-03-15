@@ -1,7 +1,7 @@
 /******************************************************************************
  *  Columba: Approximate Pattern Matching using Search Schemes                *
- *  Copyright (C) 2020 - Luca Renders <luca.renders@ugent.be> and             *
- *                       Jan Fostier <jan.fostier@ugent.be>                   *
+ *  Copyright (C) 2020-2021 - Luca Renders <luca.renders@ugent.be> and        *
+ *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
  *  it under the terms of the GNU Affero General Public License as            *
@@ -139,13 +139,13 @@ void createFMIndex(const string& baseFN) {
     readText(baseFN + ".txt", T);
 
     // count the frequency of each characters in T
-    vector<size_t> charCounts(256, 0);
+    vector<length_t> charCounts(256, 0);
     for (char c : T)
         charCounts[(unsigned char)c]++;
 
     // count the number of unique characters in T
     int nUniqueChar = 0;
-    for (size_t count : charCounts)
+    for (length_t count : charCounts)
         if (count > 0)
             nUniqueChar++;
 
@@ -195,7 +195,8 @@ void createFMIndex(const string& baseFN) {
     // write the character counts table
     {
         ofstream ofs(baseFN + ".cct", ios::binary);
-        ofs.write((char*)charCounts.data(), charCounts.size() * sizeof(size_t));
+        ofs.write((char*)charCounts.data(),
+                  charCounts.size() * sizeof(length_t));
         ofs.close();
     }
 

@@ -61,6 +61,7 @@ After installing columba, the columba directory should look like this:
 
     .
     ├── build
+    ├── search_schemes
     └── src
     
 In this example we will build the FM index for the 21st chromosome of the human genome. In order to do this we will create an `example` folder.
@@ -81,6 +82,7 @@ After reversing the text your directory structure should look like:
     ├── example
     |   ├── genome.hs.chr_21.rev.txt
     |   └── genome.hs.chr_21.txt
+    ├── search_schemes
     └── src
 
 Now we need to create the suffix arrays. To do this enter the following commands:
@@ -102,6 +104,7 @@ After this operation your directory structure will look like:
     |   ├── genome.hs.chr_21.rev.txt
     |   ├── genome.hs.chr_21.sa    
     |   └── genome.hs.chr_21.txt
+    ├── search_schemes
     └── src
 
 Finally, everything is in place to build the FM-index!
@@ -130,6 +133,7 @@ The index files are then written to the same folder. Your directory structure wi
     |   ├── genome.hs.chr_21.sa.64
     |   ├── genome.hs.chr_21.sa.128
     |   └── genome.hs.chr_21.txt
+    ├── search_schemes
     └── src
 ```
 
@@ -139,7 +143,7 @@ Columba can align reads in a fasta (`.FASTA`, `.fasta`, `.fa`) or fastq (`.fq`, 
 To align your reads use the following format 
 
 ```bash
-./columba [options] basefile readfile
+./columba [options] basefile readfile.[ext]
 ```
 
 options:
@@ -149,7 +153,7 @@ options:
   -e  --max-ed          maximum edit distance [default = 0]
   -s  --sa-sparseness   suffix array sparseness factor [default = 1]
   -p  --partitioning    Add flag to do uniform/static/dynamic partitioning [default = dynamic]
-  -h   --hamming        Add flag to use hamming distance [default = false]
+  -m  --metric          Add flag to set distance metric (editnaive/editopt/hamming) [default = editopt]\n;
   -ss --search-scheme   Choose the search scheme
   options:
         kuch1   Kucherov k + 1
@@ -158,9 +162,11 @@ options:
         manbest  Manual best improvement for kianfar scheme (only for ed = 4)
         pigeon   Pigeonhole scheme
         01*0    01*0 search scheme
+        custom  custom search scheme, takes one parameter which is the path to the folder containing this search scheme
 
 [ext]
-        one of the following: fq, fastq, FASTA, fasta, faFollowing input files are required:
+        one of the following: fq, fastq, FASTA, fasta, fa
+Following input files are required:
         <base filename>.txt: input text T
         <base filename>.cct: charachter counts table
         <base filename>.sa.[saSF]: suffix array sample every [saSF] elements
@@ -171,7 +177,12 @@ options:
 ```
 
 The number of nodes, number of matrix elements, duration, and number of matches will be printed to stdout. 
-The matches will be written to a custom output file in the folder where your readfile was. This output file will be a tab-seperated file with the fields: `identifier`, `position`, `length` and `ED`. For each optimal alignment under the maximal given edit distance a line will be present. This output file will be called `readfile_output.txt`.
+The matches will be written to a custom output file in the folder where your readfile was. This output file will be a tab-seperated file with the fields: `identifier`, `position`, `length`, `ED` and `reverse strand`. For each optimal alignment under the maximal given edit distance a line will be present. This output file will be called `readfile_output.txt`.
+
+
+
+
+
 
 ### Example 2
 Consider the final directory structure from [example 1](##Example-1). 
@@ -179,7 +190,7 @@ Copy this [file](https://github.com/biointec/columba/releases/download/example/g
 This file contains 100 000 reads of length 100 all sampled from the reference text. Thus, each read will have at least one exact occurrence.
 If you want to align these reads using the Pigeonhole scheme with k = 3 and using the edit distance and optimal static partitioning to our refercen text, run the following command in the `build` folder:
 ```bash
-./columba -e 3 -ss pigeon -p static ../example/genome.hs.chr_21 ../example/genome.hs.chr_21.reads.fasta
+./columba -e 3 -ss pigeon -m editopt -p static ../example/genome.hs.chr_21 ../example/genome.hs.chr_21.reads.fasta
 ```
 
 After this operation your directory structure will look like:
@@ -211,7 +222,7 @@ The results can be found in `genome.hs.chr_21.reads.fasta_output.txt`.
 
 To align the reads with maximal hamming distance 2, dynamic partitioning and the Kucherov K + 1 search schem run
 ```bash
-./columba -h -e 2 -ss kuch1 -p dynamic ../example/genome.hs.chr_21 ../example/genome.hs.chr_21.reads.fasta
+./columba -m hamming -e 2 -ss kuch1 -p dynamic ../example/genome.hs.chr_21 ../example/genome.hs.chr_21.reads.fasta
 ```
 
 ---
@@ -222,6 +233,57 @@ This second alignment of reads will overwrite the `genome.hs.chr_21.reads.fasta_
 ---
 
 Congratulations! You are now able to use Columba to align reads to the 21st chromosome of the human genome!
+
+## Custom Search Schemes
+
+The search scheme can either be one of the hardcoded search schemes present in Columba or you can provide a custom search scheme. In the `search_schemes` folder a number of search schemes is already present. 
+
+To make your own search scheme you need to create a folder containing at least a file called `name.txt`, which contains the name of your scheme on the first line. 
+For every maximum edit/hamming distance a subfolder should be present, which contains at least the file `searches.txt`. In this file the searches of your scheme are written line per line. Each line contains of three space-seperated arrays: pi, L and U. Each array is written between curly braces {} and the values are comma-seperated.
+
+---
+**NOTE**
+
+The pi array should be zero-based! The connectivity property should always be satifsfied. The L and U array cannot decrease.
+
+---
+### Static Partitioning
+If you want to provide optimal static partitioning you can create a file named `static_partitioning.txt` in the folder of the maximum edit/hamming distance this partitioning is for. This file should contain one line with percentages (values between 0 and 1) seperated by spaces. The ith percentage corresponds to the starting position (relative to the size of the pattern) of the (i + 1)th part (again this is zero based). The starting position of the first part is always zero and should **not** be provided.
+
+### Dynamic Partitionining
+Similarly, to provide values for dynamic partitioning you can create a file called `dynamic_partitioning.txt`. This file should contain two lines. The first line are percentages (again between 0 and 1) that correspond to the seeding positions, relative to the size of the pattern, of all parts, except the first and last part. 
+The second line should contain space-seperated integers corresponding to the weights of each part.
+
+### Folder Structure Example
+Consider a search scheme which supports maximal edit/hamming distances 1, 2 and 4. For distance 1 no static or dynamic partitioning values are known. For distance 2 only static partitioning values are known and for distance 4 both static and dynamic partitioning values are known. The folder structure of this search scheme should look like this:
+
+```    .
+    ├── 1
+    |   ├── searches.txt
+    ├── 2 
+    |   ├── searches.txt
+    |   ├── static_partitioning.txt
+    ├── 4
+    |   ├── dynamic_partitioning.txt
+    |   ├── searches.txt
+    |   ├── static_partitioning.txt
+    └── name.txt
+```
+
+### Example `searches.txt`
+Consider the pigeon hole search scheme for maximum edit distance 4. The `searches.txt` file should look like:
+
+```
+{0,1,2,3,4} {0,0,0,0,0} {0,4,4,4,4}
+{1,2,3,4,0} {0,0,0,0,0} {0,4,4,4,4}
+{2,3,4,1,0} {0,0,0,0,0} {0,4,4,4,4}
+{3,4,2,1,0} {0,0,0,0,0} {0,4,4,4,4}
+{4,3,2,1,0} {0,0,0,0,0} {0,4,4,4,4}
+```
+
+### Other examples
+In the `search_schemes` folder the hardcoded search schemes of Columba are available as custom search schemes. 
+
 
 # Reproducing results
 
@@ -236,41 +298,49 @@ tail -n +2 hs.grch38.fasta.non | sed "s/>.*//g" | tr -d '\n' | cat - dollar > hs
 Where `hs.grch38.fasta.non` is the result of the substitution of the N's and `hs.grch38.txt` is the reference text used to build the index. `dollar` is a text file containing a single character `$`. This file should be present in your directory before executing the above command. 
 
 ### Reads
-Sample 100000 reads of length 100 from the acquired human genome with only {A, C, T, G} characters. 
-The following python3 script is one way to  achieve this. 
+We sampled a 100 000 reads from [an Illumina experiment dataset](ftp://ftp.sra.ebi.ac.uk/vol1/fastq/ERR194/ERR194147/ERR194147_1.fastq.gz), which only contain `A`, `C`, `G` and `T` characters. One way to do this is to select the first 100 000 such reads. For example using the following python3 script
+
 ```python
 import sys
-import numpy as np
 
+read_file = sys.argv[1]
+write_file = sys.argv[2]
+f = open(read_file, "r")
+w = open(write_file, "w")
 
-filename = sys.argv[1]
-output = sys.argv[2]
-f = open(filename , "r")
-o = open(output + ".fasta", "w")
-content = f.read()
+reads_written = 0
+
+while(reads_written < 100000):
+    fastq_record = [next(f) for x in range(4)]
+    read = fastq_record[1]
+    if(read.count('A') + read.count('C') + read.count('G') + read.count('T') != len(read.strip())):
+        # contains a non-ACGT character
+        continue
+    for line in fastq_record:
+        w.write(line)
+    reads_written += 1
+
 f.close()
+w.close()
 
-for i in range(100000):
-    # get postion and string
-    p = np.random.randint(len(content) - 100)
-    s = content[p: p + 100]
-    # write identifier line (where id = position)
-    o.write("> " + str(p) + "\n")
-    # write string lines of max length 80
-    o.write(s[0:80] + "\n")
-    o.write(s[81:] + "\n")
-   
-o.close()
 
 ```
 
-This script takes a filename and requested output name. It samples 100 000 reads of length 100 and writes them to a fasta file `[output].fasta`. Of course sampling of the reads can be achieved in a myriad of ways.
+This python script takes an input name and requested output name. It samples 100 000 reads and writes them to a fastq file [output].fastq, it is assumed that the input file is a fastq file. Of course sampling of the reads can be achieved in a myriad of ways.
+
+The sampled dataset we used for the results in the paper is available at **TODO link to dataset**
 
 ## Partitioning strategies
-To reproduce the results from table 1, run Columba with `kuch1` as option for search scheme and the different partitioning strategies `[part]` and maximal edit distances `[k]`.
+To reproduce the results from table 1, run Columba with `kuch1` as option for search scheme and the different partitioning strategies `[part]` and maximal edit distances `[k]`, from the `build` folder.
 ```bash
 ./columba -ss kuch1 -e [k] -partitioning [part] basefile readsfile
 ```
+Another option is to use the custom search schemes:
+```bash
+./columba -ss custom ../search_schemes/kuch_k+1 -e [k] -partitioning [part] basefile readsfile
+```
+
+
 ## Non-interleaved bitvectors
 Table 2 contains the results on interleaved and non-interleaved bitvectors. The results for interleaved bitvectors are the same as those aquired from the previous section for k = 4. For non-interleaved bitvectors some steps need to be taken.
 Navigate to file `src/bwtrepr.h`, on line 40 replace:
@@ -295,17 +365,24 @@ After rebuilding the index you can get the results with non-interleaved bitvecto
 ---
 **NOTE**
 
-Make sure to undo these changes before using the tool, as interleaved bitvectors are superior to non-interleaved bitvectors. To undo the changes, simply revert `src/bwtrepr.h` back to the original and rebuild the index. 
+Make sure to undo these changes before using the tool, as interleaved bitvectors are superior to non-interleaved bitvectors. To undo the changes, simply revert `src/bwtrepr.h` back to the original, compile again with the `make` command and rebuild the index. 
 
 ---
 
-## Other search schemes
-Table 3 contains results for other search schemes for dynamic partitioning. To reproduce these results run:
+## Effect of reducing the redundancy 
+Table 3 compares the effect of a naive and optimized implementation of the edit distance metric. The results for the optimized implementation are the same as achieved [in the section partitioning strategies](#Partitioning-strategies) with dynamic partitioning. The results for a naive implementation can be reproduced for different values of k by running:
+
 ```bash
-./columba -ss [search scheme] -e [k] -partitioning dynamic basefile readsfile
+./columba -ss kuch1 -e [k] -p dynamic -m editnaive basefile readsfile
 ```
 
-where `[search scheme]` is one of: `kuch2`, `kianfar`, `manbest`, `pigeon`, `01*0`
+## Other search schemes
+Tables 4, 6, 7, 8, 9 and 10 contains results for other search schemes. To reproduce these results run:
+```bash
+./columba -ss [search scheme] -e [k] -partitioning [p] basefile readsfile
+```
+
+where `[search scheme]` is one of: `kuch2`, `kianfar`, `manbest`, `pigeon`, `01*0`, and `[p]` is one of: `uniform`, `static`, `dynamic`
 
 ---
 **NOTE**
@@ -313,3 +390,16 @@ where `[search scheme]` is one of: `kuch2`, `kianfar`, `manbest`, `pigeon`, `01*
 `manbest` only accepts k = 4
 
 ---
+
+## Results on PacBio Data
+Table 5 contains results on 100 000 PacBio seeds. These seeds are sampled from  [this PacBio experiment](ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR130/001/SRR1304331/SRR1304331_subreads.fastq.gz).
+
+The sampled dataset we used for the results in the paper is available at **TODO link dataset**.
+To reproduce the results run 
+```
+./columba -ss kuch1 -e [k] -partitioning [part] basefile readsfile
+```
+from the `build` folder. Where readsfile is the file containing the PacBio seeds.
+
+
+
