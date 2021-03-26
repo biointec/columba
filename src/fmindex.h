@@ -997,7 +997,7 @@ class Search {
     }
 
     bool zeroBased() const {
-        return *std::min(order.begin(), order.end()) == 0;
+        return *std::min_element(order.begin(), order.end()) == 0;
     }
 };
 /**
