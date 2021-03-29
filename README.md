@@ -397,7 +397,7 @@ where `[search scheme]` is one of: `kuch2`, `kianfar`, `manbest`, `pigeon`, `01*
 ---
 
 ## Results on PacBio Data
-Table 5 contains results on 100 000 PacBio seeds. These seeds are sampled from  [this PacBio experiment](ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR130/001/SRR1304331/SRR1304331_subreads.fastq.gz).
+Table 5 contains results on 100 000 PacBio seeds. These seeds are sampled from  [this PacBio experiment](https://www.ebi.ac.uk/ena/browser/view/SRR1304331).
 
 The sampled dataset we used for the results in the paper is available [here](https://github.com/biointec/columba/releases/download/example/sampled_pacbio_seeds.fastq)
 To reproduce the results run 
