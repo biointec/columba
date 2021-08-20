@@ -540,8 +540,8 @@ int main(int argc, char* argv[]) {
     }
 
     length_t ed = stoi(maxED);
-    if (ed < 0 || ed > 4) {
-        cerr << ed << " is not allowed as maxED should be in [0, 4]" << endl;
+    if (ed < 0 || ed > 10) {
+        cerr << ed << " is not allowed as maxED should be in [0, 10]" << endl;
 
         return EXIT_FAILURE;
     }
@@ -586,7 +586,7 @@ int main(int argc, char* argv[]) {
     } else if (searchscheme == "pigeon") {
         strategy = new PigeonHoleSearchStrategy(bwt, pStrat, metric);
     } else if (searchscheme == "custom") {
-        strategy = new CustomSearchStrategy(bwt, customFile, pStrat, metric);
+        strategy = new CustomSearchStrategy(bwt, customFile, 10, pStrat, metric);
 
     } else if (searchscheme == "naive") {
         strategy = new NaiveBackTrackingStrategy(bwt, pStrat, metric);
