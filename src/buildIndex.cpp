@@ -126,7 +126,7 @@ void sanityCheck(const string& T, vector<length_t>& sa) {
         if (!bv[i])
             throw runtime_error("Suffix " + to_string(i) +
                                 " seems "
-                                "to be missing from suffix arrray");
+                                "to be missing from suffix array");
 
     // extra check:
     //      we could check T to see if the SA correctly sorts suffixes of T
@@ -161,7 +161,7 @@ void createFMIndex(const string& baseFN) {
 
     if (nUniqueChar < ALPHABET) {
         cout << "WARNING: the number of unique characters in the "
-             << "text is less than the ALPABET size specified when "
+             << "text is less than the ALPHABET size specified when "
              << "Columba was compiled. Performance may be affected\n";
     }
 

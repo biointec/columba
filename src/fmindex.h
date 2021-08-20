@@ -53,7 +53,7 @@ typedef uint32_t length_t;
 
 class Range {
   private:
-    length_t begin; // begining of the range
+    length_t begin; // beginning of the range
     length_t end;   // end of the range (non-inclusive)
 
   public:
@@ -104,9 +104,9 @@ class Range {
 };
 
 /**
- * Operator overloading. Outputs the range as [begin, end) ot the outputstream
+ * Operator overloading. Outputs the range as [begin, end) of the output stream
  * @param output, the output stream
- * @param r, the range to pring
+ * @param r, the range to print
  */
 std::ostream& operator<<(std::ostream& output, const Range& r);
 // ============================================================================
@@ -133,7 +133,7 @@ class TextOccurrence {
     /**
      * Generates the output of this occurrence, for now in format:
      * startposition\twidth\tdistance, where startposition is the
-     * beginning of the textoccurrence, width is the length of this occurrence,
+     * beginning of the text occurrence, width is the length of this occurrence,
      * distance is the (edit or hamming) distance to the mapped read
      * @param reverse flag to indicate if the occurrence was found for the
      * reverse complement or not
@@ -295,7 +295,7 @@ class FMOcc {
     FMOcc() : pos(), distance(0), shift(0) {
     }
     /**
-     * Make a biderictional approximate match in the suffix array
+     * Make a bidirectional approximate match in the suffix array
      * @param ranges the ranges of this approximate match (range in SA and in
      * SA')
      * @param distance the (edit or hamming) distance of this approximate match
@@ -307,7 +307,7 @@ class FMOcc {
         : pos(ranges, depth), distance(distance), shift(shift) {
     }
     /**
-     * Make a biderictional approximate match in the suffix array
+     * Make a bidirectional approximate match in the suffix array
      * @param pos, the position in the FMIndex of this approximate match
      * @param distance the (edit or hamming) distance of this approximate match
      * @param shift The right shift to the corresponding positions in the text,
@@ -373,7 +373,7 @@ class FMOcc {
         }
     }
     /**
-     * Operator overlading
+     * Operator overloading
      * Two FMocc are equal if their ranges, distance and depth are all equal
      * @param returns true if this is equal to rhs
      */
@@ -401,7 +401,7 @@ class FMPosExt : public FMPos {
      * @param character the character of this node
      * @param ranges the ranges over the suffix and reversed suffix array
      * that go to this node
-     * @param row the row of this node in the allignment matrix = depth of
+     * @param row the row of this node in the alignment matrix = depth of
      * this node
      */
     FMPosExt(char character, SARangePair ranges, length_t row)
@@ -428,14 +428,14 @@ class FMPosExt : public FMPos {
      * @param EDFound the found edit distance for this node
      * @param noDoubleReports false if this node is allowed to report more than
      * once, defaults to false
-     * @param shift, right shift of the matche, defaults to zero
+     * @param shift, right shift of the matches, defaults to zero
      */
     void report(FMOcc& occ, const length_t& startDepth, const length_t& EDFound,
                 const bool& noDoubleReports = false, length_t shift = 0) {
         if (!reported) {
             occ = FMOcc(getRanges(), EDFound, depth + startDepth, shift);
 
-            // if finalPiece, report only once
+            // if final piece, report only once
             if (noDoubleReports) {
                 report();
             }
@@ -575,7 +575,7 @@ class Cluster {
 
     /**
      * This method returns a match that corresponds to the highest cluster
-     * centre. Its descendants and the corresponding initalization eds are
+     * centre. Its descendants and the corresponding initialization eds are
      * updated. Eds of descendants that are part of a cluster centre which is
      * lower than the lowerbound will be updated in the initEds vector
      * @param lowerBound, the lowerbound for this iteration
@@ -696,10 +696,10 @@ class Substring {
     }
 
     /**
-     * Constructs a substring of the text another substrin points to
+     * Constructs a substring of the text another substring points to
      * @param s, pointer to the other substring
      * @param start, the start index of this new substring in the original text
-     * @param end, the end index of this new stubstring
+     * @param end, the end index of this new substring
      */
     Substring(const Substring* s, unsigned int start, unsigned int end)
         : startIndex(start), endIndex(end) {
@@ -707,10 +707,10 @@ class Substring {
         d = s->d;
     }
     /**
-     * Constructs a substring of the text another substrin points to
+     * Constructs a substring of the text another substring points to
      * @param s, the other substring
      * @param start, the start index of this new substring in the original text
-     * @param end, the end index of this new stubstring
+     * @param end, the end index of this new substring
      */
     Substring(const Substring& s, unsigned int start, unsigned int end)
         : startIndex(start), endIndex(end) {
@@ -770,7 +770,7 @@ class Substring {
 
     /**
      * Check if this substring is empty
-     * @returns a bool that indicates wheter the substring was empty
+     * @returns a bool that indicates whether the substring was empty
      */
     bool empty() const {
         return endIndex <= startIndex;
@@ -876,10 +876,10 @@ class Search {
             directions.push_back(d);
         }
 
-        // compute the directionswitches
+        // compute the direction switches
         std::vector<bool> directionSwitch;
         directionSwitch.reserve(order.size());
-        // first partition is not a swithc
+        // first partition is not a switch
         directionSwitch.push_back(false);
 
         // second partition is never a switch
@@ -1122,31 +1122,31 @@ class FMIndex {
      * used or the normal bwt
      * @returns the row that is the LF mapping of k. It is so that the entry
      * in the suffix array of this return value is one less than the entry
-     * in the sufffix array at index k
+     * in the suffix array at index k
      */
     length_t findLF(length_t k, bool reversed) const;
 
     /**
-     * Function that returns the nummber of occurences before an index of
+     * Function that returns the number of occurrences before an index of
      * the symbol at symbolindex in the alphabet
-     * @param symbolIndex the index of the the symbol in the alphabet to
-     * count the occrences of at index index
-     * @param index the index whose entry for symbol in the occurences table
+     * @param symbolIndex the index of the symbol in the alphabet to
+     * count the occurrences of at index index
+     * @param index the index whose entry for symbol in the occurrences table
      * is asked
-     * @return the number of occurences of the symbol before index in the
+     * @return the number of occurrences of the symbol before index in the
      * bwt
      */
     length_t getNumberOfOcc(length_t symbolIndex, length_t index) const {
         return fwdRepr.occ(symbolIndex, index);
     }
     /**
-     * Same as BiBWT::getNumberOfOccurences, but now in the bwt of the
+     * Same as BiBWT::getNumberOfOccurrences, but now in the bwt of the
      * reversed text
      * @param symbolIndex the index in the alphabet to get the number of
-     * occurences of
-     * @param index the index in the occurences table, for which the number
-     * of occurences of the symbol at symbolindex is asked.
-     * @return the number of occurences at index index in the occurences
+     * occurrences of
+     * @param index the index in the occurrences table, for which the number
+     * of occurrences of the symbol at symbolindex is asked.
+     * @return the number of occurrences at index index in the occurrences
      * table of the bwt of the reversed text for the symbol at symbolIndex
      * in the alphabet
      */
@@ -1155,13 +1155,13 @@ class FMIndex {
     }
 
     /**
-     * Function that returns the nummber of occurences before the index of
+     * Function that returns the number of occurrences before the index of
      * all symbols smaller than the symbol at symbolindex in the  bwt
      * @param symbolIndex the index in the alphabet whose number of baseFile
-     * occurences is queried.
-     * @param index the index whose entry for symbol in the prefixoccurences
+     * occurrences is queried.
+     * @param index the index whose entry for symbol in the prefixoccurrences
      * table is asked
-     * @return the number of occurences of symbols smaller than symbol at
+     * @return the number of occurrences of symbols smaller than symbol at
      * symbolindex before index index in the bwt
      */
     length_t getNumberOfCumOcc(length_t symbolIndex, length_t index) const {
@@ -1169,14 +1169,14 @@ class FMIndex {
     }
 
     /**
-     * Function that returns the nummber of occurences before the index of
+     * Function that returns the number of occurrences before the index of
      * all symbols smaller than the symbol at symbolindex in the  bwt of the
      * reversed text
      * @param symbolIndex the index in the alphabet whose number of baseFile
      * occurences is queried.
      * @param index the index whose entry for symbol in the
-     * rprefixoccurences table of the reverse text is asked
-     * @return the number of occurences of symbols smaller than symbol at
+     * rprefixoccurrences table of the reverse text is asked
+     * @return the number of occurrences of symbols smaller than symbol at
      * symbolindex before index index in the bwt
      */
     length_t getNumberOfCumOccRev(length_t symbolIndex, length_t index) const {
@@ -1201,7 +1201,7 @@ class FMIndex {
 
     /**
      * Finds the ranges of cP using the principle explained in the paper of Lahm
-     * @param positionInAlphabet the postition in alphabet of the character
+     * @param positionInAlphabet the position in alphabet of the character
      * that is added in the front
      * @param rangesOfP the ranges of pattern P
      * @returns the ranges cP
@@ -1212,7 +1212,7 @@ class FMIndex {
 
     /**
      * Finds the ranges of Pc using the principle explained in the paper of Lahm
-     * @param positionInAlphabet the postition in alhabet of the character c
+     * @param positionInAlphabet the position in alphabet of the character c
      * that is added in the back
      * @param rangesOfP the ranges of pattern P
      * @returns the ranges of Pc
@@ -1231,11 +1231,11 @@ class FMIndex {
      * @param nextP, the  idx of next part to research
      * @param s, the search
      * @param parts, the parts of the pattern
-     * @param occ, the vector with all occurrences of the entrie pattern, if the
+     * @param occ, the vector with all occurrences of the entry pattern, if the
      * current partition is the final partition of the search then the match (if
      * one found) will be pushed onto this vector
      * @param lowerbound, the lowerbound for this partition
-     * @param descendantsOtherD, the desencdants of the other direction,
+     * @param descendantsOtherD, the descendants of the other direction,
      * defaults to empty vector
      * @param ininEdsOtherD, the initialization eds of the other direction,
      * defaults to empty vector
@@ -1300,7 +1300,7 @@ class FMIndex {
     /**
      * Converts a match in the suffix array to matches in the text.
      * @param matchInSA the match that will be converted
-     * @returns a vector with the corresponging text occurrences
+     * @returns a vector with the corresponding text occurrences
      */
     std::vector<TextOccurrence> convertToMatchesInText(const FMOcc& matchInSA);
 
@@ -1509,7 +1509,7 @@ class FMIndex {
     }
     /**
      * Matches a search recursively with a depth first approach (each branch of
-     * the tree is fully examined untill the backtracking condition is met)
+     * the tree is fully examined until the backtracking condition is met)
      * using hamming distance metric
      * @param search, the search to follow
      * @param startMatch, the approximate match found for all previous parts
@@ -1526,11 +1526,11 @@ class FMIndex {
 
     /**
      * Matches a search recursively with a depth first approach (each branch of
-     * the tree is fully examined untill the backtracking condition is met)
+     * the tree is fully examined until the backtracking condition is met)
      * using the edit distance metric. This function uses all optimizations for
      * eliminating redundancy in the edit distance metric
-     * @param search, the search to folloow
-     * @param startMatch, the approximate match found for all previous partions
+     * @param search, the search to follow
+     * @param startMatch, the approximate match found for all previous partitions
      * of the search
      * @param occ, a vector with matches of the complete search, if such a
      * match is found is a pushed upon this vector
@@ -1542,7 +1542,7 @@ class FMIndex {
      * defaults to empty vector
      * @param descNotPrevDir, the descendants of the other direction, defaults
      * to empty vector
-     * @param initNotPrevDir, the initialization eds of the other direciton,
+     * @param initNotPrevDir, the initialization eds of the other direction,
      * defaults to empty vector
      */
     void recApproxMatchEditOptimized(
@@ -1555,14 +1555,14 @@ class FMIndex {
 
     /**
      * Matches a search recursively with a depth first approach (each branch of
-     * the tree is fully examined untill the backtracking condition is met)
+     * the tree is fully examined until the backtracking condition is met)
      * using the edit distance metric. This function does not use any
      * optimizations for eliminating redundancy in the edit distance metric. It
      * simply matches the current part starting from startrange and each node
      * found that has an edit distance between the lower and upperbound is used
      * to start a search for the next part
-     * @param search, the search to folloow
-     * @param startMatch, the approximate match found for all previous partions
+     * @param search, the search to follow
+     * @param startMatch, the approximate match found for all previous partitions
      * of the search
      * @param occ, a vector with matches of the complete search, if such a
      * match is found is a pushed upon this vector

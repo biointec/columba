@@ -209,7 +209,7 @@ void writeToOutput(const string& file,
     ofstream f2;
     f2.open(file);
 
-    f2 << "identifier\tposition\tlength\tED\treverseComlement\n";
+    f2 << "identifier\tposition\tlength\tED\treverseComplement\n";
     for (unsigned int i = 0; i < reads.size(); i += 2) {
         auto id = reads[i].first;
 
@@ -425,7 +425,7 @@ void showUsage() {
 
     cout << "Following input files are required:\n";
     cout << "\t<base filename>.txt: input text T\n";
-    cout << "\t<base filename>.cct: charachter counts table\n";
+    cout << "\t<base filename>.cct: character counts table\n";
     cout << "\t<base filename>.sa.[saSF]: suffix array sample every [saSF] "
             "elements\n";
     cout << "\t<base filename>.bwt: BWT of T\n";

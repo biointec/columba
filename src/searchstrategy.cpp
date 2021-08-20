@@ -47,7 +47,7 @@ SearchStrategy::SearchStrategy(FMIndex& argument, PartitionStrategy p,
         break;
     }
 
-    // set the distancemetric
+    // set the distance metric
     switch (distanceMetric) {
     case HAMMING:
         startIdxPtr = &SearchStrategy::startIndexHamming;
@@ -287,7 +287,7 @@ void SearchStrategy::partitionDynamic(
     int partToExtend = 0;
 
     // extend the part with the largest range, as to minimize the range
-    // for each part do this untill all characters are assigned to a
+    // for each part do this until all characters are assigned to a
     // part
     for (int j = matchedChars; j < pSize; j++) {
 
@@ -389,7 +389,7 @@ void SearchStrategy::extendParts(const string& pattern,
             parts[i].setEnd(parts[i + 1].begin());
         }
         if ((i != 0) && (parts[i].begin() != parts[i - 1].end())) {
-            // extend completly to the left
+            // extend completely to the left
             parts[i].setBegin(parts[i - 1].end());
         }
     }
@@ -433,7 +433,7 @@ vector<TextOccurrence> SearchStrategy::matchApprox(const string& pattern,
         return index.approxMatchesNaive(pattern, maxED);
     }
 
-    // the vector containing all matches in the sufffix array
+    // the vector containing all matches in the suffix array
     vector<FMOcc> allMatches;
 
     index.reserveStacks(numParts, pattern.length());
@@ -642,7 +642,7 @@ Search CustomSearchStrategy::makeSearch(const string& line) const {
 
     if (tokens.size() != 3) {
         throw runtime_error("A search should have 3 vectors: order, "
-                            "lowerbound and upperbound!");
+                            "lower bound and upper bound!");
     }
 
     vector<int> order;
@@ -727,7 +727,7 @@ void CustomSearchStrategy::sanityCheck(bool verbose) const {
         }
         const Search& firstSearch = scheme.front();
         int P = firstSearch.getNumParts();
-        // chechk if all searches have same number of parts
+        // check if all searches have same number of parts
         if (any_of(scheme.begin(), scheme.end(),
                    [P](const Search& s) { return s.getNumParts() != P; })) {
             throw runtime_error("Not all searches for distance " +
@@ -746,7 +746,7 @@ void CustomSearchStrategy::sanityCheck(bool verbose) const {
         if (any_of(scheme.begin(), scheme.end(), [](const Search& s) {
                 return !s.connectivitySatisfied();
             })) {
-            throw runtime_error("Connectivy property not satisfied "
+            throw runtime_error("Connectivity property not satisfied "
                                 "for all searches with distance " +
                                 to_string(K) + "!");
         }
