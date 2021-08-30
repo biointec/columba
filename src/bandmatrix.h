@@ -81,7 +81,7 @@ class EditDistance {
      * their ED's are equal then a flagged instance is smaller than a non
      * flagged. Else the one with the smallest ED is the smallest
      * @param argument the EditDistance to compare to this
-     * @returns a bool indicating wheter this is smaller
+     * @returns a bool indicating whether this is smaller
      */
     bool operator<=(const EditDistance& argument) const {
         // first, look at equal edit distance
@@ -97,7 +97,7 @@ class EditDistance {
 
     /**
      * Operator overloading.
-     * This returns a bool indicating wheter this is smaller then some integer
+     * This returns a bool indicating whether this is smaller then some integer
      * @param argument the integer to compare to
      * @returns true if this is not flagged and smaller or equal, else it will
      * return false
@@ -157,7 +157,7 @@ class BandMatrix {
             operator()(row, 0) = operator()(row - 1, 0) + 1;
         }
 
-        // intialize the first row
+        // initialize the first row
         for (length_t i = 1; i <= W; i++) {
             operator()(0, i) = i + eds[0] + increase;
         }
@@ -311,8 +311,8 @@ class BandMatrix {
     /**
      * Update the matrix by calculating the element at position row, column.
      * @param match whether the character was a match
-     * @param row the row of the elment to update
-     * @param collumn the collumn of the element to update
+     * @param row the row of the element to update
+     * @param column the column of the element to update
      * @returns the new value at row, column
      */
     length_t updateMatrix(bool notMatch, unsigned int row,
@@ -378,10 +378,10 @@ class EditMatrix {
     const static int Wprod = 16;
 
     /** Helper function for update matrix, it checks which path to take, the
-     * diagonal, horizontal or verical path.
+     * diagonal, horizontal or vertical path.
      * @param diag the value for the element if the diagonal path is chosen
      * @param gapX the value for the element if the horizontal path is chosen
-     * @param gapY the value for the elemnt if the vertical path is chosen
+     * @param gapY the value for the element if the vertical path is chosen
      *
      * @returns the best element out of the three provided.
      */
@@ -502,8 +502,8 @@ class EditMatrix {
     /**
      * Update the matrix by calculating the element at position row, column.
      * @param match whether the character was a match
-     * @param row the row of the elment to update
-     * @param collumn the collumn of the element to update
+     * @param row the row of the element to update
+     * @param collumn the column of the element to update
      */
     void updateMatrix(bool notMatch, unsigned int row, unsigned int collumn) {
         EditDistance diag = operator()(row - 1, collumn - 1) + notMatch;

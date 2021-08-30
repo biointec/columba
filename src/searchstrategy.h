@@ -25,7 +25,7 @@
 
 #define Pattern std::vector<int>
 
-// An enum for partion strategy
+// An enum for partition strategy
 enum PartitionStrategy { UNIFORM, STATIC, DYNAMIC };
 // An enum for which distance metric to use
 enum DistanceMetric { HAMMING, EDITNAIVE, EDITOPTIMIZED };
@@ -56,9 +56,9 @@ class SearchStrategy {
     FMIndex& index; // pointer to the index of the text that is searched
 
     // variables for getting info about strategy used
-    PartitionStrategy partitionStrategy; // the partionining strategy
+    PartitionStrategy partitionStrategy; // the partitioning strategy
     DistanceMetric distanceMetric;       // which distance metric to use
-    std::string name; // the name of the partical search strategy
+    std::string name; // the name of the practical search strategy
 
     // pointers for correct partitioning and correct distance metric
     PartitionPtr partitionPtr; // pointer to the partition method
@@ -87,8 +87,8 @@ class SearchStrategy {
      * Static function which generates all error patterns with P parts and K
      * errors.
      * @param P the number of parts
-     * @param K the number of allowed erros
-     * @param patterns vector to store the erro patterns in
+     * @param K the number of allowed errors
+     * @param patterns vector to store the error patterns in
      */
     static void genErrorPatterns(int P, int K, std::vector<Pattern>& patterns);
 
@@ -97,7 +97,7 @@ class SearchStrategy {
      * patterns.
      * @param patterns the error patterns to check
      * @param scheme the search scheme to check
-     * @param verbose if true the details about wich search covers which pattern
+     * @param verbose if true the details about which search covers which pattern
      * will be written to stdout
      */
     static bool coversPatterns(const std::vector<Pattern>& patterns,
@@ -126,7 +126,7 @@ class SearchStrategy {
     /**
      * Calculates the number of parts for a certain max edit distance. This
      * calculation is strategy dependent
-     * @param maxED the maximal allowed edit distance for the alligning
+     * @param maxED the maximal allowed edit distance for the aligning
      */
     virtual int calculateNumParts(unsigned int maxED) const = 0;
 
@@ -179,7 +179,7 @@ class SearchStrategy {
                   const int& numParts, const int& maxScore) const;
 
     /**
-     * Function that retrieves the begin postiiions for optimal static
+     * Function that retrieves the begin positions for optimal static
      * partitioning. If derived class does not implement this function then
      * uniform positions are given.
      * @param numparts, how many parts are needed
@@ -237,7 +237,7 @@ class SearchStrategy {
     /**
      * Helper function for dynamic partitioning. Seeds the parts.
      * @param pattern, the pattern to partition
-     * @param parts, empty vector tro which the seeds are added
+     * @param parts, empty vector to which the seeds are added
      * @param numparts, how many parts are needed
      * @param exactMatchRanges, a vector corresponding to the ranges for the
      * exact matches of the parts, will be cleared and filled during the
@@ -348,7 +348,7 @@ class SearchStrategy {
 
   public:
     // ----------------------------------------------------------------------------
-    // Deconstructor
+    // Destructor
     // ----------------------------------------------------------------------------
     virtual ~SearchStrategy() {
     }
@@ -412,19 +412,19 @@ class SearchStrategy {
 // supported distance score a subfolder exists. Such a subfolder has as name the
 // distance score. Each subfolder must contain at least a file "searches.txt".
 // The different searches of the scheme for this distance score should be
-// written on seperate lines of this file. Each search consists out of three
-// arrays, pi, L and U, the arrays are seperated by a single space. Each array
-// is written between curly braces {} and the different values are seperated.
+// written on separate lines of this file. Each search consists out of three
+// arrays, pi, L and U, the arrays are separated by a single space. Each array
+// is written between curly braces {} and the different values are separated.
 // The pi array must be zero-based.
 //
 // The different subfolders can also contain files for static and dynamic
 // partitioning. The file "static_partitioning.txt" should consist out of one
-// line of space-seperated percentages (between 0 and 1 - exclusive). These
+// line of space-separated percentages (between 0 and 1 - exclusive). These
 // percentages point to start positions of the second to the last part of the
 // partitioned pattern (relative to the size of the pattern). Hence, if a search
 // scheme partitions a pattern in k parts, then k+1 percentages should be
 // provided. The file "dynamic_partitioning.txt" should consist out of two
-// lines. The first line contains k-1 space-seperated percentages. These
+// lines. The first line contains k-1 space-separated percentages. These
 // percentages are the seeding positions of the middle parts (the first and last
 // part are seeded at the begin and end and thus do not need a percentage). Note
 // that this line can be empty if the pattern is partitioned into 2 parts. The
@@ -498,7 +498,7 @@ class CustomSearchStrategy : public SearchStrategy {
     void getSearchSchemeFromFolder(std::string pathToFolder, bool verbose);
 
     /**
-     * If the values provied for dynamic partitioning for the given max score
+     * If the values provided for dynamic partitioning for the given max score
      * are valid (i.e. strictly increasing and between 0 and 1). Will throw a
      * runtime error if this is not the case
      * @param maxScore, the score to check
@@ -506,7 +506,7 @@ class CustomSearchStrategy : public SearchStrategy {
     void sanityCheckDynamicPartitioning(const int& maxScore) const;
 
     /**
-     * If the values provied for static partitioning for the given max score
+     * If the values provided for static partitioning for the given max score
      * are valid (i.e. strictly increasing and between 0 and 1). Will throw a
      * runtime error if this is not the case
      * @param maxScore, the score to check
@@ -530,7 +530,7 @@ class CustomSearchStrategy : public SearchStrategy {
                    std::vector<int>& vector) const;
 
     /**
-     * Checks wether the connectivity property is satisfied for all searches and
+     * Checks whether the connectivity property is satisfied for all searches and
      * if all error patterns are covered for all supported scores. Will throw a
      * runtime error if one of these is not satisfied
      * @param verbose if the information about which search covers which pattern
@@ -1062,7 +1062,7 @@ class ManBestStrategy : public SearchStrategy {
 // + 1) sections then every approximate match has an exact match with at
 // least one of the sections. The strategy iterates over the sections, it
 // tries to exactly match the current section, then approximately match the
-// pattern before this section and after the the pattern after this section
+// pattern before this section and after the pattern after this section
 // with the remaining edit distance.
 class PigeonHoleSearchStrategy : public SearchStrategy {
 

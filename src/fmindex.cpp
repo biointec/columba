@@ -77,13 +77,13 @@ length_t FMIndex::findLF(length_t k, bool reversed) const {
 }
 
 length_t FMIndex::findSA(length_t index) const {
-    // if index modulo the sparsefactor is zero then this row is in the sparse
+    // if index modulo the sparse-factor is zero then this row is in the sparse
     // suffix array
     if ((index & (sparseFactorSA - 1)) == 0) {
         return sa[index >> logSparseFactorSA];
     }
 
-    // else iterate over LF mappings untill an index is found that is in the
+    // else iterate over LF mappings until an index is found that is in the
     // sparse suffix array.
     length_t j = 0;
     while ((index & (sparseFactorSA - 1)) != 0) {
@@ -92,7 +92,7 @@ length_t FMIndex::findSA(length_t index) const {
     }
 
     // return the entry of the new found index plus the number of iterations
-    // modulo the lenght of the bwt
+    // modulo the length of the bwt
     length_t ret = sa[index >> logSparseFactorSA] + j;
     if (ret >= bwt.size()) {
         return ret - bwt.size();
@@ -221,7 +221,7 @@ Range FMIndex::matchString(const string& s) {
     // start at the end
     auto it = s.crbegin();
 
-    // find the range for this intitial character in the BWT string
+    // find the range for this initial character in the BWT string
     length_t positionInAlphabet = sigma.c2i((unsigned char)*it);
 
     length_t start = counts[positionInAlphabet];
@@ -235,7 +235,7 @@ Range FMIndex::matchString(const string& s) {
 
     // iterate starting from the second character over the string
     for (++it; it != s.crend(); it++) {
-        // find number of occurences of this char before and after and so the
+        // find number of occurrences of this char before and after and so the
         // new range is found
         positionInAlphabet = sigma.c2i((unsigned char)*it);
         length_t startOfChar = counts[positionInAlphabet];
@@ -373,7 +373,7 @@ bool FMIndex::findRangesWithExtraCharBackward(
     length_t s = rangesOfP.getRangeSARev().getBegin();
 
     // get the start of the child within this range
-    // find the number of occurences of chars smaller than c in the parent
+    // find the number of occurrences of chars smaller than c in the parent
     // range
 
     length_t x = getNumberOfCumOcc(positionInAlphabet, trivialRange.getEnd()) -
@@ -411,7 +411,7 @@ bool FMIndex::findRangesWithExtraCharForward(length_t positionInAlphabet,
     length_t s = rangesOfP.getRangeSA().getBegin();
 
     // get the start of the child within this range
-    // find the number of occurences of chars smaller than c in the parent
+    // find the number of occurrences of chars smaller than c in the parent
     // range
     Range prevRange = rangesOfP.getRangeSARev();
 
@@ -531,7 +531,7 @@ void FMIndex::recApproxMatchEditOptimized(
 
     setDirection(dir);
 
-    // calculate nescessary increase for first column of bandmatrix
+    // calculate necessary increase for first column of bandmatrix
     int prevED = 0;
     if (!initEds.empty()) {
         prevED = (dSwitch ? *min_element(initEds.begin(), initEds.end())
@@ -765,7 +765,7 @@ void FMIndex::recApproxMatchHamming(const Search& s, const FMOcc& startMatch,
                                     const std::vector<Substring>& parts,
                                     const int& idx) {
 
-    // shortcut variabeles
+    // shortcut variables
     const Substring& p = parts[s.getPart(idx)]; // the current part
     const int& pSize = p.size();                // the size of the current part
     const Direction& d = s.getDirection(idx);   // direction of current part
@@ -804,7 +804,7 @@ void FMIndex::recApproxMatchHamming(const Search& s, const FMOcc& startMatch,
                     // end of search
                     occ.push_back(match);
                 } else {
-                    // contine search
+                    // continue search
                     recApproxMatchHamming(s, match, occ, parts, idx + 1);
                 }
             }
@@ -837,7 +837,7 @@ void FMIndex::extendFMPos(const FMPosExt& pos, vector<FMPosExt>& stack) {
 }
 
 // ----------------------------------------------------------------------------
-// POST-PROCESSING ROUTINES FOR APPROXIMAtE PATTERN MATCHING
+// POST-PROCESSING ROUTINES FOR APPROXIMATE PATTERN MATCHING
 // ----------------------------------------------------------------------------
 
 vector<TextOccurrence> FMIndex::convertToMatchesInText(const FMOcc& saMatch) {
@@ -883,7 +883,7 @@ FMIndex::mapOccurencesInSAToOccurencesInText(vector<FMOcc>& occ,
         return m;
     }
 
-    // more than 1 reported occurence, could be redundant
+    // more than 1 reported occurrence, could be redundant
     for (const auto& it : occ) {
 
         const Range& range = it.getRanges().getRangeSA();

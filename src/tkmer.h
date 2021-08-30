@@ -141,7 +141,7 @@ template <size_t numBytes> class TKmer {
     }
 
     /**
-     * Get the represensative kmer (smallest of kmer and reverse complement)
+     * Get the representative kmer (smallest of kmer and reverse complement)
      * @return Representative kmer
      */
     TKmer getRepresentative() const {
