@@ -449,45 +449,32 @@ typedef const std::vector<int> (CustomSearchStrategy::*GetWeightsPtr)(
 class CustomSearchStrategy : public SearchStrategy {
 
   private:
-    std::vector<std::vector<Search>> schemePerED = {
-        {}, {}, {}, {}}; // the search schemes for each distance score, for now
-                         // only scores 1 to 4 are supported
-    std::vector<bool> supportsMaxScore = {
-        false, false, false,
-        false}; // if a particular distance score is supported
+    // the search schemes for each distance score
+    std::vector<std::vector<Search>> schemePerED;
+
+    // if a particular distance score is supported
+    std::vector<bool> supportsMaxScore;
 
     // static partitioning
-    std::vector<std::vector<double>> staticPositions = {
-        {}, {}, {}, {}}; // the static positions per score
-    std::vector<GetBeginsPtr> beginsPointer = {
-        &CustomSearchStrategy::getBeginsDefault,
-        &CustomSearchStrategy::getBeginsDefault,
-        &CustomSearchStrategy::getBeginsDefault,
-        &CustomSearchStrategy::getBeginsDefault}; // pointer to the correct
-                                                  // getBegins() function,
-                                                  // either default or custom
+    std::vector<std::vector<double>> staticPositions;
+
+    // pointer to the correct getBegins() function,
+    // either default or custom
+    std::vector<GetBeginsPtr> beginsPointer;
 
     // dynamic partitioning
-    std::vector<std::vector<double>> seedingPositions = {
-        {}, {}, {}, {}}; // the seeds for dynamic partitioning per score
-    std::vector<std::vector<int>> weights = {
-        {}, {}, {}, {}}; // the weights for dynamic partitioning per score
+    std::vector<std::vector<double>> seedingPositions;
 
-    std::vector<GetSeedingPostitionsPtr> seedingPointer = {
-        &CustomSearchStrategy::getSeedingPositionsDefault,
-        &CustomSearchStrategy::getSeedingPositionsDefault,
-        &CustomSearchStrategy::getSeedingPositionsDefault,
-        &CustomSearchStrategy::getSeedingPositionsDefault,
-    }; // pointer to the correct getSeedingPositions() function, either default
-       // or custom
+    // the weights for dynamic partitioning per score
+    std::vector<std::vector<int>> weights;
 
-    std::vector<GetWeightsPtr> weightsPointers = {
-        &CustomSearchStrategy::getWeightsDefault,
-        &CustomSearchStrategy::getWeightsDefault,
-        &CustomSearchStrategy::getWeightsDefault,
-        &CustomSearchStrategy::getWeightsDefault}; // pointer to the correct
-                                                   // getWeigths() function,
-                                                   // either default or custom
+    // pointer to the correct getSeedingPositions() function,
+    // either default or custom
+    std::vector<GetSeedingPostitionsPtr> seedingPointer;
+
+    // pointer to the correct getWeigths() function,
+    // either default or custom
+    std::vector<GetWeightsPtr> weightsPointers;
 
     /**
      * Retrieves the search scheme from a folder, also checks if the scheme is
@@ -637,10 +624,20 @@ class CustomSearchStrategy : public SearchStrategy {
 
   public:
     CustomSearchStrategy(FMIndex& index, std::string pathToFolder,
+                         size_t number_of_search_schemes,
                          PartitionStrategy p = DYNAMIC,
                          DistanceMetric metric = EDITOPTIMIZED,
                          bool verbose = false)
         : SearchStrategy(index, p, metric) {
+
+        schemePerED.resize(number_of_search_schemes, {});
+        supportsMaxScore.resize(number_of_search_schemes, false);
+        staticPositions.resize(number_of_search_schemes, {});
+        beginsPointer.resize(number_of_search_schemes, &CustomSearchStrategy::getBeginsDefault);
+        seedingPositions.resize(number_of_search_schemes, {});
+        weights.resize(number_of_search_schemes, {});
+        seedingPointer.resize(number_of_search_schemes, &CustomSearchStrategy::getSeedingPositionsDefault);
+        weightsPointers.resize(number_of_search_schemes, &CustomSearchStrategy::getWeightsDefault);
 
         getSearchSchemeFromFolder(pathToFolder, verbose);
     }

@@ -514,7 +514,7 @@ void CustomSearchStrategy::getSearchSchemeFromFolder(string pathToFolder,
 
     // get the info per distance score (scores between 1 and 4 are looked
     // at)
-    for (int i = 1; i <= 4; i++) {
+    for (int i = 1; i <= 10; i++) {
 
         ifstream stream_searches(pathToFolder + to_string(i) + "/searches.txt");
         if (!stream_searches) {
