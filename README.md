@@ -1,7 +1,23 @@
 # Columba
 Fast Approximate Pattern Matching using Search Schemes
 
-These instructions will get you a copy of the project up and running on your local machine.
+Columba was introduced in our [paper](https://doi.org/10.1016/j.isci.2021.102687). If you find this code useful in your research, please cite: 
+```
+@article{RENDERS2021102687,
+title = {Dynamic partitioning of search patterns for approximate pattern matching using search schemes},
+journal = {iScience},
+volume = {24},
+number = {7},
+pages = {102687},
+year = {2021},
+issn = {2589-0042},
+doi = {https://doi.org/10.1016/j.isci.2021.102687},
+url = {https://www.sciencedirect.com/science/article/pii/S2589004221006556},
+author = {Luca Renders and Kathleen Marchal and Jan Fostier},
+keywords = {Algorithms, Bioinformatics, Computer science, High-performance computing in bioinformatics},
+```
+
+The following instructions will get you a copy of the project up and running on your local machine.
 
 #  Prerequisites
 
