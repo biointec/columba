@@ -1,6 +1,6 @@
 /******************************************************************************
  *  Columba: Approximate Pattern Matching using Search Schemes                *
- *  Copyright (C) 2020-2021 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Copyright (C) 2020-2022 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -55,29 +55,6 @@ int editDistDP(string P, string O, int maxED) {
         }
     }
     return mat(m, n);
-}
-
-void printMatches(vector<TextOccurrence> matches, string text, bool printLine,
-                  string duration, FMIndex& mapper, string name) {
-
-    cout << endl;
-
-    cout << name << ":\tduration: " << duration
-         << "µs\t nodes visited: " << mapper.getNodes()
-         << "\t matrix elements written: " << mapper.getMatrixElements()
-         << "\t startpositions reported: " << mapper.getTotalReported()
-         << " #matches: " << matches.size() << endl;
-
-    for (auto match : matches) {
-        cout << "Found match at position " << match.getRange().getBegin()
-             << " with ED " << match.getDistance() << endl;
-
-        cout << "\tCorresponding substring:\t"
-             << text.substr(match.getRange().getBegin(),
-                            match.getRange().getEnd() -
-                                match.getRange().getBegin())
-             << endl;
-    }
 }
 
 string getFileExt(const string& s) {
@@ -191,38 +168,26 @@ vector<pair<string, string>> getReads(const string& file) {
     return reads;
 }
 
-double
-avgVec(vector<length_t> const& v) // note: the average must not be an integer
-{
-    return v.empty() ? 0.0 : accumulate(v.begin(), v.end(), 0.0) / v.size();
-    ;
-}
-
-length_t sum(vector<length_t> const& v) {
-    return accumulate(v.begin(), v.end(), 0.0);
-}
-void writeToOutput(const string& file,
-                   const vector<vector<TextOccurrence>>& mPerRead,
+void writeToOutput(const string& file, const vector<vector<TextOcc>>& mPerRead,
                    const vector<pair<string, string>>& reads) {
 
     cout << "Writing to output file " << file << " ..." << endl;
     ofstream f2;
     f2.open(file);
 
-    f2 << "identifier\tposition\tlength\tED\treverseComplement\n";
+    f2 << "identifier\tposition\tlength\tED\tCIGAR\treverseComplement\n";
     for (unsigned int i = 0; i < reads.size(); i += 2) {
         auto id = reads[i].first;
 
         for (auto m : mPerRead[i]) {
-            f2 << id << "\t" << m.getRange().getBegin() << "\t"
-               << m.getRange().width() << "\t" << m.getDistance() << "\t0\n";
+            f2 << id << "\t" << m.getOutput() << "\t0\n";
         }
 
         for (auto m : mPerRead[i + 1]) {
-            f2 << id << "\t" << m.getRange().getBegin() << "\t"
-               << m.getRange().width() << "\t" << m.getDistance() << "\t1\n";
+            f2 << id << "\t" << m.getOutput() << "\t1\n";
         }
     }
+
     f2.close();
 }
 
@@ -260,25 +225,23 @@ double findMedian(vector<length_t> a, int n) {
 void doBench(vector<pair<string, string>>& reads, FMIndex& mapper,
              SearchStrategy* strategy, string readsFile, length_t ED) {
 
-    size_t totalNodes = 0;
-    size_t totalMatrixElements = 0;
-    size_t allReportedMatches = 0;
-    size_t totalUniqueMatches = 0;
-    size_t mappedReads = 0;
-    size_t mappedReadsForward = 0;
-    size_t mappedReadsBackward = 0;
+    size_t totalUniqueMatches = 0, sizes = 0, mappedReads = 0;
 
     cout << "Benchmarking with " << strategy->getName()
          << " strategy for max distance " << ED << " with "
          << strategy->getPartitioningStrategy() << " partitioning and using "
          << strategy->getDistanceMetric() << " distance " << endl;
+    cout << "Switching to in text verification at "
+         << strategy->getSwitchPoint() << endl;
     cout.precision(2);
 
-    vector<vector<TextOccurrence>> matchesPerRead = {};
+    vector<vector<TextOcc>> matchesPerRead = {};
     matchesPerRead.reserve(reads.size());
 
     std::vector<length_t> numberMatchesPerRead;
     numberMatchesPerRead.reserve(reads.size());
+
+    Counters counters;
 
     auto start = chrono::high_resolution_clock::now();
     for (unsigned int i = 0; i < reads.size(); i += 2) {
@@ -294,28 +257,25 @@ void doBench(vector<pair<string, string>>& reads, FMIndex& mapper,
             cout.flush();
         }
 
-        auto matches = strategy->matchApprox(read, ED);
+        sizes += read.size();
 
-        totalNodes += mapper.getNodes();
-        totalMatrixElements += mapper.getMatrixElements();
-        allReportedMatches += mapper.getTotalReported();
+        auto matches = strategy->matchApprox(read, ED, counters);
         totalUniqueMatches += matches.size();
-        mappedReadsForward += !matches.empty();
 
         // do the same for the reverse complement
-        vector<TextOccurrence> matchesRevCompl =
-            strategy->matchApprox(revCompl, ED);
-        totalNodes += mapper.getNodes();
-        totalMatrixElements += mapper.getMatrixElements();
-        allReportedMatches += +mapper.getTotalReported();
+        vector<TextOcc> matchesRevCompl =
+            strategy->matchApprox(revCompl, ED, counters);
         totalUniqueMatches += matchesRevCompl.size();
-        mappedReadsBackward += !matchesRevCompl.empty();
 
+        // keep track of the number of mapped reads
         mappedReads += !(matchesRevCompl.empty() && matches.empty());
 
-        matchesPerRead.push_back(matches);
-        matchesPerRead.push_back(matchesRevCompl);
-        numberMatchesPerRead.push_back(matches.size() + matchesRevCompl.size());
+        matchesPerRead.emplace_back(matches);
+        matchesPerRead.emplace_back(matchesRevCompl);
+
+        numberMatchesPerRead.emplace_back(matches.size() +
+                                          matchesRevCompl.size());
+
         // correctness check, comment this out if you want to check
         // For each reported match the reported edit distance is checked and
         // compared to a recalculated value using a single banded matrix this
@@ -370,28 +330,49 @@ void doBench(vector<pair<string, string>>& reads, FMIndex& mapper,
               cout << "Could not find occurrence for " << originalPos << endl;
           }*/
     }
+
     auto finish = chrono::high_resolution_clock::now();
     chrono::duration<double> elapsed = finish - start;
     cout << "Progress: " << reads.size() << "/" << reads.size() << "\n";
     cout << "Results for " << strategy->getName() << endl;
 
     cout << "Total duration: " << fixed << elapsed.count() << "s\n";
+    cout << "Average no. nodes: " << counters.nodeCounter / (reads.size() / 2.0)
+         << endl;
+    cout << "Total no. Nodes: " << counters.nodeCounter << "\n";
 
-    cout << "Average no. nodes: " << totalNodes / (reads.size() / 2.0) << endl;
-    cout << "Total no. Nodes: " << totalNodes << "\n";
-    cout << "Average no. matrix elements written: "
-         << totalMatrixElements / (reads.size() / 2.0) << endl;
-    cout << "Total no. matrix elements: " << totalMatrixElements << "\n";
     cout << "Average no. unique matches: "
          << totalUniqueMatches / (reads.size() / 2.0) << endl;
     cout << "Total no. unique matches: " << totalUniqueMatches << "\n";
     cout << "Average no. reported matches "
-         << allReportedMatches / (reads.size() / 2.0) << endl;
-    cout << "Total no. reported matches: " << allReportedMatches << "\n";
-    cout << "Mapped reads :" << mappedReads << endl;
+         << counters.totalReportedPositions / (reads.size() / 2.0) << endl;
+    cout << "Total no. reported matches: " << counters.totalReportedPositions
+         << "\n";
+    cout << "Mapped reads: " << mappedReads << endl;
     cout << "Median number of occurrences per read "
          << findMedian(numberMatchesPerRead, numberMatchesPerRead.size())
          << endl;
+    cout << "Reported matches via in-text verification: "
+         << counters.cigarsInTextVerification << endl;
+    cout << "Unique matches via (partial) in-text verification "
+         << counters.usefulCigarsInText << endl;
+    cout << "Unique matches via pure in-index matching "
+         << counters.cigarsInIndex << endl;
+    cout << "In text verification procedures " << counters.inTextStarted
+         << endl;
+    cout << "Failed in-text verifications procedures: "
+         << counters.abortedInTextVerificationCounter << endl;
+
+    cout << "Aborted in-text relative to started "
+         << (counters.abortedInTextVerificationCounter * 1.0) /
+                counters.inTextStarted
+         << endl;
+    cout << "Immediate switch after first part: " << counters.immediateSwitch
+         << endl;
+    cout << "Searches started (does not include immediate switches) : "
+         << counters.approximateSearchStarted << endl;
+
+    cout << "Average size of reads: " << sizes / (reads.size() / 2.0) << endl;
 
     writeToOutput(readsFile + "_output.txt", matchesPerRead, reads);
 }
@@ -409,6 +390,8 @@ void showUsage() {
     cout << "  -m   --metric\tAdd flag to set distance metric "
             "(editnaive/editopt/hamming) [default = "
             "editopt]\n";
+    cout << "  -i  --in-text\tThe tipping point for in-text verification "
+            "[default = 5]\n";
     cout << "  -ss --search-scheme\tChoose the search scheme\n  options:\n\t"
          << "kuch1\tKucherov k + 1\n\t"
          << "kuch2\tKucherov k + 2\n\t"
@@ -455,6 +438,7 @@ int main(int argc, char* argv[]) {
     string maxED = "0";
     string searchscheme = "kuch1";
     string customFile = "";
+    string inTextPoint = "5";
 
     PartitionStrategy pStrat = DYNAMIC;
     DistanceMetric metric = EDITOPTIMIZED;
@@ -531,6 +515,12 @@ int main(int argc, char* argv[]) {
             } else {
                 throw runtime_error(arg + " takes 1 argument as input");
             }
+        } else if (arg == "-i" || arg == "--in-text") {
+            if (i + 1 < argc) {
+                inTextPoint = argv[++i];
+            } else {
+                throw runtime_error(arg + " takes 1 argument as input");
+            }
         }
 
         else {
@@ -540,7 +530,7 @@ int main(int argc, char* argv[]) {
     }
 
     length_t ed = stoi(maxED);
-    if (ed < 0 || ed > 4) {
+    if (ed < 0 || ed > 6) {
         cerr << ed << " is not allowed as maxED should be in [0, 4]" << endl;
 
         return EXIT_FAILURE;
@@ -551,6 +541,8 @@ int main(int argc, char* argv[]) {
              << " is not allowed as sparse factor, should be in 2^[0, 8]"
              << endl;
     }
+
+    length_t inTextSwitchPoint = stoi(inTextPoint);
 
     if (ed != 4 && searchscheme == "manbest") {
         throw runtime_error("manbest only supports 4 allowed errors");
@@ -568,9 +560,8 @@ int main(int argc, char* argv[]) {
         er += " Did you provide a valid reads file?";
         throw runtime_error(er);
     }
-    cout << "Start creation of BWT approximate matcher" << endl;
 
-    FMIndex bwt = FMIndex(baseFile, saSF);
+    FMIndex bwt = FMIndex(baseFile, inTextSwitchPoint, saSF);
 
     SearchStrategy* strategy;
     if (searchscheme == "kuch1") {
@@ -587,7 +578,6 @@ int main(int argc, char* argv[]) {
         strategy = new PigeonHoleSearchStrategy(bwt, pStrat, metric);
     } else if (searchscheme == "custom") {
         strategy = new CustomSearchStrategy(bwt, customFile, pStrat, metric);
-
     } else if (searchscheme == "naive") {
         strategy = new NaiveBackTrackingStrategy(bwt, pStrat, metric);
     } else {
@@ -595,6 +585,7 @@ int main(int argc, char* argv[]) {
         throw runtime_error(searchscheme +
                             " is not on option as search scheme");
     }
+
     doBench(reads, bwt, strategy, readsFile, ed);
     delete strategy;
     cout << "Bye...\n";

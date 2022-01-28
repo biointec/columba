@@ -1,6 +1,6 @@
 /******************************************************************************
  *  Columba: Approximate Pattern Matching using Search Schemes                *
- *  Copyright (C) 2020-2021 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Copyright (C) 2020-2022 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -126,20 +126,24 @@ bool SearchStrategy::coversPatterns(const vector<Pattern>& patterns,
                                     bool verbose) {
     vector<int> numCover(scheme.size(), 0);
 
+    bool ret = true;
+
     // and error pattern is simply a vector containing
     // the number of errors in each partition P
     for (const Pattern& pattern : patterns) {
+        int numberOfCovers = 0;
 
+        vector<int> searchesThatCover;
         // check if a search covers the pattern
         bool patternCovered = false;
         for (size_t si = 0; si < scheme.size(); si++) {
             const Search& s = scheme[si];
             bool thisCover = true;
-            int numErrors = 0;
+            length_t numErrors = 0;
 
-            // check of search covers pattern
-            for (int i = 0; i < (int)s.getNumParts(); i++) {
-                int p = s.getPart(i);
+            // check if search covers pattern
+            for (length_t i = 0; i < s.getNumParts(); i++) {
+                length_t p = s.getPart(i);
                 numErrors += pattern[p];
                 if ((numErrors > s.getUpperBound(i)) ||
                     (numErrors < s.getLowerBound(i)))
@@ -148,54 +152,70 @@ bool SearchStrategy::coversPatterns(const vector<Pattern>& patterns,
 
             // print the pattern and the search that covers it
             if (thisCover) {
+                searchesThatCover.push_back(si + 1);
+                numberOfCovers++;
                 numCover[si]++;
 
-                patternCovered = true;
                 if (verbose) {
                     cout << "Pattern: ";
-                    for (int i = 0; i < (int)pattern.size(); i++)
+                    for (length_t i = 0; i < pattern.size(); i++)
                         cout << pattern[i];
-                    cout << " is covered by search: (";
-                    for (int i = 0; i < (int)pattern.size(); i++)
+                    cout << " is covered by search:" << si + 1 << " (";
+                    for (length_t i = 0; i < pattern.size(); i++)
                         cout << s.getPart(i);
                     cout << "), (";
-                    for (int i = 0; i < (int)s.getNumParts(); i++)
+                    for (length_t i = 0; i < s.getNumParts(); i++)
                         cout << s.getLowerBound(i);
                     cout << "), (";
-                    for (int i = 0; i < (int)s.getNumParts(); i++)
+                    for (length_t i = 0; i < s.getNumParts(); i++)
                         cout << s.getUpperBound(i);
                     cout << ")";
 
                     if (patternCovered)
-                        cout << " *"; // * means redundant
+                        cout << " * "; // * means redundant
                     cout << endl;
                 }
+                patternCovered = true;
             }
         }
 
         if (!patternCovered && verbose) {
             cout << "Pattern is not covered: ";
-            for (int i = 0; i < (int)pattern.size(); i++)
+            for (length_t i = 0; i < pattern.size(); i++)
                 cout << pattern[i];
             cout << endl;
         }
 
-        if (!patternCovered)
-            return false;
+        ret &= patternCovered;
+
+        if (!ret && !verbose)
+            return ret;
+
+        if (verbose) {
+            cout << "Pattern ";
+            for (length_t i = 0; i < pattern.size(); i++)
+                cout << pattern[i];
+            cout << " is covered by searches: ";
+            for (auto si : searchesThatCover)
+                cout << si << ",";
+            cout << "\n";
+        }
     }
+
+    if (verbose)
+        cout << patterns.size() << " patterns covered" << endl;
 
     // check if all searches cover at least one pattern
     for (size_t i = 0; i < numCover.size(); i++) {
-        if (verbose) {
+        if (verbose)
             cout << "Search " << i << " is used " << numCover[i] << " times\n";
-        }
-        if (numCover[i] == 0) {
+
+        if (numCover[i] == 0)
             cout << "Warning: search " << scheme[i]
                  << " covers no error patterns!\n";
-        }
     }
 
-    return true;
+    return ret;
 }
 
 // ----------------------------------------------------------------------------
@@ -203,7 +223,8 @@ bool SearchStrategy::coversPatterns(const vector<Pattern>& patterns,
 // ----------------------------------------------------------------------------
 void SearchStrategy::partition(const string& pattern, vector<Substring>& parts,
                                const int& numParts, const int& maxScore,
-                               vector<SARangePair>& exactMatchRanges) const {
+                               vector<SARangePair>& exactMatchRanges,
+                               Counters& counters) const {
 
     parts.clear();
 
@@ -212,15 +233,18 @@ void SearchStrategy::partition(const string& pattern, vector<Substring>& parts,
         // character or less or there is only one part
         return;
     }
-
-    (this->*partitionPtr)(pattern, parts, numParts, maxScore, exactMatchRanges);
+    parts.reserve(numParts);
+    (this->*partitionPtr)(pattern, parts, numParts, maxScore, exactMatchRanges,
+                          counters);
 }
 
 // Uniform Partitioning
 
-void SearchStrategy::partitionUniform(
-    const string& pattern, vector<Substring>& parts, const int& numParts,
-    const int& maxScore, vector<SARangePair>& exactMatchRanges) const {
+void SearchStrategy::partitionUniform(const string& pattern,
+                                      vector<Substring>& parts,
+                                      const int& numParts, const int& maxScore,
+                                      vector<SARangePair>& exactMatchRanges,
+                                      Counters& counters) const {
 
     for (int i = 0; i < numParts; i++) {
         parts.emplace_back(pattern, (i * 1.0 / numParts) * pattern.size(),
@@ -237,14 +261,15 @@ void SearchStrategy::partitionUniform(
 
     for (int i = 0; i < numParts; i++) {
         exactMatchRanges[i] =
-            index.matchStringBidirectionally(parts[i], initialRanges);
+            index.matchStringBidirectionally(parts[i], initialRanges, counters);
     }
 }
 
 // Static Partitioning
 void SearchStrategy::partitionOptimalStatic(
     const string& pattern, vector<Substring>& parts, const int& numParts,
-    const int& maxScore, vector<SARangePair>& exactMatchRanges) const {
+    const int& maxScore, vector<SARangePair>& exactMatchRanges,
+    Counters& counters) const {
 
     setParts(pattern, parts, numParts, maxScore);
 
@@ -254,7 +279,7 @@ void SearchStrategy::partitionOptimalStatic(
 
     for (int i = 0; i < numParts; i++) {
         exactMatchRanges[i] =
-            index.matchStringBidirectionally(parts[i], initialRanges);
+            index.matchStringBidirectionally(parts[i], initialRanges, counters);
     }
 }
 
@@ -274,9 +299,11 @@ void SearchStrategy::setParts(const string& pattern, vector<Substring>& parts,
 
 // Dynamic Partitioning
 
-void SearchStrategy::partitionDynamic(
-    const string& pattern, vector<Substring>& parts, const int& numParts,
-    const int& maxScore, vector<SARangePair>& exactMatchRanges) const {
+void SearchStrategy::partitionDynamic(const string& pattern,
+                                      vector<Substring>& parts,
+                                      const int& numParts, const int& maxScore,
+                                      vector<SARangePair>& exactMatchRanges,
+                                      Counters& counters) const {
 
     int matchedChars =
         seed(pattern, parts, numParts, maxScore, exactMatchRanges);
@@ -292,7 +319,8 @@ void SearchStrategy::partitionDynamic(
     for (int j = matchedChars; j < pSize; j++) {
 
         // find the part with the largest range
-        length_t maxRange = 0;
+        length_t maxRangeWeighted = 0;
+
         for (int i = 0; i < numParts; i++) {
             bool noLeftExtension =
                 (i == 0) || parts[i].begin() == parts[i - 1].end();
@@ -301,8 +329,8 @@ void SearchStrategy::partitionDynamic(
             if (noLeftExtension && noRightExtension) {
                 continue;
             }
-            if (exactMatchRanges[i].width() * weights[i] >= maxRange) {
-                maxRange = exactMatchRanges[i].width() * weights[i];
+            if (exactMatchRanges[i].width() * weights[i] > maxRangeWeighted) {
+                maxRangeWeighted = exactMatchRanges[i].width() * weights[i];
                 partToExtend = i;
                 if (noLeftExtension) {
                     // only right extension
@@ -321,7 +349,7 @@ void SearchStrategy::partitionDynamic(
             }
         }
 
-        if (maxRange == 0) {
+        if (maxRangeWeighted == 0) {
             // no need to keep calculating new range, just extend the
             // parts
             extendParts(pattern, parts);
@@ -340,7 +368,7 @@ void SearchStrategy::partitionDynamic(
 
         // match the new character
         index.setDirection(dir);
-        index.addChar(c, exactMatchRanges.at(partToExtend));
+        index.addChar(c, exactMatchRanges.at(partToExtend), counters);
     }
 }
 
@@ -355,11 +383,11 @@ int SearchStrategy::seed(const string& pattern, vector<Substring>& parts,
 
     vector<int> seeds;
     // push the seed for the first part
-    seeds.push_back(0);
+    seeds.emplace_back(0);
 
     // push the optimal seeds for the middle parts
     for (int i = 1; i < numParts - 1; i++) {
-        seeds.push_back((seedPercent[i - 1] * pSize) - (wSize / 2));
+        seeds.emplace_back((seedPercent[i - 1] * pSize) - (wSize / 2));
     }
 
     for (int i = 0; i < numParts - 1; i++) {
@@ -398,58 +426,84 @@ void SearchStrategy::extendParts(const string& pattern,
 // ----------------------------------------------------------------------------
 // (APPROXIMATE) MATCHING
 // ----------------------------------------------------------------------------
-vector<TextOccurrence> SearchStrategy::matchApprox(const string& pattern,
-                                                   length_t maxED) const {
-    index.resetCounters();
+vector<TextOcc> SearchStrategy::matchApprox(const string& pattern,
+                                            length_t maxED,
+                                            Counters& counters) const {
 
     if (maxED == 0) {
-        index.setDirection(BACKWARD);
-        auto result = index.exactMatches(pattern);
-        vector<TextOccurrence> returnvalue;
-        for (length_t startpos : result) {
-            returnvalue.emplace_back(Range(startpos, startpos + pattern.size()),
-                                     0);
-            returnvalue.back().generateOutput();
-        }
-        return returnvalue;
+        return index.exactMatchesOutput(pattern, counters);
     }
     // create the parts of the pattern
     vector<Substring> parts;
 
     // calculate how many parts there will be
-    int numParts = calculateNumParts(maxED);
-    // create the searches
-    const vector<Search>& searches = createSearches(maxED);
+    uint numParts = calculateNumParts(maxED);
 
+    // the ranges corresponding to the exact match for each part
     vector<SARangePair> exactMatchRanges(numParts);
-    partition(pattern, parts, numParts, maxED, exactMatchRanges);
+
+    // partition the read
+    partition(pattern, parts, numParts, maxED, exactMatchRanges, counters);
 
     if (parts.empty() || numParts * maxED >= pattern.size()) {
-        // splitting up was not viable just search the entire pattern
+        // splitting up was not viable -> just search the entire pattern
         cerr << "Warning: Normal bidirectional search was used as "
                 "entered pattern is too short "
              << pattern.size() << endl;
 
-        return index.approxMatchesNaive(pattern, maxED);
+        return index.approxMatchesNaive(pattern, maxED, counters);
     }
 
-    // the vector containing all matches in the suffix array
-    vector<FMOcc> allMatches;
+    // The occurrences in the text and index
+    Occurrences occ;
 
-    index.reserveStacks(numParts, pattern.length());
+    // create the bit-parallel matrix for in-text verification
+    BitParallelED intextMatrix;
+    // set sequence to this matrix
+    intextMatrix.setSequence(pattern);
 
-    // do all searches
+    // END of preprocessing
+
+    // A) do in-text verification for the parts that occur less than the index's
+    // switch point
+    for (uint i = 0; i < numParts; i++) {
+        size_t width = exactMatchRanges[i].width();
+        if (width != 0 && width <= index.getSwitchPoint()) {
+            // do in-text verification on this part
+            const auto& part = parts[i];
+            FMOcc startMatch(exactMatchRanges[i], 0, part.size());
+            index.verifyExactPartialMatchInText(
+                intextMatrix, startMatch, part.begin(), maxED, occ, counters);
+        }
+    }
+
+    // B) do the searches for which the first part occurs more than the switch
+    // point
+
+    // create the searches
+    const vector<Search>& searches = createSearches(maxED);
+    index.reserveStacks(numParts,
+                        pattern.length()); // reserve stacks for each part
+
+    // create the bit-parallel alignment matrices
+    index.resetMatrices(parts.size()); // reset the alignment matrix that will
+                                       // be (possibly) used for each part
+
     for (const Search& s : searches) {
-        doRecSearch(s, parts, allMatches, exactMatchRanges);
+        doRecSearch(intextMatrix, s, parts, occ, exactMatchRanges, counters);
     }
 
     // return all matches mapped to the text
-    return index.mapOccurencesInSAToOccurencesInText(allMatches, maxED);
+    return (distanceMetric != HAMMING)
+               ? occ.getUniqueTextOccurrences(index, maxED, intextMatrix,
+                                              counters)
+               : occ.getTextOccurrencesHamming(index, pattern.size(), counters);
 }
 
-void SearchStrategy::doRecSearch(
-    const Search& s, vector<Substring>& parts, vector<FMOcc>& allMatches,
-    const vector<SARangePair>& exactMatchRanges) const {
+void SearchStrategy::doRecSearch(BitParallelED& intextMatrix, const Search& s,
+                                 vector<Substring>& parts, Occurrences& occ,
+                                 const vector<SARangePair>& exactMatchRanges,
+                                 Counters& counters) const {
 
     if (s.getUpperBound(0) > 0) {
         // first part is allowed an error so start with an empty match
@@ -457,7 +511,8 @@ void SearchStrategy::doRecSearch(
 
         SARangePair startRange = index.getCompleteRange();
         FMOcc startMatch = FMOcc(startRange, 0, 0);
-        (this->*startIdxPtr)(s, startMatch, allMatches, parts, 0);
+        (this->*startIdxPtr)(intextMatrix, s, startMatch, occ, parts, counters,
+                             0);
         return;
     }
 
@@ -465,26 +520,36 @@ void SearchStrategy::doRecSearch(
     int first = s.getPart(0);
     SARangePair startRange = exactMatchRanges[first];
 
-    if (!startRange.empty()) {
+    // if this range is bigger than the switch point
+    if (startRange.width() > index.getSwitchPoint()) {
+
+        // prepare the parts for this search
         s.setDirectionsInParts(parts);
 
-        int partInSearch = 1;
+        // can we continue exact matching according to this search?
+        uint partInSearch = 1;
         length_t exactLength = parts[first].size();
 
         while (s.getUpperBound(partInSearch) == 0) {
             // extend the exact match
             index.setDirection(s.getDirection(partInSearch - 1));
-            startRange = index.matchStringBidirectionally(
-                parts[s.getPart(partInSearch)], startRange);
+            const auto& part = parts[s.getPart(partInSearch)];
+
+            startRange =
+                index.matchStringBidirectionally(part, startRange, counters);
             if (startRange.empty()) {
                 return;
             }
+
             exactLength += parts[s.getPart(partInSearch)].size();
             partInSearch++;
         }
-        FMOcc startMatch = FMOcc(startRange, 0, exactLength);
 
-        (this->*startIdxPtr)(s, startMatch, allMatches, parts, partInSearch);
+        // Create a match corresponding to the exact match
+        FMOcc startMatch = FMOcc(startRange, 0, exactLength);
+        // Start approximate matching in the index
+        (this->*startIdxPtr)(intextMatrix, s, startMatch, occ, parts, counters,
+                             partInSearch);
     }
 }
 // ============================================================================
@@ -558,7 +623,7 @@ void CustomSearchStrategy::getSearchSchemeFromFolder(string pathToFolder,
                 postionsAsString.push_back(token);
             }
 
-            if ((int)postionsAsString.size() != calculateNumParts(i) - 1) {
+            if (postionsAsString.size() != calculateNumParts(i) - 1) {
                 throw runtime_error(
                     "Not enough static positions provided in " + pathToFolder +
                     to_string(i) + "/static_partitioning.txt\nExpected: " +
@@ -594,7 +659,7 @@ void CustomSearchStrategy::getSearchSchemeFromFolder(string pathToFolder,
                 seedsAsString.push_back(token);
             }
 
-            if ((int)seedsAsString.size() != calculateNumParts(i) - 2) {
+            if (seedsAsString.size() != calculateNumParts(i) - 2) {
                 throw runtime_error(
                     "Not enough seeding positions provided in " + pathToFolder +
                     to_string(i) + "/dynamic_partitioning.txt\nExpected: " +
@@ -617,7 +682,7 @@ void CustomSearchStrategy::getSearchSchemeFromFolder(string pathToFolder,
                 weights[i - 1].push_back(stoi(stringWeight));
             }
 
-            if ((int)weights[i - 1].size() != calculateNumParts(i)) {
+            if (weights[i - 1].size() != calculateNumParts(i)) {
                 throw runtime_error(
                     "Not enough weights provided for max score " +
                     to_string(i));
@@ -645,20 +710,20 @@ Search CustomSearchStrategy::makeSearch(const string& line) const {
                             "lower bound and upper bound!");
     }
 
-    vector<int> order;
+    vector<length_t> order;
     getVector(tokens[0], order);
 
-    vector<int> lower_bound;
+    vector<length_t> lower_bound;
     getVector(tokens[1], lower_bound);
 
-    vector<int> upper_bound;
+    vector<length_t> upper_bound;
     getVector(tokens[2], upper_bound);
 
     return Search::makeSearch(order, lower_bound, upper_bound);
 }
 
 void CustomSearchStrategy::getVector(const string& vectorString,
-                                     vector<int>& vector) const {
+                                     vector<length_t>& vector) const {
 
     if (vectorString.size() < 2) {
         throw runtime_error(vectorString +
@@ -669,7 +734,7 @@ void CustomSearchStrategy::getVector(const string& vectorString,
     stringstream ss(bracketsRemoved);
     string token;
     while (getline(ss, token, ',')) {
-        vector.push_back(stoi(token));
+        vector.emplace_back(stoull(token));
     }
 }
 
@@ -726,7 +791,7 @@ void CustomSearchStrategy::sanityCheck(bool verbose) const {
             continue;
         }
         const Search& firstSearch = scheme.front();
-        int P = firstSearch.getNumParts();
+        length_t P = firstSearch.getNumParts();
         // check if all searches have same number of parts
         if (any_of(scheme.begin(), scheme.end(),
                    [P](const Search& s) { return s.getNumParts() != P; })) {
@@ -738,8 +803,9 @@ void CustomSearchStrategy::sanityCheck(bool verbose) const {
         // check if zero based
         if (any_of(scheme.begin(), scheme.end(),
                    [](const Search& s) { return !s.zeroBased(); })) {
-            throw runtime_error("Not all searches are zero based for distance" +
-                                to_string(K) + "!");
+            throw runtime_error(
+                "Not all searches are zero based for distance " + to_string(K) +
+                "!");
         }
 
         // check if connectivity satisfied

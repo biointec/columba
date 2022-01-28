@@ -17,7 +17,7 @@ author = {Luca Renders and Kathleen Marchal and Jan Fostier},
 keywords = {Algorithms, Bioinformatics, Computer science, High-performance computing in bioinformatics},
 ```
 
-The following instructions will get you a copy of the project up and running on your local machine.
+These instructions will get you a copy of the project up and running on your local machine.
 
 #  Prerequisites
 
@@ -131,7 +131,7 @@ To build the FM-index, navigate to the `build` folder and run the following comm
 ```bash
 ./columba-build ../example/genome.hs.chr_21
 ```
-The index files are then written to the same folder. Your directory structure will look like:
+The index files are then written to the same folder. Your directory structure will now look like:
  ```
     .
     ├── cmake
@@ -144,20 +144,36 @@ The index files are then written to the same folder. Your directory structure wi
     |   ├── genome.hs.chr_21.rev.sa
     |   ├── genome.hs.chr_21.rev.txt
     |   ├── genome.hs.chr_21.sa
-    |   ├── genome.hs.chr_21.sa.1    
+    |   ├── genome.hs.chr_21.sa.1 
+    |   ├── genome.hs.chr_21.sa.128 
+    |   ├── genome.hs.chr_21.sa.16      
     |   ├── genome.hs.chr_21.sa.2
-    |   ├── genome.hs.chr_21.sa.4   
-    |   ├── genome.hs.chr_21.sa.8
-    |   ├── genome.hs.chr_21.sa.16    
     |   ├── genome.hs.chr_21.sa.32
+    |   ├── genome.hs.chr_21.sa.4   
     |   ├── genome.hs.chr_21.sa.64
-    |   ├── genome.hs.chr_21.sa.128
+    |   ├── genome.hs.chr_21.sa.8
+    |   ├── genome.hs.chr_21.sa.bv.1  
+    |   ├── genome.hs.chr_21.sa.bv.128
+    |   ├── genome.hs.chr_21.sa.bv.16
+    |   ├── genome.hs.chr_21.sa.bv.2
+    |   ├── genome.hs.chr_21.sa.bv.32
+    |   ├── genome.hs.chr_21.sa.bv.4
+    |   ├── genome.hs.chr_21.sa.bv.64
+    |   ├── genome.hs.chr_21.sa.bv.8
     |   └── genome.hs.chr_21.txt
     ├── search_schemes
     └── src
 ```
 
 Congratulations! You have used columba to build the FM-index of the 21st chormosome of the human genome!
+
+---
+**CAUTION!**
+
+If you have used Columba 1.0 to build your index files you will have to rerun the build process to work with Columba 1.1!
+---
+
+
 ## Using the index
 Columba can align reads in a fasta (`.FASTA`, `.fasta`, `.fa`) or fastq (`.fq`, `.fastq`) format. 
 To align your reads use the following format 
@@ -173,7 +189,8 @@ options:
   -e  --max-ed          maximum edit distance [default = 0]
   -s  --sa-sparseness   suffix array sparseness factor [default = 1]
   -p  --partitioning    Add flag to do uniform/static/dynamic partitioning [default = dynamic]
-  -m  --metric          Add flag to set distance metric (editnaive/editopt/hamming) [default = editopt]\n;
+  -m  --metric          Add flag to set distance metric (editnaive/editopt/hamming) [default = editopt];
+  -i  --in-text	The tipping point for in-text verification [default = 5]
   -ss --search-scheme   Choose the search scheme
   options:
         kuch1   Kucherov k + 1
@@ -188,7 +205,7 @@ options:
         one of the following: fq, fastq, FASTA, fasta, fa
 Following input files are required:
         <base filename>.txt: input text T
-        <base filename>.cct: charachter counts table
+        <base filename>.cct: character counts table
         <base filename>.sa.[saSF]: suffix array sample every [saSF] elements
         <base filename>.bwt: BWT of T
         <base filename>.brt: Prefix occurrence table of T
@@ -196,8 +213,8 @@ Following input files are required:
     
 ```
 
-The number of nodes, number of matrix elements, duration, and number of matches will be printed to stdout. 
-The matches will be written to a custom output file in the folder where your readfile was. This output file will be a tab-seperated file with the fields: `identifier`, `position`, `length`, `ED` and `reverse strand`. For each optimal alignment under the maximal given edit distance a line will be present. This output file will be called `readfile_output.txt`.
+The number of nodes, duration, and number of reported/unique matches will be printed to stdout, as well as the number of matches found entirely in the index, the number of unique matches found via in-text verification, the number of started and failed in-text verification procedures and the number of searches that started in the index.
+The matches will be written to a custom output file in the folder where your readfile was. This output file will be a tab- separated file with the fields: `identifier`, `position`, `length`, `ED`, `CIGAR` and `reverse strand`. For each optimal alignment under the maximal given edit distance a line will be present. This output file will be called `readfile_output.txt`.
 
 
 
@@ -208,7 +225,7 @@ The matches will be written to a custom output file in the folder where your rea
 Consider the final directory structure from [example 1](##Example-1). 
 Copy this [file](https://github.com/biointec/columba/releases/download/example/genome.hs.chr_21.reads.fasta) to this directory. 
 This file contains 100 000 reads of length 100 all sampled from the reference text. Thus, each read will have at least one exact occurrence.
-If you want to align these reads using the Pigeonhole scheme with k = 3 and using the edit distance and optimal static partitioning to our refercen text, run the following command in the `build` folder:
+If you want to align these reads using the Pigeonhole scheme with k = 3 and using the edit distance and optimal static partitioning to our reference text, run the following command in the `build` folder:
 ```bash
 ./columba -e 3 -ss pigeon -m editopt -p static ../example/genome.hs.chr_21 ../example/genome.hs.chr_21.reads.fasta
 ```
@@ -260,7 +277,7 @@ Congratulations! You are now able to use Columba to align reads to the 21st chro
 The search scheme can either be one of the hardcoded search schemes present in Columba or you can provide a custom search scheme. In the `search_schemes` folder a number of search schemes is already present. 
 
 To make your own search scheme you need to create a folder containing at least a file called `name.txt`, which contains the name of your scheme on the first line. 
-For every maximum edit/hamming distance a subfolder should be present, which contains at least the file `searches.txt`. In this file the searches of your scheme are written line per line. Each line contains of three space-seperated arrays: pi, L and U. Each array is written between curly braces {} and the values are comma-seperated.
+For every maximum edit/hamming distance a subfolder should be present, which contains at least the file `searches.txt`. In this file the searches of your scheme are written line per line. Each line contains of three space-separated arrays: pi, L and U. Each array is written between curly braces {} and the values are comma-separated.
 
 ---
 **NOTE**
@@ -269,11 +286,11 @@ The pi array should be zero-based! The connectivity property should always be sa
 
 ---
 ### Static Partitioning
-If you want to provide optimal static partitioning you can create a file named `static_partitioning.txt` in the folder of the maximum edit/hamming distance this partitioning is for. This file should contain one line with percentages (values between 0 and 1) seperated by spaces. The ith percentage corresponds to the starting position (relative to the size of the pattern) of the (i + 1)th part (again this is zero based). The starting position of the first part is always zero and should **not** be provided.
+If you want to provide optimal static partitioning you can create a file named `static_partitioning.txt` in the folder of the maximum edit/hamming distance this partitioning is for. This file should contain one line with percentages (values between 0 and 1) separated by spaces. The ith percentage corresponds to the starting position (relative to the size of the pattern) of the (i + 1)th part (again this is zero based). The starting position of the first part is always zero and should **not** be provided.
 
 ### Dynamic Partitionining
 Similarly, to provide values for dynamic partitioning you can create a file called `dynamic_partitioning.txt`. This file should contain two lines. The first line are percentages (again between 0 and 1) that correspond to the seeding positions, relative to the size of the pattern, of all parts, except the first and last part. 
-The second line should contain space-seperated integers corresponding to the weights of each part.
+The second line should contain space-separated integers corresponding to the weights of each part.
 
 ### Folder Structure Example
 Consider a search scheme which supports maximal edit/hamming distances 1, 2 and 4. For distance 1 no static or dynamic partitioning values are known. For distance 2 only static partitioning values are known and for distance 4 both static and dynamic partitioning values are known. The folder structure of this search scheme should look like this:
@@ -302,11 +319,19 @@ Consider the pigeon hole search scheme for maximum edit distance 4. The `searche
 {4,3,2,1,0} {0,0,0,0,0} {0,4,4,4,4}
 ```
 
+### Example 2
+The adapted search schemes based on those by Kucherov can be found in the directories:
+`search_schemes/kuch_k+1_adapted` and `search_schemes/kuch_k+2_adapted`.
+
 ### Other examples
 In the `search_schemes` folder the hardcoded search schemes of Columba are available as custom search schemes. 
 
+## In-text verification
+Columba 1.1 introduces the ability to switch to in-text verification if the number of occurrences in the reference text is lower then some tipping point t. This tipping point can be set via the parameter `-i` or `--in-text`.
 
-# Reproducing results
+
+# Reproducing results 1
+The results form our paper: [Dynamic partitioning of search patterns for approximate pattern matching using search schemes](https://doi.org/10.1016/j.isci.2021) can be reproduced by using the following instructions.
 
 ## Dataset
 
@@ -421,6 +446,4 @@ To reproduce the results run
 ./columba -ss kuch1 -e [k] -partitioning [part] basefile readsfile
 ```
 from the `build` folder. Where readsfile is the file containing the PacBio seeds.
-
-
 

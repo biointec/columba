@@ -1,6 +1,6 @@
 /******************************************************************************
  *  Columba: Approximate Pattern Matching using Search Schemes                *
- *  Copyright (C) 2020-2021 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Copyright (C) 2020-2022 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -19,103 +19,14 @@
 #ifndef BANDMATRIX_H
 #define BANDMATRIX_H
 
+#include <cmath>
 #include <cstdio>
 #include <iostream>
 #include <vector>
 
+#include "substring.h"
+
 typedef uint32_t length_t;
-
-// ============================================================================
-// CLASS EDIT DISTANCE
-// ============================================================================
-
-// The edit Distance class has two fields, an unsigned integer that stores the
-// actual edit distance and a boolean flagged, signifiying if this ED originated
-// from a flagged path
-
-// the data is a 32 unsigned bit and the most significant bit is reserved for
-// the flag while the other 31 bits are for the actual edit distance
-class EditDistance {
-  private:
-    length_t data;
-
-  public:
-    EditDistance() {
-        data = 0u;
-    }
-
-    EditDistance(int edit) {
-        data = edit;
-    }
-
-    EditDistance(int edit, bool flag) {
-        data = (flag) ? (1u << 31) | edit : edit;
-    }
-
-    void setED(int edit) {
-        data = (data & 31) | edit;
-    }
-
-    unsigned int getED() const {
-        unsigned int ret = (data << 1) >> 1;
-        return ret;
-    }
-
-    bool isFlagged() const {
-        return ((data >> 31) > 0);
-    }
-
-    /**
-     * Operator overloading creates a new edit distance with the added distance
-     * @param toAdd the value to add to this edit distance
-     * @returns a new EditDistance instance with the increased edit distance and
-     * same flag as the current one
-     */
-    EditDistance operator+(unsigned int toAdd) const {
-
-        return EditDistance(getED() + toAdd, isFlagged());
-    }
-
-    /**
-     * Operator overloading. Comparing two edit distances goes as follows: if
-     * their ED's are equal then a flagged instance is smaller than a non
-     * flagged. Else the one with the smallest ED is the smallest
-     * @param argument the EditDistance to compare to this
-     * @returns a bool indicating whether this is smaller
-     */
-    bool operator<=(const EditDistance& argument) const {
-        // first, look at equal edit distance
-
-        if (getED() == argument.getED()) {
-            // both flagged or not flagged => equal => true
-            // if this flagged and other not => true
-            // if this is not flagged and other is => false
-            return (isFlagged() || !argument.isFlagged());
-        }
-        return getED() < argument.getED();
-    }
-
-    /**
-     * Operator overloading.
-     * This returns a bool indicating whether this is smaller then some integer
-     * @param argument the integer to compare to
-     * @returns true if this is not flagged and smaller or equal, else it will
-     * return false
-     */
-    bool operator<=(unsigned int argument) const {
-        // a flagged reported instance is never smaller then an argument
-        return !isFlagged() && getED() <= argument;
-    }
-
-    /**
-     * Makes a string representation of this.
-     * @returns the string representation of this EditDistance
-     */
-    std::string to_string() {
-        std::string flagString = (isFlagged() ? "*" : "");
-        return std::to_string(getED()) + flagString;
-    }
-};
 
 // ============================================================================
 // CLASS BANDED MATRIX
@@ -364,160 +275,534 @@ class BandMatrix {
 };
 
 // ============================================================================
-// CLASS EDIT MATRIX
+// CLASS BIT-PARALLEL-ED MATRIX
 // ============================================================================
 
-// This is a band matrix but it elements are of class
-// EditDistance. This checks whether an EditDistance originates from a path that
-// has a leading gap and will flag as such
+typedef struct {
+    uint64_t HP;    // bit vector to indicate which delta_H == +1
+    uint64_t HN;    // bit vector to indicate which delta_H == -1
+    uint64_t D0;    // bit vector to indicate which delta_D == 0
+    uint64_t RAC;   // bit vector to indicate the Rightmost Active Column
+                    // = rightmost column with a value <= maxED
+    uint64_t score; // score at the diagonal
+} BitVectors;
 
-class EditMatrix {
-  private:
-    std::vector<EditDistance> matrix; // the matrix
-    length_t W;                       // the width of the matrix
-    const static int Wprod = 16;
+typedef struct {
+    uint64_t A; // match vector to indicate occurrences of A in X
+    uint64_t C; // match vector to indicate occurrences of C in X
+    uint64_t G; // match vector to indicate occurrences of G in X
+    uint64_t T; // match vector to indicate occurrences of T in X
+} MatchVectors;
 
-    /** Helper function for update matrix, it checks which path to take, the
-     * diagonal, horizontal or vertical path.
-     * @param diag the value for the element if the diagonal path is chosen
-     * @param gapX the value for the element if the horizontal path is chosen
-     * @param gapY the value for the element if the vertical path is chosen
-     *
-     * @returns the best element out of the three provided.
-     */
-    EditDistance chooseBestElement(EditDistance& diag, EditDistance& gapX,
-                                   EditDistance& gapY) {
-        // need to check if for the optimal value one of the paths is flagged
-        // so we need to find the smallest
+#define WORD_SIZE (64ull)
+#define BLOCK_SIZE (32ull)
+#define MAX_ED ((WORD_SIZE - BLOCK_SIZE - 2ull) / 3ull)
+#define LEFT (2ull * MAX_ED + 1ull)
+#define DIAG_R0 (2ull * MAX_ED)
 
-        if ((diag <= gapX) && (diag <= gapY)) {
-            return diag;
-        }
-        if (gapX <= gapY) {
-            return gapX;
-        }
-        return gapY;
-    }
-
-    /**
-     * Helper function for initializing the matrix. The top row and left most
-     * collumn are filled in with as value their row/column number plus a
-     * startvalue. If the noLeadingGaps argument is true than the leftmost
-     * column will be flagged (except the origin).
-     * @param noLeadingGaps a bool to indicate if leading gaps are allowed
-     * @param startValue the value of the origin, default is 0
-     */
-    void initializeMatrix(bool noLeadingGapsText, bool noLeadingGapsPattern,
-                          int startValue = 0) {
-        for (length_t i = 0; i <= W; i++) {
-            operator()(i, 0) = EditDistance(i + startValue, noLeadingGapsText);
-            operator()(0, i) =
-                EditDistance(i + startValue, noLeadingGapsPattern);
-        }
-        operator()(0, 0) = EditDistance(startValue, false);
-    }
-
+class BitParallelED {
   public:
     /**
      * Constructor
-     * @param m Number of rows
-     * @param W Number of off-diagonal elements (one sided)
      */
-    EditMatrix(length_t m, int W, int startValue, bool leadingGapsAllowedText,
-               bool leadingGapsAllowedPattern)
-        : W(W) {
-        matrix.resize(m * Wprod);
-        initializeMatrix(!leadingGapsAllowedText, !leadingGapsAllowedPattern,
-                         startValue);
+    BitParallelED() {
+        // create the alphabet mappingS
+        char2idx = std::vector<char>(256, 4);
+        char2idx['A'] = 0;
+        char2idx['C'] = 1;
+        char2idx['G'] = 2;
+        char2idx['T'] = 3;
     }
 
     /**
-     * Operator () overloading
+     * Bit-encode the horizontal sequence X. Call this routine BEFORE calling
+     * initializeMatrix(). You may call initializeMatrix() multiple times
+     * (with different initialization settings) with a fixed sequence X.
+     */
+    void setSequence(const Substring& X) {
+        n = X.size() + 1;   // number of columns
+        m = 2 * MAX_ED + n; // this is an upper bound, the exact maxED
+                            // is specified during initializeMatrix()
+
+        // allocate and initialize the match vectors
+        mv.resize((m + BLOCK_SIZE - 1) / BLOCK_SIZE);
+
+        // encode the first block
+        const uint64_t init = (1ull << LEFT) - 1;
+        // first left bits are set to 1 for each characters, so that
+        // initialization vector can propagate to first actual column
+        mv[0] = {init, init, init, init};
+        uint64_t bitmask = 1ull << LEFT;
+        size_t je = std::min<size_t>(X.size(), WORD_SIZE - LEFT);
+        for (size_t j = 0; j < je; j++) {
+            assert(char2idx[X[j]] < 4); // assert ACTG alphabet
+            mv[0][char2idx[X[j]]] |= bitmask;
+            bitmask <<= 1;
+        }
+
+        // encode the remaining blocks
+        for (size_t b = 1; b < mv.size(); b++) {
+            // first blocksize bits of block b equal last blocksize bits of
+            // block b - 1
+            mv[b][0] = mv[b - 1][0] >> BLOCK_SIZE;
+            mv[b][1] = mv[b - 1][1] >> BLOCK_SIZE;
+            mv[b][2] = mv[b - 1][2] >> BLOCK_SIZE;
+            mv[b][3] = mv[b - 1][3] >> BLOCK_SIZE;
+
+            bitmask = 1ull << (WORD_SIZE - BLOCK_SIZE);
+            size_t jb = WORD_SIZE - LEFT + (b - 1) * BLOCK_SIZE;
+            size_t je = std::min<size_t>(X.size(), jb + BLOCK_SIZE);
+            for (size_t j = jb; j < je; j++) {
+                assert(char2idx[X[j]] < 4); // assert ACTG alphabet
+                mv[b][char2idx[X[j]]] |= bitmask;
+                bitmask <<= 1;
+            }
+        }
+    }
+
+    /**
+     * Initialize the alignment matrix
+     * @param maxED Maximum edit distance allowed during alignment
+     * @param initED Edit distances of column zero (default = 0, 1, ... maxED)
+     */
+    void initializeMatrix(uint maxED, const std::vector<uint>& initED = {}) {
+        // make sure maxED is within supported range
+        assert(maxED <= MAX_ED);
+
+        // sanity check on the initED vector
+        assert(initED.empty() || initED.front() <= maxED);
+        assert(initED.empty() || initED.back() <= maxED);
+
+        this->maxED = maxED;            // store the maximum ED
+        Wv = (initED.empty()) ? maxED : // vertical width of the band
+                 initED.size() - 1 + maxED - initED.back();
+
+        // sanity check on the size of initED
+        assert(Wv <= 2 * MAX_ED);
+
+        m = Wv + n; // number of rows
+
+        // allocate and initialize bit vectors
+        bv.resize(m);
+        bv[0].score = initED.empty() ? 0 : initED[0];
+        Wh = maxED - bv[0].score; // horizontal width of the band
+
+        // initialize top row as [2*MAX_ED, ..., 2, 1, 0, 1, 2, ...]
+        // decrease in first LEFT bits and increase in remaining bits
+        bv[0].HP = (~0ull) << LEFT;
+        bv[0].HN = ~bv[0].HP;
+
+        // correct top row if initED has been specified
+        for (size_t i = 1; i < std::min<size_t>(initED.size(), LEFT + 1); i++) {
+            if (initED[i] < initED[i - 1]) {
+                bv[0].HP ^= 1ull << (LEFT - i); // set HP to 1
+                bv[0].HN ^= 1ull << (LEFT - i); // set HN to 0
+            } else if (initED[i] == initED[i - 1]) {
+                bv[0].HN ^= 1ull << (LEFT - i); // set HN to 0
+            }
+        }
+
+        // RAC equals the right-most active element
+        bv[0].RAC = 1ull << (DIAG_R0 + Wh);
+    }
+
+    /**
+     * Compute a row of the edit distance matrix in a bit-parallel manner
+     * @param i row index in range [1...m]
+     * @param Y character of Y-sequence at row i
+     * @return false if all elements on row i exceed maxED, true otherwise
+     */
+    bool computeRow(uint i, char Y) {
+        assert(i > 0);
+        assert(i < m);
+        assert(char2idx[Y] < 4);
+
+        // define BLOCK_SIZE as power of two to make sure this is fast:
+        const uint b = i / BLOCK_SIZE; // block identifier
+        const uint l = i % BLOCK_SIZE; // leftmost relevant bit
+
+        // aliases to the bit vectors of the current row i (will be computed)
+        uint64_t& HP = bv[i].HP;
+        uint64_t& HN = bv[i].HN;
+
+        uint64_t& D0 = bv[i].D0;
+        uint64_t& RAC = bv[i].RAC;
+
+        // select the right match vector
+        const uint64_t& M = mv[b][char2idx[Y]];
+
+        // copy the input vectors pertaining the previous row i-1
+        HP = bv[i - 1].HP;
+        HN = bv[i - 1].HN;
+        RAC = bv[i - 1].RAC << 1;
+
+        // if we are entering a new block, shift input vectors to the right
+        // so that they align with the current block
+        if (i % BLOCK_SIZE == 0) {
+            HP >>= BLOCK_SIZE;
+            HN >>= BLOCK_SIZE;
+            RAC >>= BLOCK_SIZE;
+        }
+
+        // compute the 5 bitvectors that encode the edit distance minScore
+        // (Hyyro)s
+        D0 = (((M & HP) + HP) ^ HP) | M | HN;
+        uint64_t VP = HN | ~(D0 | HP);
+        uint64_t VN = D0 & HP;
+        HP = (VN << 1) | ~(D0 | (VP << 1));
+        HN = (D0 & (VP << 1));
+
+        // compute the minScore at the diagonal
+        const size_t diagBit = l + DIAG_R0;
+        bv[i].score = bv[i - 1].score + (D0 & (1ull << diagBit) ? 0 : 1);
+
+        // update the rightmost active column (Hyyro)
+        // if not a match on the previous RAC, the RAC needs to be updated
+        if ((D0 & RAC) == 0) {
+            size_t val = 1u;
+            while (val > 0) {
+                if (HP & RAC)
+                    val--;
+                if (HN & RAC)
+                    val++;
+                if (RAC == (1ull << (diagBit - Wv)))
+                    return false;
+                RAC >>= 1;
+            }
+        }
+
+        return true;
+    }
+
+    void
+    findLocalMinimaRow(uint i, uint maxED,
+                       std::vector<std::pair<uint, uint>>& posAndScore) const {
+
+        uint jMin = getFirstColumn(i);
+        uint jMax = getLastColumn(i);
+
+        for (uint j = jMin; j <= jMax; j++) {
+            uint score = operator()(i, j);
+
+            if (score <= maxED &&
+                (j == jMin || score <= operator()(i, j - 1)) &&
+                (j == jMax || score <= operator()(i, j + 1))) {
+                posAndScore.emplace_back(j, score);
+            }
+        }
+    }
+
+    /**
+     * Find the minimum edit distance value and its position on a row
+     * Find the minimum edit distance value and its position in a row
+     * @param i Row index
+     * @param jMin Column index at which minimum value is found (output)
+     * @param minScore Mimumum value (output)
+     */
+    void findMinimumAtRow(uint i, uint& jMin, uint& minScore) const {
+        jMin = getFirstColumn(i);
+        minScore = operator()(i, jMin);
+
+        for (uint j = getFirstColumn(i) + 1; j <= getLastColumn(i); j++) {
+            uint thisScore = operator()(i, j);
+            if (thisScore < minScore) {
+                minScore = thisScore;
+                jMin = j;
+            }
+        }
+    }
+
+    enum CIGARstate { M, I, D, NOTHING };
+
+    /**
+     * Check if a certain row contains the final column (column n+1)
+     * @param i The row index
+     * @return True of false
+     */
+    bool inFinalColumn(const length_t i) const {
+        return i >= getNumberOfRows() - getSizeOfFinalColumn();
+    }
+
+    /**
+     * Find the CIGAR string of the alignment of a reference substring to
+     * the query sequence the matrix was initialized with. The sequence
+     * should be set before calling this function
+     * @param ref the reference string that was aligned
+     * @param score the alignment score between ref and query
+     * @param CIGAR (output) the CIGAR string of the alignment
+     */
+    void findCIGAR(const Substring& ref, const uint score,
+                   std::vector<std::pair<char, uint>>& CIGAR) {
+        CIGAR.clear();
+        CIGAR.reserve(2 * score + 1);
+        // initialize the matrix with the alignment score
+        initializeMatrix(score);
+
+        // compute the rows
+        for (unsigned int i = 0; i < ref.size(); i++) {
+            computeRow(i + 1, ref[i]);
+        }
+
+        // trackback starting from the final cell
+        uint i = ref.size();
+        uint j = n - 1;
+        assert(operator()(i, j) == score);
+
+        CIGARstate state = NOTHING;
+
+        while (j > 0 || i > 0) {
+            const uint b = i / BLOCK_SIZE; // block identifier
+            const uint64_t& M = mv[b][char2idx[ref[i - 1]]];
+            uint64_t bit = 1ull << ((j - b * BLOCK_SIZE) + DIAG_R0);
+
+            if ((j > 0) && bv[i].HP & bit) { // gap in horizontal
+                j--;
+                if (state != CIGARstate::I) {
+                    CIGAR.emplace_back('I', 0);
+                    state = CIGARstate::I;
+                }
+            } else if ((i > 0 && j > 0) &&
+                       ((M | ~bv[i].D0) & bit)) { // diagonal
+                i--;
+                j--;
+                if (state != CIGARstate::M) {
+                    CIGAR.emplace_back('M', 0);
+                    state = CIGARstate::M;
+                }
+
+            } else { // gap in vertical
+                i--;
+                if (state != CIGARstate::D) {
+                    CIGAR.emplace_back('D', 0);
+                    state = CIGARstate::D;
+                }
+            }
+
+            CIGAR.back().second++;
+        }
+        std::reverse(CIGAR.begin(), CIGAR.end());
+    }
+
+    void findClusterCenters(const uint lastRow, std::vector<uint>& refEnds,
+                            uint maxED, uint minED) {
+
+        refEnds.reserve(getSizeOfFinalColumn());
+
+        uint firstRow = (m - 1) - getSizeOfFinalColumn();
+
+        uint col = n - 1;
+
+        for (uint i = lastRow; i > (m - 1) - getSizeOfFinalColumn(); i--) {
+            uint ED = operator()(i, col);
+            if (ED > maxED || ED < minED) {
+                continue;
+            }
+            bool betterThanAbove =
+                (i == firstRow) || ED <= operator()(i - 1, col);
+            bool betterThanBelow =
+                (i == lastRow) || ED <= operator()(i + 1, col);
+            if (betterThanAbove && betterThanBelow) {
+                refEnds.emplace_back(i);
+            }
+        }
+    }
+
+    /**
+     * Do backtracking and compute CIGAR string
+     * @param ref reference sequence, pattern P should be set using
+     * setSequence(P)(...)$
+     * @param refEnd End offset of the reference sequence
+     * @param refBegin Begin offset of the reference sequence (output)
+     * @param ED Edit distance score associated with this alignment (output)
+     * @param CIGAR CIGAR string (output)
+     */
+    void trackBack(const Substring& ref, const uint refEnd, uint& refBegin,
+                   uint& ED, std::vector<std::pair<char, uint>>& CIGAR) const {
+
+        CIGAR.clear();
+        CIGAR.reserve(2 * MAX_ED + 1);
+
+        uint i = refEnd;
+        uint j = n - 1;
+        ED = operator()(i, j);
+
+        CIGARstate state = NOTHING;
+
+        while (j > 0) {
+            const uint b = i / BLOCK_SIZE; // block identifier
+            const uint64_t& M = mv[b][char2idx[ref[i - 1]]];
+            uint64_t bit = 1ull << ((j - b * BLOCK_SIZE) + DIAG_R0);
+
+            if (bv[i].HP & bit) { // gap in horizontal direction -> insertion
+                j--;
+                if (state != CIGARstate::I) {
+                    CIGAR.emplace_back('I', 0);
+                    state = CIGARstate::I;
+                }
+
+            } else if ((i > 0) && ((M | ~bv[i].D0) & bit)) { // diagonal
+                i--;
+                j--;
+                if (state != CIGARstate::M) {
+                    CIGAR.emplace_back('M', 0);
+                    state = CIGARstate::M;
+                }
+
+            } else { // gap in vertical direction
+                i--;
+                if (state != CIGARstate::D) {
+                    CIGAR.emplace_back('D', 0);
+                    state = CIGARstate::D;
+                }
+            }
+
+            CIGAR.back().second++;
+        }
+
+        std::reverse(CIGAR.begin(), CIGAR.end());
+        refBegin = i;
+    }
+
+    /**
+     * Operator () overloading -- this procedure is O(1)
      * @param i Row index
      * @param j Column index
-     * @return Element at position (i, j)
+     * @return Score at position (i, j)
      */
-    EditDistance operator()(length_t i, int j) const {
-        return matrix[i * Wprod + j - i + W];
+    uint operator()(uint i, uint j) const {
+        // make sure i and j are within matrix bounds
+        assert(i < m);
+        assert(j < n);
+
+        // we need the bits in the range [b,e[ in HN and HP
+        const uint bit = (i % BLOCK_SIZE) + DIAG_R0;
+        uint b = (i > j) ? bit - (i - j) + 1 : bit + 1;
+        uint e = (i > j) ? bit + 1 : bit + (j - i) + 1;
+
+        uint64_t mask = ((1ull << (e - b)) - 1ull) << b;
+        int negatives = __builtin_popcountll(bv[i].HN & mask);
+        int positives = __builtin_popcountll(bv[i].HP & mask);
+
+        uint score = bv[i].score;
+        score += (i > j) ? (negatives - positives) : (positives - negatives);
+        return score;
     }
 
     /**
-     * Operator () overloading
-     * @param i Row index
-     * @param j Column index
-     * @return Reference to element at position (i, j)
+     * Check whether after row i, the alignment involves only vertical gaps.
+     * This happens when row i includes the final column n and when all
+     * values on row i decrease monotonically
+     * @return true of false
      */
-    EditDistance& operator()(length_t i, int j) {
-        return matrix[i * Wprod + j - i + W];
+    bool onlyVerticalGapsLeft(uint i) const {
+        assert(i < m);
+
+        if (i + LEFT < n) // if the column n is not yet reached on row i
+            return false;
+
+        const uint b = i / BLOCK_SIZE;
+        const uint r = i % BLOCK_SIZE;
+
+        // check if all relevant bits for HN are set to 1
+        size_t bb = DIAG_R0 - Wv + r + 1;
+        size_t be = DIAG_R0 + n - b * BLOCK_SIZE;
+        return (((~bv[i].HN >> bb) << bb) << (64 - be)) == 0ull;
     }
 
     /**
-     * Get the band width
-     * @return The band width
+     * Retrieves the first column index that is in the band for the
+     * row
+     * @param i The row
+     * @returns The first column of the row
      */
-    int getWidth() const {
-        return W;
+    uint getFirstColumn(uint i) const {
+        return (i <= Wv) ? 0u : i - Wv;
     }
 
     /**
-     * Prints the matrix, for debugging purposes
+     * Retrieves the last column index that needs to be filled in for the
+     * row
+     * @param i The row to fill in
+     * @returns The last column to fill in
      */
-    void printMatrix() {
-        length_t m = matrix.size() / Wprod;
-
-        for (length_t i = 0; i < m; i++) {
-            length_t firstCol = std::max<int>(1, i - W);
-            length_t lastCol = std::min<int>(m, i + W);
-            std::string row = "";
-            for (length_t j = 0; j < firstCol; j++) {
-                row += ".\t";
-            }
-            for (length_t j = firstCol; j <= lastCol; j++) {
-                row += (operator()(i, j)).to_string() + "\t";
-            }
-            for (length_t j = lastCol + 1; j < 2 * W + 1; j++) {
-                row += ".\t";
-            }
-            std::cout << row << std::endl;
-        }
-    }
-
-    void printRow(int i) {
-        length_t m = matrix.size() / Wprod;
-        length_t firstCol = std::max<int>(1, i - W);
-        length_t lastCol = std::min<int>(m, i + W);
-        std::string row = "";
-        for (length_t j = 0; j < firstCol; j++) {
-            row += ".\t";
-        }
-        for (length_t j = firstCol; j <= lastCol; j++) {
-            row += (operator()(i, j)).to_string() + "\t";
-        }
-        for (length_t j = lastCol + 1; j < 2 * W + 1; j++) {
-            row += ".\t";
-        }
-        std::cout << row << std::endl;
+    uint getLastColumn(uint i) const {
+        return std::min(n - 1, i + Wh);
     }
 
     /**
-     * Update the matrix by calculating the element at position row, column.
-     * @param match whether the character was a match
-     * @param row the row of the element to update
-     * @param collumn the column of the element to update
+     * Get the number of columns in the matrix
+     * @return The number of columns in the matrix (== X.size() + 1)
      */
-    void updateMatrix(bool notMatch, unsigned int row, unsigned int collumn) {
-        EditDistance diag = operator()(row - 1, collumn - 1) + notMatch;
-
-        // watch out for integer overflow
-        unsigned int diffRowAndW = (row >= W) ? row - W : 0;
-        EditDistance gapX =
-            (collumn > diffRowAndW) ? operator()(row, collumn - 1) + 1
-                                    : diag + 1;
-        EditDistance gapY =
-            (collumn < row + W) ? operator()(row - 1, collumn) + 1 : diag + 1;
-
-        operator()(row, collumn) = chooseBestElement(diag, gapX, gapY);
+    uint getNumberOfCols() const {
+        return n;
     }
+
+    /**
+     * Get the number of rows in the matrix
+     * @return The number of rows in the matrix (== Y.size() + 1)
+     */
+    uint getNumberOfRows() const {
+        return m;
+    }
+
+    /**
+     * Check whether setSequenceX() has been called
+     * @return True or false
+     */
+    bool sequenceSet() const {
+        return !mv.empty();
+    }
+
+    void reset() {
+        mv.clear();
+    }
+
+    /**
+     * Get the vertical size of the final column
+     * @return  the vertical size of the final column
+     */
+    uint getSizeOfFinalColumn() const {
+        return Wh + Wv + 1;
+    }
+
+    /**
+     * Print the banded matrix
+     * @param maxRow Last row index to print
+     */
+    void printMatrix(uint maxRow = 500) const {
+        for (uint i = 0; i < std::min<uint>(maxRow + 1, m); i++) {
+
+            uint firstCol = getFirstColumn(i);
+            uint lastCol = getLastColumn(i);
+            std::cout << (i < 10 ? "0" : "") << std::to_string(i);
+            std::cout << " [" << getFirstColumn(i) << "," << getLastColumn(i)
+                      << "]\t";
+            for (uint j = 0; j < firstCol; j++)
+                std::cout << "  ";
+            for (uint j = firstCol; j <= lastCol; j++)
+                std::cout << operator()(i, j) << " ";
+            std::cout << "\tRAC:" << -(int)Wv + (int)i << "/"
+                      << std::log2(bv[i].RAC) - DIAG_R0;
+            std::cout << (onlyVerticalGapsLeft(i) ? " - true" : " - false");
+            uint minScore, minJ;
+            findMinimumAtRow(i, minJ, minScore);
+            std::cout << "  Min: " << minScore << "@" << minJ;
+            std::cout << " FC: " << (inFinalColumn(i) ? " true" : " false");
+            std::cout << std::endl;
+        }
+    }
+
+  private:
+    std::vector<char> char2idx;
+
+    uint maxED; // maximum allowed edit distance
+    uint m;     // number of rows
+    uint n;     // number of columns
+    uint Wv;    // vertical width of the band
+    uint Wh;    // horizontal width of the band
+
+    std::vector<BitVectors> bv;              // bit vectors
+    std::vector<std::array<uint64_t, 4>> mv; // match vectors
 };
 
 #endif

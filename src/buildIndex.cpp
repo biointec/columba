@@ -1,6 +1,6 @@
 /******************************************************************************
  *  Columba: Approximate Pattern Matching using Search Schemes                *
- *  Copyright (C) 2020-2021 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Copyright (C) 2020-2022 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "bwtrepr.h"
+#include "suffixArray.h"
 
 using namespace std;
 
@@ -204,16 +205,9 @@ void createFMIndex(const string& baseFN) {
 
     // create sparse suffix arrays
     for (int saSF = 1; saSF <= 128; saSF *= 2) {
-        vector<length_t> spSA((SA.size() + saSF - 1) / saSF);
-        for (size_t i = 0; i < spSA.size(); i++)
-            spSA[i] = SA[i * saSF];
-        string spSAFilename = baseFN + ".sa." + to_string(saSF);
-        {
-            ofstream ofs(spSAFilename);
-            ofs.write((char*)spSA.data(), spSA.size() * sizeof(length_t));
-            ofs.close();
-            cout << "Wrote file: " << spSAFilename << endl;
-        }
+        SparseSuffixArray sparseSA(SA, saSF);
+        sparseSA.write(baseFN);
+        cout << "Wrote sparse suffix array with factor " << saSF << endl;
     }
     SA.clear();
 
