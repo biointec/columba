@@ -55,6 +55,22 @@ ostream& operator<<(ostream& os, const Search& obj) {
 // ============================================================================
 // CLASS FMIndex
 // ============================================================================
+thread_local length_t Counters::nodeCounter;
+thread_local length_t Counters::abortedInTextVerificationCounter;
+thread_local length_t Counters::totalReportedPositions;
+thread_local length_t Counters::cigarsInTextVerification;
+thread_local length_t Counters::cigarsInIndex;
+thread_local length_t Counters::inTextStarted;
+thread_local length_t Counters::usefulCigarsInText;
+thread_local length_t Counters::immediateSwitch;
+thread_local length_t Counters::approximateSearchStarted;
+
+thread_local Direction FMIndex::dir = BACKWARD;
+thread_local ExtraCharPtr FMIndex::extraChar;
+thread_local FindDiffPtr FMIndex::findDiff;
+
+thread_local vector<vector<FMPosExt>> FMIndex::stacks;
+thread_local vector<BitParallelED> FMIndex::matrices;
 
 // ----------------------------------------------------------------------------
 // ROUTINES FOR ACCESSING DATA STRUCTURE

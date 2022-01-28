@@ -991,38 +991,45 @@ std::ostream& operator<<(std::ostream& os, const Search& obj);
 // A struct of performance counters
 struct Counters {
     // performance counters
-    length_t nodeCounter; // counts the number of nodes visited in the index
+    thread_local static length_t
+        nodeCounter; // counts the number of nodes visited in the index
 
-    length_t totalReportedPositions; // counts the number of matches reported
-                                     // (either via in-text verification or
-                                     // in-index matching)
+    thread_local static length_t
+        totalReportedPositions; // counts the number of matches reported (either
+                                // via in-text verification or in-index
+                                // matching)
 
-    length_t cigarsInIndex; // counts the number of cigar strings calculated for
-                            // matches in the index, note that this is only
-                            // calculated if the match is non-redundant
+    thread_local static length_t
+        cigarsInIndex; // counts the number of cigar strings calculated for
+                       // matches in the index, note that this is only
+                       // calculated if the match is non-redundant
 
-    length_t inTextStarted; // counts the number of times in-text verification
-                            // was started, this equals the number of look-ups
-                            // in the suffix array for in-text verification
-    length_t
+    thread_local static length_t
+        inTextStarted; // counts the number of times in-text verification was
+                       // started, this equals the number of look-ups in the
+                       // suffix array for in-text verification
+    thread_local static length_t
         abortedInTextVerificationCounter; // counts the number of unsuccesful
                                           // in-text verifications
 
-    length_t cigarsInTextVerification; // counts the number of cigars strings
-                                       // calculated for matches in the text,
-                                       // note that this is done for each match
-                                       // in the text as at the point of
-                                       // calculation it is not known if this
-                                       // match will turn out to be redundant
-    length_t
+    thread_local static length_t
+        cigarsInTextVerification; // counts the number of cigars strings
+                                  // calculated for matches in the text, note
+                                  // that this is done for each match in the
+                                  // text as at the point of calculation it is
+                                  // not known if this match will turn out to be
+                                  // redundant
+    thread_local static length_t
         usefulCigarsInText; // counts the number of cigar strings calculated for
                             // non-redundant matches in the text
 
-    length_t immediateSwitch; // Counts the number of times the partial matches
-                              // after the first part has been matched are
-                              // immediately in-text verified
-    length_t approximateSearchStarted; // Counts the number of times a search
-                                       // does start
+    thread_local static length_t
+        immediateSwitch; // Counts the number of times the partial matches after
+                         // the first part has been matched are immediately
+                         // in-text verified
+    thread_local static length_t
+        approximateSearchStarted; // Counts the number of times a search does
+                                  // start
 
     /**
      * Reset all counters to 0
@@ -1074,15 +1081,16 @@ class FMIndex {
     length_t inTextSwitchPoint = 5;
 
     // direction variables
-    Direction dir;          // the direction of the index
-    ExtraCharPtr extraChar; // pointer to extra char method (for direction)
+    thread_local static Direction dir; // the direction of the index
+    thread_local static ExtraCharPtr
+        extraChar; // pointer to extra char method (for direction)
 
-    FindDiffPtr findDiff; // pointer to correct finddiffmode
+    thread_local static FindDiffPtr findDiff; // pointer to correct finddiffmode
 
     // stacks for search schemes
-    std::vector<std::vector<FMPosExt>>
+    thread_local static std::vector<std::vector<FMPosExt>>
         stacks; // stacks of nodes for the different partitions
-    std::vector<BitParallelED>
+    thread_local static std::vector<BitParallelED>
         matrices; // alignment matrices for the different partitions
 
     // sparse hash info
