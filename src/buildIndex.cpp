@@ -1,5 +1,5 @@
 /******************************************************************************
- *  Columba: Approximate Pattern Matching using Search Schemes                *
+ *  Columba 1.1: Approximate Pattern Matching using Search Schemes            *
  *  Copyright (C) 2020-2022 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
