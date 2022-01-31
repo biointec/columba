@@ -86,7 +86,7 @@ In this example we will build the FM index for the 21st chromosome of the human 
 ```bash
 mkdir example
 ```
-To this new directoy, copy the example file found [here](https://github.com/biointec/columba/releases/download/example/genome.hs.chr_21.txt). This is the 21st chromosome of the human genome where all non-ACGT character were removed. A sentinel character was also appended to this file.
+To this new directoy, copy the example file found [here](https://github.com/biointec/columba/releases/download/v1.0/genome.hs.chr_21.txt). This is the 21st chromosome of the human genome where all non-ACGT character were removed. A sentinel character was also appended to this file.
 
 Reverse the text using the `rev` command:
 ```bash
@@ -170,7 +170,7 @@ Congratulations! You have used columba to build the FM-index of the 21st chormos
 ---
 **CAUTION!**
 
-If you have used Columba 1.0 to build your index files you will have to rerun the build process to work with Columba 1.1!
+If you have used Columba 1.0 to build your index files you will have to rerun the build process to work with Columba 1.1 (and vice versa)!
 ---
 
 
@@ -223,7 +223,7 @@ The matches will be written to a custom output file in the folder where your rea
 
 ### Example 2
 Consider the final directory structure from [example 1](##Example-1). 
-Copy this [file](https://github.com/biointec/columba/releases/download/example/genome.hs.chr_21.reads.fasta) to this directory. 
+Copy this [file](https://github.com/biointec/columba/releases/download/v1.0/genome.hs.chr_21.reads.fasta) to this directory. 
 This file contains 100 000 reads of length 100 all sampled from the reference text. Thus, each read will have at least one exact occurrence.
 If you want to align these reads using the Pigeonhole scheme with k = 3 and using the edit distance and optimal static partitioning to our reference text, run the following command in the `build` folder:
 ```bash
@@ -331,7 +331,9 @@ Columba 1.1 introduces the ability to switch to in-text verification if the numb
 
 
 # Reproducing results 1
-The results form our paper: [Dynamic partitioning of search patterns for approximate pattern matching using search schemes](https://doi.org/10.1016/j.isci.2021) can be reproduced by using the following instructions.
+The results form our paper: [Dynamic partitioning of search patterns for approximate pattern matching using search schemes](https://doi.org/10.1016/j.isci.2021.102687) can be reproduced by using the following instructions.
+
+First download and compile [Columba 1.0](https://github.com/biointec/columba/tree/v1.0).
 
 ## Dataset
 
@@ -342,6 +344,8 @@ Then we removed the first line, concatenated the chromosomes, removed newline ch
 tail -n +2 hs.grch38.fasta.non | sed "s/>.*//g" | tr -d '\n' | cat - dollar > hs.grch38.txt
 ```
 Where `hs.grch38.fasta.non` is the result of the substitution of the N's and `hs.grch38.txt` is the reference text used to build the index. `dollar` is a text file containing a single character `$`. This file should be present in your directory before executing the above command. 
+
+For this reference text the index needs to be build according to the build instructions described above.
 
 ### Reads
 We sampled a 100 000 reads from [an Illumina experiment dataset](ftp://ftp.sra.ebi.ac.uk/vol1/fastq/ERR194/ERR194147/ERR194147_1.fastq.gz), which only contain `A`, `C`, `G` and `T` characters. One way to do this is to select the first 100 000 such reads. For example using the following python3 script
@@ -374,7 +378,7 @@ w.close()
 
 This python script takes an input name and requested output name. It samples 100 000 reads and writes them to a fastq file [output].fastq, it is assumed that the input file is a fastq file. Of course sampling of the reads can be achieved in a myriad of ways.
 
-The sampled dataset we used for the results in the paper is available [here](https://github.com/biointec/columba/releases/download/example/sampled_illumina_reads.fastq).
+The sampled dataset we used for the results in the paper is available [here](https://github.com/biointec/columba/releases/download/v1.0/sampled_illumina_reads.fastq).
 
 ## Partitioning strategies
 To reproduce the results from table 1, run Columba with `kuch1` as option for search scheme and the different partitioning strategies `[part]` and maximal edit distances `[k]`, from the `build` folder.
@@ -440,10 +444,12 @@ where `[search scheme]` is one of: `kuch2`, `kianfar`, `manbest`, `pigeon`, `01*
 ## Results on PacBio Data
 Table 5 contains results on 100 000 PacBio seeds. These seeds are sampled from  [this PacBio experiment](https://www.ebi.ac.uk/ena/browser/view/SRR1304331).
 
-The sampled dataset we used for the results in the paper is available [here](https://github.com/biointec/columba/releases/download/example/sampled_pacbio_seeds.fastq)
+The sampled dataset we used for the results in the paper is available [here](https://github.com/biointec/columba/releases/download/v1.0/sampled_pacbio_seeds.fastq)
 To reproduce the results run 
 ```
 ./columba -ss kuch1 -e [k] -partitioning [part] basefile readsfile
 ```
 from the `build` folder. Where readsfile is the file containing the PacBio seeds.
+
+ 
 
