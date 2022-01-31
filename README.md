@@ -333,7 +333,7 @@ Columba 1.1 introduces the ability to switch to in-text verification if the numb
 # Reproducing results 1
 The results form our paper: [Dynamic partitioning of search patterns for approximate pattern matching using search schemes](https://doi.org/10.1016/j.isci.2021.102687) can be reproduced by using the following instructions.
 
-First download and compile [Columba 1.0](https://github.com/biointec/columba/tree/v1.0).
+First download and compile the source code of [Columba 1.0](https://github.com/biointec/columba/releases/tag/v1.0).
 
 ## Dataset
 
@@ -453,3 +453,42 @@ from the `build` folder. Where readsfile is the file containing the PacBio seeds
 
  
 
+# Reproducing results 2
+
+To reproduce the results from our paper: "Approximate pattern matching using search schemes and in-text verification" follow these instructions.
+Download and compile the source code of [Columba 1.1](https://github.com/biointec/columba/releases/tag/v1.1).
+
+## Dataset
+
+### Reference
+We reuse the reference as in the experiments of Columba 1.0
+
+### Reads
+We sampled a 100 000 reads from [an Illumina experiment dataset](ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR909/009/SRR9091899/SRR9091899_1.fastq.gz), which only contain `A`, `C`, `G` and `T` characters. The average length of the reads is 150.
+Our sampled dataset is available [here](https://github.com/biointec/columba/releases/download/v1.1/sampled_illumina_reads_150.fastq)
+
+## Adapted Search schemes
+To reproduce the comparison of the adapted and original search schemes run:
+
+```bash
+./columba -ss custom [path] -e [k] basefile readsfile
+```
+
+Where `[path]` is the path to the folder containing the search scheme and `k` is the number of allowed errors.
+
+## In-text verification
+To reproduce the results for different tipping points and a maximal edit distance of 4, run:
+
+
+```bash
+./columba -ss custom ../search_schemes/kuch_k+1_adapted/ -e 4 -i [t] basefile readsfile
+```
+with `[t]` the tipping point.
+
+## SA space-time tradeoff
+To reproduce the results for different tipping points and different sparseness factors, for `k` = 4 run:
+
+```bash
+./columba -ss custom ../search_schemes/kuch_k+1_adapted/ -e 4 -i [t] -s [s] basefile readsfile
+```
+with `[t]` the tipping point and `[s]` the sparseness factor.
