@@ -17,7 +17,29 @@ author = {Luca Renders and Kathleen Marchal and Jan Fostier},
 keywords = {Algorithms, Bioinformatics, Computer science, High-performance computing in bioinformatics},
 ```
 
-These instructions will get you a copy of the project up and running on your local machine.
+Columba 1.1 (current version) was introduced in a [conference paper](https://doi.org/10.1007/978-3-031-07802-6_36). If you use version 1.1 in your research please cite both versions:
+
+```
+@InProceedings{10.1007/978-3-031-07802-6_36,
+author="Renders, Luca
+and Depuydt, Lore
+and Fostier, Jan",
+editor="Rojas, Ignacio
+and Valenzuela, Olga
+and Rojas, Fernando
+and Herrera, Luis Javier
+and Ortu{\~{n}}o, Francisco",
+title="Approximate Pattern Matching Using Search Schemes and In-Text Verification",
+booktitle="Bioinformatics and Biomedical Engineering",
+year="2022",
+publisher="Springer International Publishing",
+address="Cham",
+pages="419--435",
+isbn="978-3-031-07802-6"
+}
+```
+
+The following instructions will get you a copy of the project up and running on your local machine.
 
 #  Prerequisites
 
@@ -38,7 +60,7 @@ on Ubuntu / Debian distributions
 apt-get install cmake
 apt-get install libsparsehash-dev
 ```  
-# Installing Columba:
+# Installing Columba
 
 The installation is now simple. First, clone columba from the Github address
 
@@ -51,7 +73,7 @@ cd build
 cmake ..
 make 
 ```
-# Usage:
+# Usage
 Columba aligns reads to a bidirectional FM-index. To do this you need to build the FM-index based on the input data. Currenly we only support input data with an alphabet of length 5 (e.g. for DNA A, C, G, T + $).
 
 ## Building the index
