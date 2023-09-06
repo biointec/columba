@@ -20,8 +20,9 @@
 #ifndef ALPHABET_H
 #define ALPHABET_H
 
-#include "assert.h"
 #include <array>
+#include <cassert>
+#include <cstdint>
 #include <cstdlib>
 #include <vector>
 
