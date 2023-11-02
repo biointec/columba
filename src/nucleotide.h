@@ -20,6 +20,7 @@
 #define NUCLEOTIDE_H
 
 #include <algorithm>
+#include <cstdint>
 #include <string>
 
 // ============================================================================
