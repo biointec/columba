@@ -58,7 +58,7 @@ make
 ```
 
 ---
-**NOTE**
+**NOTE!**
 
 If your reference genome is longer than 4.29M characters, you need to compile Columba in 64-bit mode. To do so use these commands instead:
 
@@ -334,7 +334,7 @@ To make your own search scheme you need to create a folder containing at least a
 For every maximum edit/hamming distance a subfolder should be present, which contains at least the file `searches.txt`. In this file the searches of your scheme are written line per line. Each line contains of three space-separated arrays: pi, L and U. Each array is written between curly braces {} and the values are comma-separated.
 
 ---
-**NOTE**
+**NOTE!**
 
 The pi array should be zero-based! The connectivity property should always be satisfied. The L and U array cannot decrease. All error distributions should be covered! To check if your search scheme is valid you can use a python script provided [in this directory](./validitychecker/).
 
@@ -476,5 +476,5 @@ Columba 1.2 was introduced in our newest paper "Automated design of efficient se
 
 Questions and suggestions can be directed to:
 
-- Luca.Renders@UGent.be
-- Jan.Fostier@UGent.be
+- [Luca.Renders@UGent.be](mailto:Luca.Renders@UGent.be)
+- [Jan.Fostier@UGent.be](mailto:Jan.Fostier@UGent.be)
