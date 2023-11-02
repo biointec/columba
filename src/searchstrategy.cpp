@@ -1,6 +1,6 @@
 /******************************************************************************
- *  Columba 1.1: Approximate Pattern Matching using Search Schemes            *
- *  Copyright (C) 2020-2022 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Columba 1.2: Approximate Pattern Matching using Search Schemes            *
+ *  Copyright (C) 2020-2023 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -16,7 +16,10 @@
  * You should have received a copy of the GNU Affero General Public License   *
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.     *
  ******************************************************************************/
+
 #include "searchstrategy.h"
+
+#include <sstream> // used for splitting strings
 
 using namespace std;
 
@@ -51,12 +54,15 @@ SearchStrategy::SearchStrategy(FMIndex& argument, PartitionStrategy p,
     switch (distanceMetric) {
     case HAMMING:
         startIdxPtr = &SearchStrategy::startIndexHamming;
+        filterPtr = &SearchStrategy::filterHamming;
         break;
     case EDITNAIVE:
         startIdxPtr = &SearchStrategy::startIndexEditNaive;
+        filterPtr = &SearchStrategy::filterEdit;
         break;
     case EDITOPTIMIZED:
         startIdxPtr = &SearchStrategy::startIndexEditOptimized;
+        filterPtr = &SearchStrategy::filterEdit;
     default:
         break;
     }
@@ -104,53 +110,54 @@ string SearchStrategy::getDistanceMetric() const {
 // SANITY CHECKS
 // ----------------------------------------------------------------------------
 
-void SearchStrategy::genErrorPatterns(int P, int K, vector<Pattern>& patterns) {
-    Pattern pattern(P, 0);
+void SearchStrategy::genErrorDistributions(
+    int P, int K, vector<Distribution>& distributions) {
+    Distribution distribution(P, 0);
 
     for (int i = 0; i < pow(K + 1, P); i++) {
-        int sum = accumulate(pattern.begin(), pattern.end(), 0);
+        int sum = accumulate(distribution.begin(), distribution.end(), 0);
         if (sum <= K)
-            patterns.push_back(pattern);
+            distributions.push_back(distribution);
 
         for (int j = 0; j < P; j++) {
-            pattern[j]++;
-            if (pattern[j] != K + 1)
+            distribution[j]++;
+            if (distribution[j] != K + 1)
                 break;
-            pattern[j] = 0;
+            distribution[j] = 0;
         }
     }
 }
 
-bool SearchStrategy::coversPatterns(const vector<Pattern>& patterns,
-                                    const vector<Search>& scheme,
-                                    bool verbose) {
+bool SearchStrategy::coversDistributions(
+    const vector<Distribution>& distributions, const vector<Search>& scheme,
+    bool verbose) {
     vector<int> numCover(scheme.size(), 0);
 
     bool ret = true;
 
-    // and error pattern is simply a vector containing
+    // and error distribution is simply a vector containing
     // the number of errors in each partition P
-    for (const Pattern& pattern : patterns) {
+    for (const Distribution& distribution : distributions) {
         int numberOfCovers = 0;
 
         vector<int> searchesThatCover;
-        // check if a search covers the pattern
-        bool patternCovered = false;
+        // check if a search covers the distribution
+        bool distributionCovered = false;
         for (size_t si = 0; si < scheme.size(); si++) {
             const Search& s = scheme[si];
             bool thisCover = true;
             length_t numErrors = 0;
 
-            // check if search covers pattern
+            // check if search covers distribution
             for (length_t i = 0; i < s.getNumParts(); i++) {
                 length_t p = s.getPart(i);
-                numErrors += pattern[p];
+                numErrors += distribution[p];
                 if ((numErrors > s.getUpperBound(i)) ||
                     (numErrors < s.getLowerBound(i)))
                     thisCover = false;
             }
 
-            // print the pattern and the search that covers it
+            // print the distribution and the search that covers it
             if (thisCover) {
                 searchesThatCover.push_back(si + 1);
                 numberOfCovers++;
@@ -158,10 +165,10 @@ bool SearchStrategy::coversPatterns(const vector<Pattern>& patterns,
 
                 if (verbose) {
                     cout << "Pattern: ";
-                    for (length_t i = 0; i < pattern.size(); i++)
-                        cout << pattern[i];
+                    for (length_t i = 0; i < distribution.size(); i++)
+                        cout << distribution[i];
                     cout << " is covered by search:" << si + 1 << " (";
-                    for (length_t i = 0; i < pattern.size(); i++)
+                    for (length_t i = 0; i < distribution.size(); i++)
                         cout << s.getPart(i);
                     cout << "), (";
                     for (length_t i = 0; i < s.getNumParts(); i++)
@@ -171,30 +178,30 @@ bool SearchStrategy::coversPatterns(const vector<Pattern>& patterns,
                         cout << s.getUpperBound(i);
                     cout << ")";
 
-                    if (patternCovered)
+                    if (distributionCovered)
                         cout << " * "; // * means redundant
                     cout << endl;
                 }
-                patternCovered = true;
+                distributionCovered = true;
             }
         }
 
-        if (!patternCovered && verbose) {
+        if (!distributionCovered && verbose) {
             cout << "Pattern is not covered: ";
-            for (length_t i = 0; i < pattern.size(); i++)
-                cout << pattern[i];
+            for (length_t i = 0; i < distribution.size(); i++)
+                cout << distribution[i];
             cout << endl;
         }
 
-        ret &= patternCovered;
+        ret &= distributionCovered;
 
         if (!ret && !verbose)
             return ret;
 
         if (verbose) {
             cout << "Pattern ";
-            for (length_t i = 0; i < pattern.size(); i++)
-                cout << pattern[i];
+            for (length_t i = 0; i < distribution.size(); i++)
+                cout << distribution[i];
             cout << " is covered by searches: ";
             for (auto si : searchesThatCover)
                 cout << si << ",";
@@ -203,16 +210,16 @@ bool SearchStrategy::coversPatterns(const vector<Pattern>& patterns,
     }
 
     if (verbose)
-        cout << patterns.size() << " patterns covered" << endl;
+        cout << distributions.size() << " distributions covered" << endl;
 
-    // check if all searches cover at least one pattern
+    // check if all searches cover at least one distribution
     for (size_t i = 0; i < numCover.size(); i++) {
         if (verbose)
             cout << "Search " << i << " is used " << numCover[i] << " times\n";
 
         if (numCover[i] == 0)
             cout << "Warning: search " << scheme[i]
-                 << " covers no error patterns!\n";
+                 << " covers no error distributions!\n";
     }
 
     return ret;
@@ -225,7 +232,7 @@ void SearchStrategy::partition(const string& pattern, vector<Substring>& parts,
                                const int& numParts, const int& maxScore,
                                vector<SARangePair>& exactMatchRanges,
                                Counters& counters) const {
-
+    assert(exactMatchRanges.size() == (uint32_t)numParts);
     parts.clear();
 
     if (numParts >= (int)pattern.size() || numParts == 1) {
@@ -255,13 +262,25 @@ void SearchStrategy::partitionUniform(const string& pattern,
 
     // match the exactRanges for each part
     index.setDirection(FORWARD);
-    SARangePair initialRanges = index.getCompleteRange();
 
-    vector<bool> partNumberSeen(numParts, false);
+    // the size of kmers in the kmer hash table
+    length_t wordSize = index.getWordSize();
 
     for (int i = 0; i < numParts; i++) {
-        exactMatchRanges[i] =
-            index.matchStringBidirectionally(parts[i], initialRanges, counters);
+        const auto& current = parts[i];
+        SARangePair initialRanges = index.getCompleteRange();
+
+        length_t start = 0;
+        if (current.size() >= wordSize) {
+            // skip wordsize
+            initialRanges = index.lookUpInKmerTable(Substring(
+                current, current.begin() + 0, current.begin() + wordSize));
+            start = wordSize;
+        }
+        Substring remainingPart(current, current.begin() + start,
+                                current.end());
+        exactMatchRanges[i] = index.matchStringBidirectionally(
+            remainingPart, initialRanges, counters);
     }
 }
 
@@ -275,11 +294,25 @@ void SearchStrategy::partitionOptimalStatic(
 
     // match the exactRanges for each part
     index.setDirection(FORWARD);
-    SARangePair initialRanges = index.getCompleteRange();
+
+    // the size of kmers in the kmer hash table
+    length_t wordSize = index.getWordSize();
 
     for (int i = 0; i < numParts; i++) {
-        exactMatchRanges[i] =
-            index.matchStringBidirectionally(parts[i], initialRanges, counters);
+        const auto& current = parts[i];
+        SARangePair initialRanges = index.getCompleteRange();
+
+        length_t start = 0;
+        if (current.size() >= wordSize) {
+            // skip wordsize
+            initialRanges = index.lookUpInKmerTable(Substring(
+                current, current.begin() + 0, current.begin() + wordSize));
+            start = wordSize;
+        }
+        Substring remainingPart(current, current.begin() + start,
+                                current.end());
+        exactMatchRanges[i] = index.matchStringBidirectionally(
+            remainingPart, initialRanges, counters);
     }
 }
 
@@ -427,11 +460,15 @@ void SearchStrategy::extendParts(const string& pattern,
 // (APPROXIMATE) MATCHING
 // ----------------------------------------------------------------------------
 vector<TextOcc> SearchStrategy::matchApprox(const string& pattern,
-                                            length_t maxED,
-                                            Counters& counters) const {
+                                            length_t maxED, Counters& counters,
+                                            const string& ID,
+                                            const string& qual, bool revCompl) {
 
     if (maxED == 0) {
-        return index.exactMatchesOutput(pattern, counters);
+        index.setDirection(FORWARD);
+        auto m = index.exactMatchesOutput(pattern, counters);
+        generateSAM(m, pattern, ID, qual, revCompl);
+        return m;
     }
     // create the parts of the pattern
     vector<Substring> parts;
@@ -451,16 +488,16 @@ vector<TextOcc> SearchStrategy::matchApprox(const string& pattern,
                 "entered pattern is too short "
              << pattern.size() << endl;
 
-        return index.approxMatchesNaive(pattern, maxED, counters);
+        auto m = index.approxMatchesNaive(pattern, maxED, counters);
+        generateSAM(m, pattern, ID, qual, revCompl);
+        return m;
     }
 
     // The occurrences in the text and index
     Occurrences occ;
 
-    // create the bit-parallel matrix for in-text verification
-    BitParallelED intextMatrix;
     // set sequence to this matrix
-    intextMatrix.setSequence(pattern);
+    index.setInTextMatrixSequence(pattern);
 
     // END of preprocessing
 
@@ -472,16 +509,14 @@ vector<TextOcc> SearchStrategy::matchApprox(const string& pattern,
             // do in-text verification on this part
             const auto& part = parts[i];
             FMOcc startMatch(exactMatchRanges[i], 0, part.size());
-            index.verifyExactPartialMatchInText(
-                intextMatrix, startMatch, part.begin(), maxED, occ, counters);
+            index.verifyExactPartialMatchInText(startMatch, part.begin(), maxED,
+                                                occ, counters);
         }
     }
 
     // B) do the searches for which the first part occurs more than the switch
     // point
 
-    // create the searches
-    const vector<Search>& searches = createSearches(maxED);
     index.reserveStacks(numParts,
                         pattern.length()); // reserve stacks for each part
 
@@ -489,19 +524,23 @@ vector<TextOcc> SearchStrategy::matchApprox(const string& pattern,
     index.resetMatrices(parts.size()); // reset the alignment matrix that will
                                        // be (possibly) used for each part
 
+    // create the searches
+    const vector<Search>& searches = createSearches(maxED, exactMatchRanges);
+
     for (const Search& s : searches) {
-        doRecSearch(intextMatrix, s, parts, occ, exactMatchRanges, counters);
+        doRecSearch(s, parts, occ, exactMatchRanges, counters);
     }
 
-    // return all matches mapped to the text
-    return (distanceMetric != HAMMING)
-               ? occ.getUniqueTextOccurrences(index, maxED, intextMatrix,
-                                              counters)
-               : occ.getTextOccurrencesHamming(index, pattern.size(), counters);
+    // C) get all matches mapped to the text
+    auto matches = (this->*filterPtr)(occ, maxED, counters);
+    // D) generate sam output
+    generateSAM(matches, pattern, ID, qual, revCompl);
+
+    return matches;
 }
 
-void SearchStrategy::doRecSearch(BitParallelED& intextMatrix, const Search& s,
-                                 vector<Substring>& parts, Occurrences& occ,
+void SearchStrategy::doRecSearch(const Search& s, vector<Substring>& parts,
+                                 Occurrences& occ,
                                  const vector<SARangePair>& exactMatchRanges,
                                  Counters& counters) const {
 
@@ -511,8 +550,7 @@ void SearchStrategy::doRecSearch(BitParallelED& intextMatrix, const Search& s,
 
         SARangePair startRange = index.getCompleteRange();
         FMOcc startMatch = FMOcc(startRange, 0, 0);
-        (this->*startIdxPtr)(intextMatrix, s, startMatch, occ, parts, counters,
-                             0);
+        (this->*startIdxPtr)(s, startMatch, occ, parts, counters, 0);
         return;
     }
 
@@ -541,15 +579,14 @@ void SearchStrategy::doRecSearch(BitParallelED& intextMatrix, const Search& s,
                 return;
             }
 
-            exactLength += parts[s.getPart(partInSearch)].size();
+            exactLength += part.size();
             partInSearch++;
         }
 
         // Create a match corresponding to the exact match
         FMOcc startMatch = FMOcc(startRange, 0, exactLength);
         // Start approximate matching in the index
-        (this->*startIdxPtr)(intextMatrix, s, startMatch, occ, parts, counters,
-                             partInSearch);
+        (this->*startIdxPtr)(s, startMatch, occ, parts, counters, partInSearch);
     }
 }
 // ============================================================================
@@ -579,26 +616,18 @@ void CustomSearchStrategy::getSearchSchemeFromFolder(string pathToFolder,
 
     // get the info per distance score (scores between 1 and 4 are looked
     // at)
-    for (int i = 1; i <= 4; i++) {
-
-        ifstream stream_searches(pathToFolder + to_string(i) + "/searches.txt");
+    for (int i = 1; i <= MAX_K; i++) {
+        string name = pathToFolder + to_string(i) + "/searches.txt";
+        ifstream stream_searches(name);
         if (!stream_searches) {
             // this score is not supported
             supportsMaxScore[i - 1] = false;
             continue;
         }
-        // max score is supported
-        // read the searches line by line
-        while (getline(stream_searches, line)) {
-            try {
-                schemePerED[i - 1].push_back(makeSearch(line));
-            } catch (const runtime_error& e) {
-                throw runtime_error(
-                    "Something went wrong with processing line: " + line +
-                    "\nin file: " + pathToFolder + to_string(i) +
-                    "/searches.txt\n" + e.what());
-            }
-        }
+
+        schemePerED[i - 1] =
+            SearchScheme::readScheme(stream_searches, name, i).getSearches();
+
         if (schemePerED[i - 1].size() > 0) {
             supportsMaxScore[i - 1] = true;
         }
@@ -609,7 +638,7 @@ void CustomSearchStrategy::getSearchSchemeFromFolder(string pathToFolder,
     sanityCheck(verbose);
 
     // get static positions (if they exist)
-    for (int i = 1; i <= 4; i++) {
+    for (int i = 1; i <= MAX_K; i++) {
         ifstream stream_static(pathToFolder + to_string(i) +
                                "/static_partitioning.txt");
 
@@ -645,7 +674,7 @@ void CustomSearchStrategy::getSearchSchemeFromFolder(string pathToFolder,
     }
 
     // get dynamic seeds and weights (if file exists)
-    for (int i = 1; i <= 4; i++) {
+    for (int i = 1; i <= MAX_K; i++) {
         ifstream stream_dynamic(pathToFolder + to_string(i) +
                                 "/dynamic_partitioning.txt");
 
@@ -696,7 +725,8 @@ void CustomSearchStrategy::getSearchSchemeFromFolder(string pathToFolder,
     }
 }
 
-Search CustomSearchStrategy::makeSearch(const string& line) const {
+Search CustomSearchStrategy::makeSearch(const string& line,
+                                        length_t idx) const {
     stringstream ss(line);
 
     vector<string> tokens;
@@ -719,7 +749,7 @@ Search CustomSearchStrategy::makeSearch(const string& line) const {
     vector<length_t> upper_bound;
     getVector(tokens[2], upper_bound);
 
-    return Search::makeSearch(order, lower_bound, upper_bound);
+    return Search::makeSearch(order, lower_bound, upper_bound, idx);
 }
 
 void CustomSearchStrategy::getVector(const string& vectorString,
@@ -782,9 +812,10 @@ void CustomSearchStrategy::sanityCheckDynamicPartitioning(
 
 void CustomSearchStrategy::sanityCheck(bool verbose) const {
 
-    // check if for each supported edit distance all error patterns  are
+    // check if for each supported edit distance all error distributions  are
     // covered
-    for (int K = 1; K <= 4; K++) {
+
+    for (int K = 1; K <= MAX_K; K++) {
 
         const auto& scheme = schemePerED[K - 1];
         if (!supportsMaxScore[K - 1]) {
@@ -819,17 +850,10 @@ void CustomSearchStrategy::sanityCheck(bool verbose) const {
 
         // check if U and L string are valid
         if (any_of(scheme.begin(), scheme.end(),
-                   [](const Search& s) { return !s.noDecreasingInBounds(); })) {
+                   [](const Search& s) { return !s.validBounds(); })) {
             throw runtime_error("Decreasing lower or upper bounds "
                                 "for a search for K  = " +
                                 to_string(K));
-        }
-        vector<Pattern> errorPatterns;
-        genErrorPatterns(P, K, errorPatterns);
-        if (!coversPatterns(errorPatterns, scheme, verbose)) {
-            throw runtime_error("Search scheme does not cover all "
-                                "error patterns for K = " +
-                                to_string(K) + "!");
         }
     }
 }

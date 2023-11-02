@@ -1,6 +1,6 @@
 /******************************************************************************
- *  Columba 1.1: Approximate Pattern Matching using Search Schemes            *
- *  Copyright (C) 2020-2022 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Columba 1.2: Approximate Pattern Matching using Search Schemes            *
+ *  Copyright (C) 2020-2023 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -25,11 +25,12 @@
 #include <vector>
 
 #include "bwtrepr.h"
+#include "encodedtext.h"
 #include "suffixArray.h"
 
 using namespace std;
 
-typedef uint32_t length_t;
+#include "wordlength.h"
 
 void showUsage() {
     cout << "Usage: ./fmidx-build <base filename>\n\n";
@@ -187,9 +188,11 @@ void createFMIndex(const string& baseFN) {
         else
             BWT[i] = T.back();
 
-    ofstream ofs(baseFN + ".bwt");
-    ofs.write((char*)BWT.data(), BWT.size());
-    ofs.close();
+    // Encode bwt
+    cout << "Encoding BWT.." << endl;
+    EncodedText<ALPHABET> eBWT(sigma, BWT);
+
+    eBWT.write(baseFN + ".bwt");
 
     cout << "Wrote file " << baseFN << ".bwt\n";
 
