@@ -2,13 +2,26 @@ cmake_minimum_required(VERSION 3.0)
 
 project(fmindex)
 
-add_executable(columba src/main.cpp src/fmindex.cpp  src/searchstrategy.cpp src/nucleotide.cpp)
+add_library(AuxiliaryClasses src/fmindex.cpp src/fmindexhelpers.cpp  src/bitparallelmatrix.cpp src/searchstrategy.cpp src/nucleotide.cpp src/search.cpp)
+
+
+add_executable(columba src/main.cpp )
+target_link_libraries(columba AuxiliaryClasses )
+
 add_executable(columba_build src/buildIndex.cpp )
+
 
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pedantic -mpopcnt -std=gnu++11")
 
+option(THIRTY_TWO "Use 32-bit types" ON)
+# Pass the value to the source code as a preprocessor definition.
+if (THIRTY_TWO)
+    add_definitions(-DTHIRTY_TWO)
+endif ()
+
 #add_compile_definitions(ALPHABET=5)
 add_definitions(-DALPHABET=5)
+
 
 # set the module path
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
@@ -37,18 +50,6 @@ else (SPARSEHASH_FOUND)
             "-DSPARSEHASH_INCLUDE_DIR=<path-to-sparsehash>/include .")
 endif(SPARSEHASH_FOUND)
 
-# check if zlib is present
-find_package(ZLIB)
-if (ZLIB_FOUND)
-    add_definitions(-DHAVE_ZLIB)
-    include_directories(${ZLIB_INCLUDE_DIR})
-endif(ZLIB_FOUND)
-
-target_link_libraries(columba pthread)
-
-if (ZLIB_FOUND)
-        target_link_libraries(columba ${ZLIB_LIBRARY})
-endif (ZLIB_FOUND)
 
 install(TARGETS columba DESTINATION bin)
 install(TARGETS columba_build DESTINATION bin)

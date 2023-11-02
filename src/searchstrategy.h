@@ -1,6 +1,6 @@
 /******************************************************************************
- *  Columba 1.1: Approximate Pattern Matching using Search Schemes            *
- *  Copyright (C) 2020-2022 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Columba 1.2: Approximate Pattern Matching using Search Schemes            *
+ *  Copyright (C) 2020-2023 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -16,16 +16,20 @@
  * You should have received a copy of the GNU Affero General Public License   *
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.     *
  ******************************************************************************/
+
 #ifndef SEARCHSTRATEGY_H
 #define SEARCHSTRATEGY_H
 
-#include <sys/stat.h>
+#define MAX_K 13 // the maximum number of allowed errors
 
 #include "fmindex.h"
+#include "fmindexhelpers.h"
 
-#define Pattern std::vector<int>
+#include <sys/stat.h>
 
-// An enum for the partition strategy
+#define Distribution std::vector<int>
+
+// An enum for partion strategy
 enum PartitionStrategy { UNIFORM, STATIC, DYNAMIC };
 // An enum for which distance metric to use
 enum DistanceMetric { HAMMING, EDITNAIVE, EDITOPTIMIZED };
@@ -48,11 +52,14 @@ typedef void (SearchStrategy::*PartitionPtr)(const std::string&,
                                              Counters&) const;
 
 // Pointer to function that starts the index on a particular search
-typedef void (SearchStrategy::*StartIdxPtr)(BitParallelED& intextMatrix,
-                                            const Search&, const FMOcc&,
+typedef void (SearchStrategy::*StartIdxPtr)(const Search&, const FMOcc&,
                                             Occurrences&,
                                             std::vector<Substring>&, Counters&,
                                             const int&) const;
+
+typedef std::vector<TextOcc> (SearchStrategy::*FilterPtr)(Occurrences&,
+                                                          length_t,
+                                                          Counters&) const;
 
 class SearchStrategy {
   protected:
@@ -68,7 +75,8 @@ class SearchStrategy {
     StartIdxPtr startIdxPtr;   // pointer to start method (hamming or
                                // (naive/optimized) edit distance)
 
-    length_t maxSize = 200;
+    FilterPtr
+        filterPtr; // pointer to the correct filter (edit or hamming based)
 
     // ----------------------------------------------------------------------------
     // CONSTRUCTOR
@@ -89,24 +97,26 @@ class SearchStrategy {
     // ----------------------------------------------------------------------------
 
     /**
-     * Static function which generates all error patterns with P parts and K
-     * errors.
+     * Static function which generates all error distributions with P parts and
+     * K errors.
      * @param P the number of parts
      * @param K the number of allowed errors
-     * @param patterns vector to store the error patterns in
+     * @param distributions vector to store the error distributions in
      */
-    static void genErrorPatterns(int P, int K, std::vector<Pattern>& patterns);
+    static void genErrorDistributions(int P, int K,
+                                      std::vector<Distribution>& distributions);
 
     /**
      * Static function to check if a particular search scheme covers all
-     * patterns.
-     * @param patterns the error patterns to check
+     * distributions.
+     * @param distributions the error distributions to check
      * @param scheme the search scheme to check
      * @param verbose if true the details about which search covers which
-     * pattern will be written to stdout
+     * distribution will be written to stdout
      */
-    static bool coversPatterns(const std::vector<Pattern>& patterns,
-                               const std::vector<Search>& scheme, bool verbose);
+    static bool
+    coversDistributions(const std::vector<Distribution>& distributions,
+                        const std::vector<Search>& scheme, bool verbose);
 
     // ----------------------------------------------------------------------------
     // PARTITIONING
@@ -233,6 +243,7 @@ class SearchStrategy {
      */
     virtual const std::vector<double>
     getSeedingPositions(const int& numParts, const int& maxScore) const {
+
         double u = 1.0 / (numParts - 1);
         std::vector<double> s;
         for (int i = 1; i < numParts - 1; i++) {
@@ -244,7 +255,7 @@ class SearchStrategy {
     /**
      * Helper function for dynamic partitioning. Seeds the parts.
      * @param pattern, the pattern to partition
-     * @param parts, empty vector to which the seeds are added
+     * @param parts, empty vector tro which the seeds are added
      * @param numparts, how many parts are needed
      * @param exactMatchRanges, a vector corresponding to the ranges for the
      * exact matches of the parts, will be cleared and filled during the
@@ -257,13 +268,15 @@ class SearchStrategy {
     /**
      * Function that retrieves the weights for dynamic partitioning.
      * If derived class does not implement this function then uniform weights
-     * are given.
-     * @param numparts, how many parts are needed
+     * are given with a preference for the two edges.
+     * @param numparts how many parts are needed
      * @returns vector with weights
      */
     virtual const std::vector<int> getWeights(const int& numParts,
                                               const int& maxScore) const {
         std::vector<int> w(numParts, 1);
+        w.front() = 2;
+        w.back() = 2;
         return w;
     }
 
@@ -290,7 +303,8 @@ class SearchStrategy {
      * @param maxED the maximal allowed edit distance for the aligning
      */
     virtual const std::vector<Search>&
-    createSearches(unsigned int maxED) const = 0;
+    createSearches(unsigned int maxED,
+                   const std::vector<SARangePair>& exactMatchRanges) const = 0;
 
     /**
      * Executes the search recursively. If U[0] != 1, then the search will
@@ -302,10 +316,37 @@ class SearchStrategy {
      * @param exactMatchRanges, a vector corresponding to the ranges for the
      * exact matches of the parts
      */
-    void doRecSearch(BitParallelED& intextMatrix, const Search& s,
-                     std::vector<Substring>& parts, Occurrences& occ,
+    void doRecSearch(const Search& s, std::vector<Substring>& parts,
+                     Occurrences& occ,
                      const std::vector<SARangePair>& exactMatchRanges,
                      Counters& counters) const;
+
+    /**
+     * Filter the occurrences (both in-index and in-text) based on hamming
+     * distance. The in-index occurrences are first converted to in-text
+     * occurrences
+     * @param occ the occurrences
+     * @param maxED the maximal allowed edit distance
+     * @param counters perfomance counters
+     * @returns the filterd in-text occurrences ()
+     */
+    std::vector<TextOcc> filterHamming(Occurrences& occ, length_t maxED,
+                                       Counters& counters) const {
+        return index.getTextOccHamming(occ, counters);
+    }
+    /**
+     * Filter the occurrences (both in-index and in-text) based on edit
+     * distance. The in-index occurrences are first converted to in-text
+     * occurrences
+     * @param occ the occurrences
+     * @param maxED the maximal allowed edit distance
+     * @param counters perfomance counters
+     * @returns the filterd in-text occurrences ()
+     */
+    std::vector<TextOcc> filterEdit(Occurrences& occ, length_t maxED,
+                                    Counters& counters) const {
+        return index.getUniqueTextOccurrences(occ, maxED, counters);
+    }
 
     /**
      * Starts the index with hamming distance
@@ -315,10 +356,9 @@ class SearchStrategy {
      * @param parts, the parts of the pattern
      * @param idx, the index in the search to match next
      */
-    void startIndexHamming(BitParallelED& intextMatrix, const Search& s,
-                           const FMOcc& startMatch, Occurrences& occ,
-                           std::vector<Substring>& parts, Counters& counters,
-                           const int& idx) const {
+    void startIndexHamming(const Search& s, const FMOcc& startMatch,
+                           Occurrences& occ, std::vector<Substring>& parts,
+                           Counters& counters, const int& idx) const {
         index.recApproxMatchHamming(s, startMatch, occ, parts, counters, idx);
     }
 
@@ -331,12 +371,12 @@ class SearchStrategy {
      * @param parts, the parts of the pattern
      * @param idx, the index in the search to match next
      */
-    void startIndexEditOptimized(BitParallelED& intextMatrix, const Search& s,
-                                 const FMOcc& startMatch, Occurrences& occ,
+    void startIndexEditOptimized(const Search& s, const FMOcc& startMatch,
+                                 Occurrences& occ,
                                  std::vector<Substring>& parts,
                                  Counters& counters, const int& idx) const {
-        index.recApproxMatchEditOptimizedEntry(intextMatrix, s, startMatch, occ,
-                                               parts, counters, idx);
+        index.recApproxMatchEditOptimizedEntry(s, startMatch, occ, parts,
+                                               counters, idx);
     }
 
     /**
@@ -348,17 +388,55 @@ class SearchStrategy {
      * @param parts, the parts of the pattern
      * @param idx, the index in the search to match next
      */
-    void startIndexEditNaive(BitParallelED& intextMatrix, const Search& s,
-                             const FMOcc& startMatch, Occurrences& occ,
-                             std::vector<Substring>& parts, Counters& counters,
-                             const int& idx) const {
-        index.recApproxMatchEditNaive(s, startMatch, occ, parts, intextMatrix,
-                                      counters, idx);
+    void startIndexEditNaive(const Search& s, const FMOcc& startMatch,
+                             Occurrences& occ, std::vector<Substring>& parts,
+                             Counters& counters, const int& idx) const {
+        index.recApproxMatchEditNaive(s, startMatch, occ, parts, counters, idx);
+    }
+
+    void generateSAM(std::vector<TextOcc>& occs, const std::string& pattern,
+                     const std::string& ID, const std::string& qual,
+                     bool revCompl) const {
+        // TODO move logic to after both forward and revcompl have finished
+
+        if (occs.empty()) {
+            return;
+        }
+
+        // sort the occurrences on score
+        std::sort(occs.begin(), occs.end(),
+                  [](const TextOcc& a, const TextOcc& b) {
+                      if (a.getDistance() != b.getDistance()) {
+                          return a.getDistance() < b.getDistance();
+                      }
+                      return a.getRange().getBegin() < b.getRange().getBegin();
+                  });
+
+        // generate the sam lines
+        bool notPrimary = false;
+
+        length_t minscore = occs.front().getDistance();
+        length_t nHits = 1;
+
+        for (length_t i = 1; i < occs.size(); i++) {
+            if (occs[i].getDistance() == minscore) {
+                nHits++;
+            } else {
+                break;
+            }
+        }
+
+        for (auto& t : occs) {
+            t.generateSamSE(revCompl, notPrimary, ID, pattern, qual, nHits,
+                            minscore);
+
+            notPrimary = true;
+        }
     }
 
   public:
     // ----------------------------------------------------------------------------
-    // Destructor
+    //  Destructor
     // ----------------------------------------------------------------------------
     virtual ~SearchStrategy() {
     }
@@ -390,23 +468,34 @@ class SearchStrategy {
         return index.getText();
     }
 
+    /**
+     * Get the tipping point for in-text verification
+     */
     length_t getSwitchPoint() const {
         return index.getSwitchPoint();
     }
 
     /**
      * Matches a pattern approximately using this strategy
-     * @param pattern, the pattern to match
-     * @param maxED, the maximal allowed edit distance (or  hamming
+     * @param pattern the pattern to match
+     * @param maxED the maximal allowed edit distance (or  hamming
      * distance)
+     * @param counters the performance counters
+     * @param ID the id of the read
+     * @param qual the quality string of the read
+     * @param revComp boolean to indicate if this the read or the reverse
+     * complement of the read
+     * @returns a vector with approximate occurrences in the text of this
+     * pattern
+     *
      */
-    virtual std::vector<TextOcc> matchApprox(const std::string& pattern,
-                                             length_t maxED,
-                                             Counters& counters) const;
+    virtual std::vector<TextOcc>
+    matchApprox(const std::string& pattern, length_t maxED, Counters& counters,
+                const std::string& ID, const std::string& qual, bool revComp);
 };
 
 // ============================================================================
-// CLASS SEARCHSTRATEGY
+// CLASS CUSTOM SEARCHSTRATEGY
 // ============================================================================
 
 // This is a derived class of SearchStrategy. It creates a custom scheme using
@@ -422,12 +511,12 @@ class SearchStrategy {
 //
 // The different subfolders can also contain files for static and dynamic
 // partitioning. The file "static_partitioning.txt" should consist out of one
-// line of space-separated percentages (between 0 and 1 - exclusive). These
+// line of space- separated percentages (between 0 and 1 - exclusive). These
 // percentages point to start positions of the second to the last part of the
 // partitioned pattern (relative to the size of the pattern). Hence, if a search
 // scheme partitions a pattern in k parts, then k+1 percentages should be
 // provided. The file "dynamic_partitioning.txt" should consist out of two
-// lines. The first line contains k-1 space-separated percentages. These
+// lines. The first line contains k-1 space- separated percentages. These
 // percentages are the seeding positions of the middle parts (the first and last
 // part are seeded at the begin and end and thus do not need a percentage). Note
 // that this line can be empty if the pattern is partitioned into 2 parts. The
@@ -450,53 +539,41 @@ typedef const std::vector<int> (CustomSearchStrategy::*GetWeightsPtr)(
     const int& numParts, const int& maxScore) const;
 
 class CustomSearchStrategy : public SearchStrategy {
+
   private:
-    std::vector<std::vector<Search>> schemePerED = {
-        {}, {}, {}, {}}; // the search schemes for each distance score, for
-                         // now only scores 1 to 4 are supported
-    std::vector<bool> supportsMaxScore = {
-        false, false, false,
-        false}; // if a particular distance score is supported
+    std::vector<std::vector<Search>>
+        schemePerED; // the search schemes for each distance score,
+    std::vector<bool>
+        supportsMaxScore; // if a particular distance score is supported
 
-    // static partitioning
-    std::vector<std::vector<double>> staticPositions = {
-        {}, {}, {}, {}}; // the static positions per score
-    std::vector<GetBeginsPtr> beginsPointer = {
-        &CustomSearchStrategy::getBeginsDefault,
-        &CustomSearchStrategy::getBeginsDefault,
-        &CustomSearchStrategy::getBeginsDefault,
-        &CustomSearchStrategy::getBeginsDefault}; // pointer to the correct
-    // getBegins() function,
-    // either default or custom
+    // helpers for static partitioning
+    std::vector<std::vector<double>>
+        staticPositions;                     // the static positions per k
+    std::vector<GetBeginsPtr> beginsPointer; // pointer to the correct
+                                             // getBegins() function,
+                                             // either default or custom
 
-    // dynamic partitioning
-    std::vector<std::vector<double>> seedingPositions = {
-        {}, {}, {}, {}}; // the seeds for dynamic partitioning per score
-    std::vector<std::vector<int>> weights = {
-        {}, {}, {}, {}}; // the weights for dynamic partitioning per score
+    // helpers for dynamic partitioning
+    std::vector<std::vector<double>>
+        seedingPositions; // the seeds for dynamic partitioning per
 
-    std::vector<GetSeedingPostitionsPtr> seedingPointer = {
-        &CustomSearchStrategy::getSeedingPositionsDefault,
-        &CustomSearchStrategy::getSeedingPositionsDefault,
-        &CustomSearchStrategy::getSeedingPositionsDefault,
-        &CustomSearchStrategy::
-            getSeedingPositionsDefault}; // pointer to the correct
-                                         // getSeedingPositions() function,
-                                         // either default or custom
+    std::vector<std::vector<int>>
+        weights; // the weights for dynamic partitioning per score
 
-    std::vector<GetWeightsPtr> weightsPointers = {
-        &CustomSearchStrategy::getWeightsDefault,
-        &CustomSearchStrategy::getWeightsDefault,
-        &CustomSearchStrategy::getWeightsDefault,
-        &CustomSearchStrategy::getWeightsDefault}; // pointer to the correct
-                                                   // getWeigths() function,
-                                                   // either default or
-                                                   // custom
+    std::vector<GetSeedingPostitionsPtr>
+        seedingPointer; // pointer to the correct
+                        // getSeedingPositions() function,
+                        // either default or custom
+
+    std::vector<GetWeightsPtr>
+        weightsPointers; // pointer to the correct getWeigths() function, either
+                         // default or custom
 
     /**
-     * Retrieves the search scheme from a folder, also checks if the scheme is
-     * valid
-     * @param pathToFolder the path to the folder containing the search scheme
+     * Retrieves the search scheme from a folder, also checks if the scheme
+     * is valid
+     * @param pathToFolder the path to the folder containing the search
+     * scheme
      * @param verbose if the sanity check should be verbose
      */
     void getSearchSchemeFromFolder(std::string pathToFolder, bool verbose);
@@ -520,10 +597,11 @@ class CustomSearchStrategy : public SearchStrategy {
     /**
      * Parse the search from a line.
      * @param line the line to parse
+     * @param idx the index of the search
      * @returns the parsed line as a search, if the line is not valid a runtime
      * error will be thrown.
      */
-    Search makeSearch(const std::string& line) const;
+    Search makeSearch(const std::string& line, length_t idx) const;
 
     /**
      * Parses an array from a string.
@@ -534,19 +612,18 @@ class CustomSearchStrategy : public SearchStrategy {
                    std::vector<length_t>& vector) const;
 
     /**
-     * Checks whether the connectivity property is satisfied for all searches
-     * and if all error patterns are covered for all supported scores. Will
-     * throw a runtime error if one of these is not satisfied
-     * @param verbose if the information about which search covers which pattern
-     * should be written to standard out
+     * Checks whether the connectivity property is satisfied for all searches.
+     * Will throw a runtime error if one of these is not satisfied
+     * @param verbose if the information about which search covers which error
+     * distribution should be written to standard out
      */
     void sanityCheck(bool verbose) const;
 
     // static partitioning
     /**
      * Gets the static positions in the default manner.
-     * @param numParts, the number of parts of the pattern
-     * @param maxScore, the maximal allowed score
+     * @param numParts the number of parts of the pattern
+     * @param maxScore the maximal allowed score
      */
     const std::vector<double> getBeginsDefault(const int& numParts,
                                                const int& maxScore) const {
@@ -556,8 +633,8 @@ class CustomSearchStrategy : public SearchStrategy {
     /**
      * Gets the static positions in the custom manner (i.e. with values provided
      * by user in "static_partitioning.txt").
-     * @param numParts, the number of parts of the pattern
-     * @param maxScore, the maximal allowed score
+     * @param numParts the number of parts of the pattern
+     * @param maxScore the maximal allowed score
      */
     const std::vector<double> getBeginsCustom(const int& numParts,
                                               const int& maxScore) const {
@@ -577,8 +654,8 @@ class CustomSearchStrategy : public SearchStrategy {
     // dynamic partitioning
     /**
      * Gets the seeding positions in the default manner.
-     * @param numParts, the number of parts of the pattern
-     * @param maxScore, the maximal allowed score
+     * @param numParts the number of parts of the pattern
+     * @param maxScore the maximal allowed score
      */
     const std::vector<double>
     getSeedingPositionsDefault(const int& numParts, const int& maxScore) const {
@@ -588,8 +665,8 @@ class CustomSearchStrategy : public SearchStrategy {
     /**
      * Gets the seeding positions in the custom manner (i.e. with values
      * provided by user in "dynamic_partitioning.txt").
-     * @param numParts, the number of parts of the pattern
-     * @param maxScore, the maximal allowed score
+     * @param numParts the number of parts of the pattern
+     * @param maxScore the maximal allowed score
      */
     const std::vector<double>
     getSeedingPositionsCustom(const int& numParts, const int& maxScore) const {
@@ -610,8 +687,8 @@ class CustomSearchStrategy : public SearchStrategy {
 
     /**
      * Gets the seeding positions in the default manner.
-     * @param numParts, the number of parts of the pattern
-     * @param maxScore, the maximal allowed score
+     * @param numParts the number of parts of the pattern
+     * @param maxScore the maximal allowed score
      */
     const std::vector<int> getWeightsDefault(const int& numParts,
                                              const int& maxScore) const {
@@ -621,8 +698,8 @@ class CustomSearchStrategy : public SearchStrategy {
     /**
      * Gets the weights in the custom manner (i.e. with values
      * provided by user in "dynamic_partitioning.txt").
-     * @param numParts, the number of parts of the pattern
-     * @param maxScore, the maximal allowed score
+     * @param numParts the number of parts of the pattern
+     * @param maxScore the maximal allowed score
      */
     const std::vector<int> getWeightsCustom(const int& numParts,
                                             const int& maxScore) const {
@@ -640,11 +717,24 @@ class CustomSearchStrategy : public SearchStrategy {
     }
 
   public:
-    CustomSearchStrategy(FMIndex& index, std::string pathToFolder,
+    CustomSearchStrategy(FMIndex& index, const std::string& pathToFolder,
                          PartitionStrategy p = DYNAMIC,
                          DistanceMetric metric = EDITOPTIMIZED,
                          bool verbose = false)
         : SearchStrategy(index, p, metric) {
+
+        // resize and fill the vectors
+        schemePerED.resize(MAX_K);
+        supportsMaxScore.resize(MAX_K, false);
+        staticPositions.resize(MAX_K);
+        beginsPointer.resize(MAX_K, &CustomSearchStrategy::getBeginsDefault);
+        seedingPositions.resize(MAX_K);
+        weights.resize(MAX_K);
+        seedingPointer.resize(
+            MAX_K, &CustomSearchStrategy::getSeedingPositionsDefault);
+        weightsPointers.resize(MAX_K, &CustomSearchStrategy::getWeightsDefault);
+
+        // read the schemes
         getSearchSchemeFromFolder(pathToFolder, verbose);
     }
 
@@ -652,9 +742,310 @@ class CustomSearchStrategy : public SearchStrategy {
         assert(supportsMaxScore[maxED - 1]);
         return schemePerED[maxED - 1][0].getNumParts();
     }
-    const std::vector<Search>& createSearches(unsigned int maxED) const {
+    const std::vector<Search>&
+    createSearches(unsigned int maxED,
+                   const std::vector<SARangePair>& ranges) const {
         assert(supportsMaxScore[maxED - 1]);
         return schemePerED[maxED - 1];
+    }
+};
+
+// ============================================================================
+// CLASS MULTIPLE SCHEMES
+// ============================================================================
+
+/**
+ * @class MultipleSchemes
+ *
+ * @brief A class representing a collection of search schemes for approximate
+ * string matching.
+ *
+ * This class manages multiple search schemes, each represented by a text file.
+ * It calculates the number of parts and provides a method to choose the search
+ * scheme to use based on the number of exact matches of the parts.
+ */
+class MultipleSchemes {
+
+  private:
+    unsigned int k; // the maximum number of errors for these schemes
+    std::vector<SearchScheme> schemes; // the list of schemes
+    unsigned int numParts = 0; // the number of parts (p) for this scheme
+
+    /**
+     * @brief Private helper function to read search schemes from a folder.
+     *
+     * This function reads search schemes from text files in a specified folder.
+     * Each file should be named "scheme1.txt," "scheme2.txt," and so on.
+     *
+     * @param pathToFolder The path to the folder containing the scheme files.
+     * @param verbose A flag indicating whether to display verbose output during
+     * reading.
+     */
+    void getSchemesFromFolder(const std::string& pathToFolder, bool verbose) {
+        // in this folder there should be several files:
+        // scheme1.txt, scheme2.txt, scheme3.txt, ...
+
+        std::string base = "scheme";
+        int x = 1; // Starting value of x
+
+        while (true) {
+            std::string filename = base + std::to_string(x) + ".txt";
+            std::string filePath = pathToFolder + "/" + filename;
+
+            std::ifstream file(filePath);
+            if (!file.is_open()) {
+                // File does not exist, break the loop
+                break;
+            }
+
+            // Read in the scheme
+            schemes.emplace_back(SearchScheme::readScheme(file, filename, k));
+
+            // Increment x for the next iteration
+            ++x;
+        }
+
+        if (!schemes.empty()) {
+
+            numParts = schemes.front().getNumParts();
+
+            for (const auto& scheme : schemes) {
+                if (scheme.getNumParts() != numParts) {
+                    throw std::runtime_error(
+                        "Not all schemes have same amount of parts in: " +
+                        pathToFolder);
+                }
+            }
+        }
+    }
+
+  public:
+    /**
+     * @brief Constructor for the MultipleSchemes class.
+     *
+     * Initializes the MultipleSchemes object by reading search schemes from a
+     * folder.
+     *
+     * @param pathToFolder The path to the folder containing the scheme files.
+     * @param k The maximum number of errors for these schemes.
+     * @param verbose A flag indicating whether to display verbose output during
+     * reading.
+     */
+    MultipleSchemes(const std::string& pathToFolder, unsigned int k,
+                    bool verbose = false)
+        : k(k) {
+        getSchemesFromFolder(pathToFolder, verbose);
+    }
+
+    /**
+     * @brief Constructor for an MultipleSchemes instance.
+     *
+     * Initializes the MultipleSchemes object by creating an empty list of
+     * schemes.
+     *
+     * @param k The maximum number of errors for these schemes.
+     * @param verbose A flag indicating whether to display verbose output during
+     * reading.
+     */
+    MultipleSchemes(unsigned int k, bool verbose = false) : k(k) {
+    }
+
+    /**
+     * @brief Calculate the number of parts for a given maximum edit distance.
+     * This function should only be calles with maxED == k.
+     *
+     * @param maxED The maximum edit distance for which to calculate the number
+     * of parts.
+     * @return The number of parts (p) corresponding to the maximum edit
+     * distance.
+     */
+    uint calculateNumParts(unsigned int maxED) const {
+        assert(maxED == k);
+        return numParts;
+    }
+
+    /**
+     * @brief Create searches based on a maximum edit distance and specified
+     * ranges (=number of exact matches of the searches).
+     *
+     * This method creates searches based on a given maximum edit distance and a
+     * set of SARangePair ranges. It iterates over the schemes and chooses the
+     * scheme for which the starting part of the critical search has the least
+     * amount of exact matches.
+     *
+     * @param maxED The maximum edit distance for creating searches.
+     * @param ranges A vector of SARangePair objects representing search ranges.
+     * @return A vector of Search objects based on the specified parameters.
+     */
+    const std::vector<Search>&
+    createSearches(unsigned int maxED,
+                   const std::vector<SARangePair>& ranges) const {
+        assert(maxED == k);
+        assert(!isEmpty());
+        // find the scheme for which the critical search has the smallest exact
+        // range to start from
+
+        // if the total number of exact matches of the parts is smaller than the
+        // number of parts dynamic selection has too much overhead
+        unsigned int total =
+            std::accumulate(ranges.begin(), ranges.end(), 0,
+                            [](unsigned int sum, const SARangePair& range) {
+                                return sum + range.width();
+                            });
+
+        if (total <= numParts) {
+            return schemes[0].getSearches();
+        }
+
+        int minIndex = 0;
+        unsigned int minValue =
+            ranges[schemes[0].getCriticalPartIndex()].width();
+
+        for (unsigned int i = 1; i < schemes.size(); ++i) {
+            unsigned int criticalPartIndex = schemes[i].getCriticalPartIndex();
+            if (ranges[criticalPartIndex].width() < minValue) {
+                minValue = ranges[criticalPartIndex].width();
+                minIndex = i;
+            }
+        }
+        return schemes[minIndex].getSearches();
+    }
+
+    /**
+     * @brief find out whether the list of schemes is empty
+     *
+     * @returns true if the list of schemes is empty.
+     */
+    bool isEmpty() const {
+        return schemes.empty();
+    }
+};
+// ============================================================================
+// CLASS MULTIPLE SCHEME STRATEGY
+// ============================================================================
+
+/**
+ * @class MultipleSchemesStrategy
+ *
+ * @brief A class representing a strategy for handling multiple search schemes
+ * with different edit distances.
+ *
+ * This class is designed to manage multiple search schemes with varying edit
+ * distances. It inherits from the SearchStrategy class and provides methods for
+ * calculating the number of parts and creating searches based on a specified
+ * edit distance and search ranges.
+ * The Multiple Schemes will dynamically choose what scheme to use.
+ */
+class MultipleSchemesStrategy : public SearchStrategy {
+  private:
+    std::vector<MultipleSchemes>
+        schemesPerED; // A vector of MultipleSchemes objects, one for each edit
+                      // distance.
+
+    /**
+     * @brief Private helper function to read and initialize multiple search
+     * schemes.
+     *
+     * This function reads and initializes multiple search schemes from a
+     * specified folder for various edit distances. If an edit distance is not
+     * provided the function stops reading.
+     *
+     * @param pathToFolder The path to the folder containing the search schemes.
+     * @param verbose A flag indicating whether to display verbose output during
+     * reading.
+     */
+    void readSchemes(const std::string& pathToFolder, bool verbose) {
+
+        // get the name of the scheme
+        std::string line;
+        {
+            std::ifstream ifs(pathToFolder + "name.txt");
+            if (!ifs) {
+                throw std::runtime_error(
+                    "Problem reading: " + pathToFolder +
+                    "name.txt\nDid you provide a directory to "
+                    "a search scheme without a name file?");
+            }
+            std::getline(ifs, line);
+            name = line;
+            ifs.close();
+        }
+
+        // read in the schemes
+        for (uint16_t k = 1; k <= MAX_K; k++) {
+            std::string dir = pathToFolder + "/" + std::to_string(k);
+            struct stat info;
+            if (!(stat(dir.c_str(), &info) == 0 && S_ISDIR(info.st_mode))) {
+                // no schemes present, create an empty instance
+                schemesPerED.emplace_back(MultipleSchemes(k, verbose));
+                continue;
+            };
+
+            struct stat buffer;
+            if (stat((dir + "/scheme1.txt").c_str(), &buffer) != 0) {
+                // no schemes present, create an empty instance
+                schemesPerED.emplace_back(MultipleSchemes(k, verbose));
+                continue;
+            }
+
+            schemesPerED.emplace_back(MultipleSchemes(dir, k, verbose));
+        }
+    }
+
+  public:
+    /**
+     * @brief Constructor for the MultipleSchemesStrategy class.
+     *
+     * Initializes the MultipleSchemesStrategy object by reading and
+     * initializing search schemes for various edit distances.
+     *
+     * @param index The FMIndex object used for searching.
+     * @param pathToFolder The path to the folder containing the search schemes.
+     * @param p The partition strategy to use (default: DYNAMIC).
+     * @param metric The distance metric to use (default: EDITOPTIMIZED).
+     * @param verbose A flag indicating whether to display verbose output during
+     * reading (default: false).
+     */
+    MultipleSchemesStrategy(FMIndex& index, const std::string& pathToFolder,
+                            PartitionStrategy p = DYNAMIC,
+                            DistanceMetric metric = EDITOPTIMIZED,
+                            bool verbose = false)
+        : SearchStrategy(index, p, metric) {
+
+        readSchemes(pathToFolder, verbose);
+    }
+
+    /**
+     * @brief Calculate the number of parts for a given maximum edit distance.
+     *
+     * @param maxED The maximum edit distance for which to calculate the number
+     * of parts.
+     * @return The number of parts (p) corresponding to the specified maximum
+     * edit distance.
+     */
+    uint calculateNumParts(unsigned int maxED) const {
+        assert(maxED - 1 < schemesPerED.size());
+        assert(!schemesPerED[maxED - 1].isEmpty());
+        return schemesPerED[maxED - 1].calculateNumParts(maxED);
+    }
+
+    /**
+     * @brief Create searches based on a maximum edit distance and specified
+     * ranges.
+     *
+     * This method creates searches based on a given maximum edit distance and a
+     * set of SARangePair ranges.
+     *
+     * @param maxED The maximum edit distance for creating searches.
+     * @param ranges A vector of SARangePair objects representing search ranges.
+     * @return A vector of Search objects based on the specified parameters.
+     */
+    const std::vector<Search>&
+    createSearches(unsigned int maxED,
+                   const std::vector<SARangePair>& ranges) const {
+        assert(maxED - 1 < schemesPerED.size());
+        assert(!schemesPerED[maxED - 1].isEmpty());
+        return schemesPerED[maxED - 1].createSearches(maxED, ranges);
     }
 };
 
@@ -669,28 +1060,29 @@ class NaiveBackTrackingStrategy : public SearchStrategy {
     uint calculateNumParts(unsigned int maxED) const {
         return 1;
     }
-    const std::vector<Search>& createSearches(unsigned int maxED) const {
+    const std::vector<Search>&
+    createSearches(unsigned int maxED,
+                   const std::vector<SARangePair>& ranges) const {
         return searches;
     }
 
   public:
     virtual std::vector<TextOcc> matchApprox(const std::string& pattern,
-                                             length_t maxED,
-                                             Counters& counters) const {
+                                             length_t maxED, Counters& counters,
+                                             const std::string& ID,
+                                             const std::string& qual,
+                                             bool revComp) const {
+
         counters.resetCounters();
         if (maxED == 0) {
-            auto result = index.exactMatches(pattern, counters);
-            std::vector<TextOcc> returnvalue;
-            returnvalue.reserve(result.size());
-            std::vector<std::pair<char, uint>> CIGAR = {{'M', pattern.size()}};
-            for (length_t startpos : result) {
-                returnvalue.emplace_back(
-                    Range(startpos, startpos + pattern.size()), 0, CIGAR);
-                returnvalue.back().generateOutput();
-            }
-            return returnvalue;
+
+            auto m = index.exactMatchesOutput(pattern, counters);
+            generateSAM(m, pattern, ID, qual, revComp);
+            return m;
         }
-        return index.approxMatchesNaive(pattern, maxED, counters);
+        auto m = index.approxMatchesNaive(pattern, maxED, counters);
+        generateSAM(m, pattern, ID, qual, revComp);
+        return m;
     }
 
     NaiveBackTrackingStrategy(FMIndex& index, PartitionStrategy p = DYNAMIC,
@@ -701,34 +1093,42 @@ class NaiveBackTrackingStrategy : public SearchStrategy {
 };
 
 // ============================================================================
-// HARDCODED CUSTOM CLASSES
+// HARDCODED CUSTOM CLASSES (TODO remove these)
 // ============================================================================
 
 class KucherovKplus1 : public SearchStrategy {
   private:
     const std::vector<Search> ED1 = {
-        Search::makeSearch({0, 1}, {0, 1}, {0, 1}),
-        Search::makeSearch({1, 0}, {0, 0}, {0, 1})};
+        Search::makeSearch({0, 1}, {0, 1}, {0, 1}, 0),
+        Search::makeSearch({1, 0}, {0, 0}, {0, 1}, 1)};
     const std::vector<Search> ED2 = {
-        Search::makeSearch({0, 1, 2}, {0, 0, 0}, {0, 2, 2}),
-        Search::makeSearch({2, 1, 0}, {0, 0, 0}, {0, 1, 2}),
-        Search::makeSearch({1, 0, 2}, {0, 0, 1}, {0, 1, 2})};
+        Search::makeSearch({0, 1, 2}, {0, 0, 0}, {0, 2, 2}, 0),
+        Search::makeSearch({2, 1, 0}, {0, 0, 0}, {0, 1, 2}, 1),
+        Search::makeSearch({1, 0, 2}, {0, 0, 1}, {0, 1, 2}, 2)};
 
     const std::vector<Search> ED3 = {
-        Search::makeSearch({0, 1, 2, 3}, {0, 0, 0, 0}, {0, 1, 3, 3}),
-        Search::makeSearch({1, 0, 2, 3}, {0, 0, 1, 1}, {0, 1, 3, 3}),
-        Search::makeSearch({2, 3, 1, 0}, {0, 0, 0, 0}, {0, 1, 3, 3}),
-        Search::makeSearch({3, 2, 1, 0}, {0, 0, 1, 1}, {0, 1, 3, 3})};
+        Search::makeSearch({0, 1, 2, 3}, {0, 0, 0, 0}, {0, 1, 3, 3}, 0),
+        Search::makeSearch({1, 0, 2, 3}, {0, 0, 1, 1}, {0, 1, 3, 3}, 1),
+        Search::makeSearch({2, 3, 1, 0}, {0, 0, 0, 0}, {0, 1, 3, 3}, 2),
+        Search::makeSearch({3, 2, 1, 0}, {0, 0, 1, 1}, {0, 1, 3, 3}, 3)};
 
     const std::vector<Search> ED4 = {
-        Search::makeSearch({0, 1, 2, 3, 4}, {0, 0, 0, 0, 0}, {0, 2, 2, 4, 4}),
-        Search::makeSearch({4, 3, 2, 1, 0}, {0, 0, 0, 0, 0}, {0, 1, 3, 4, 4}),
-        Search::makeSearch({1, 0, 2, 3, 4}, {0, 0, 1, 3, 3}, {0, 1, 3, 3, 4}),
-        Search::makeSearch({0, 1, 2, 3, 4}, {0, 0, 1, 3, 3}, {0, 1, 3, 3, 4}),
-        Search::makeSearch({3, 2, 4, 1, 0}, {0, 0, 0, 1, 1}, {0, 1, 2, 4, 4}),
-        Search::makeSearch({2, 1, 0, 3, 4}, {0, 0, 0, 1, 3}, {0, 1, 2, 4, 4}),
-        Search::makeSearch({1, 0, 2, 3, 4}, {0, 0, 1, 2, 4}, {0, 1, 2, 4, 4}),
-        Search::makeSearch({0, 1, 2, 3, 4}, {0, 0, 0, 3, 4}, {0, 0, 4, 4, 4})};
+        Search::makeSearch({0, 1, 2, 3, 4}, {0, 0, 0, 0, 0}, {0, 2, 2, 4, 4},
+                           0),
+        Search::makeSearch({4, 3, 2, 1, 0}, {0, 0, 0, 0, 0}, {0, 1, 3, 4, 4},
+                           1),
+        Search::makeSearch({1, 0, 2, 3, 4}, {0, 0, 1, 3, 3}, {0, 1, 3, 3, 4},
+                           2),
+        Search::makeSearch({0, 1, 2, 3, 4}, {0, 0, 1, 3, 3}, {0, 1, 3, 3, 4},
+                           3),
+        Search::makeSearch({3, 2, 4, 1, 0}, {0, 0, 0, 1, 1}, {0, 1, 2, 4, 4},
+                           4),
+        Search::makeSearch({2, 1, 0, 3, 4}, {0, 0, 0, 1, 3}, {0, 1, 2, 4, 4},
+                           5),
+        Search::makeSearch({1, 0, 2, 3, 4}, {0, 0, 1, 2, 4}, {0, 1, 2, 4, 4},
+                           6),
+        Search::makeSearch({0, 1, 2, 3, 4}, {0, 0, 0, 3, 4}, {0, 0, 4, 4, 4},
+                           7)};
 
     const std::vector<std::vector<Search>> schemePerED = {ED1, ED2, ED3, ED4};
 
@@ -743,7 +1143,9 @@ class KucherovKplus1 : public SearchStrategy {
     uint calculateNumParts(unsigned int maxED) const {
         return maxED + 1;
     }
-    const std::vector<Search>& createSearches(unsigned int maxED) const {
+    const std::vector<Search>&
+    createSearches(unsigned int maxED,
+                   const std::vector<SARangePair>& ranges) const {
         assert(maxED >= 1);
         assert(maxED <= 4);
 
@@ -775,48 +1177,54 @@ class KucherovKplus1 : public SearchStrategy {
 class KucherovKplus2 : public SearchStrategy {
   private:
     const std::vector<Search> ED1 = {
-        Search::makeSearch({0, 1, 2}, {0, 0, 0}, {0, 1, 1}),
-        Search::makeSearch({1, 2, 0}, {0, 0, 0}, {0, 0, 1})};
+        Search::makeSearch({0, 1, 2}, {0, 0, 0}, {0, 1, 1}, 0),
+        Search::makeSearch({1, 2, 0}, {0, 0, 0}, {0, 0, 1}, 1)};
     const std::vector<Search> ED2 = {
-        Search::makeSearch({0, 1, 2, 3}, {0, 0, 0, 0}, {0, 1, 1, 2}),
-        Search::makeSearch({3, 2, 1, 0}, {0, 0, 0, 0}, {0, 1, 2, 2}),
-        Search::makeSearch({1, 2, 3, 0}, {0, 0, 0, 1}, {0, 0, 1, 2}),
-        Search::makeSearch({0, 1, 2, 3}, {0, 0, 0, 2}, {0, 0, 2, 2})};
+        Search::makeSearch({0, 1, 2, 3}, {0, 0, 0, 0}, {0, 1, 1, 2}, 0),
+        Search::makeSearch({3, 2, 1, 0}, {0, 0, 0, 0}, {0, 1, 2, 2}, 1),
+        Search::makeSearch({1, 2, 3, 0}, {0, 0, 0, 1}, {0, 0, 1, 2}, 2),
+        Search::makeSearch({0, 1, 2, 3}, {0, 0, 0, 2}, {0, 0, 2, 2}, 3)};
 
     const std::vector<Search> ED3 = {
-        Search::makeSearch({0, 1, 2, 3, 4}, {0, 0, 0, 0, 0}, {0, 1, 2, 3, 3}),
-        Search::makeSearch({1, 2, 3, 4, 0}, {0, 0, 0, 0, 0}, {0, 1, 2, 2, 3}),
-        Search::makeSearch({2, 3, 4, 1, 0}, {0, 0, 0, 0, 1}, {0, 1, 1, 3, 3}),
-        Search::makeSearch({3, 4, 2, 1, 0}, {0, 0, 0, 1, 2}, {0, 0, 3, 3, 3})};
+        Search::makeSearch({0, 1, 2, 3, 4}, {0, 0, 0, 0, 0}, {0, 1, 2, 3, 3},
+                           0),
+        Search::makeSearch({1, 2, 3, 4, 0}, {0, 0, 0, 0, 0}, {0, 1, 2, 2, 3},
+                           1),
+        Search::makeSearch({2, 3, 4, 1, 0}, {0, 0, 0, 0, 1}, {0, 1, 1, 3, 3},
+                           2),
+        Search::makeSearch({3, 4, 2, 1, 0}, {0, 0, 0, 1, 2}, {0, 0, 3, 3, 3},
+                           3)};
 
     const std::vector<Search> ED4 = {
         Search::makeSearch({0, 1, 2, 3, 4, 5}, {0, 0, 0, 0, 0, 0},
-                           {0, 1, 2, 3, 4, 4}),
+                           {0, 1, 2, 3, 4, 4}, 0),
         Search::makeSearch({1, 2, 3, 4, 5, 0}, {0, 0, 0, 0, 0, 0},
-                           {0, 1, 2, 3, 4, 4}),
+                           {0, 1, 2, 3, 4, 4}, 1),
         Search::makeSearch({5, 4, 3, 2, 1, 0}, {0, 0, 0, 0, 0, 1},
-                           {0, 1, 2, 2, 4, 4}),
+                           {0, 1, 2, 2, 4, 4}, 2),
         Search::makeSearch({3, 4, 5, 2, 1, 0}, {0, 0, 0, 0, 1, 2},
-                           {0, 1, 1, 3, 4, 4}),
+                           {0, 1, 1, 3, 4, 4}, 3),
         Search::makeSearch({2, 3, 4, 5, 1, 0}, {0, 0, 0, 0, 2, 3},
-                           {0, 1, 1, 2, 4, 4}),
+                           {0, 1, 1, 2, 4, 4}, 4),
         Search::makeSearch({4, 5, 3, 2, 1, 0}, {0, 0, 0, 1, 3, 3},
-                           {0, 0, 3, 3, 4, 4}),
+                           {0, 0, 3, 3, 4, 4}, 5),
         Search::makeSearch({0, 1, 2, 3, 4, 5}, {0, 0, 0, 3, 3, 3},
-                           {0, 0, 3, 3, 4, 4}),
+                           {0, 0, 3, 3, 4, 4}, 6),
         Search::makeSearch({0, 1, 2, 3, 4, 5}, {0, 0, 0, 0, 4, 4},
-                           {0, 0, 2, 4, 4, 4}),
+                           {0, 0, 2, 4, 4, 4}, 7),
         Search::makeSearch({2, 3, 1, 0, 4, 5}, {0, 0, 0, 1, 2, 4},
-                           {0, 0, 2, 2, 4, 4}),
+                           {0, 0, 2, 2, 4, 4}, 8),
         Search::makeSearch({4, 5, 3, 2, 1, 0}, {0, 0, 0, 0, 4, 4},
-                           {0, 0, 1, 4, 4, 4})};
+                           {0, 0, 1, 4, 4, 4}, 9)};
 
     const std::vector<std::vector<Search>> schemePerED = {ED1, ED2, ED3, ED4};
 
     uint calculateNumParts(unsigned int maxED) const {
         return maxED + 2;
     }
-    const std::vector<Search>& createSearches(unsigned int maxED) const {
+    const std::vector<Search>&
+    createSearches(unsigned int maxED,
+                   const std::vector<SARangePair>& ranges) const {
         return schemePerED[maxED - 1];
     }
 
@@ -860,22 +1268,25 @@ class KucherovKplus2 : public SearchStrategy {
 class OptimalKianfar : public SearchStrategy {
   private:
     const std::vector<Search> ED1 = {
-        Search::makeSearch({0, 1}, {0, 0}, {0, 1}),
-        Search::makeSearch({1, 0}, {0, 1}, {0, 1})};
+        Search::makeSearch({0, 1}, {0, 0}, {0, 1}, 0),
+        Search::makeSearch({1, 0}, {0, 1}, {0, 1}, 1)};
     const std::vector<Search> ED2 = {
-        Search::makeSearch({0, 1, 2}, {0, 0, 2}, {0, 1, 2}),
-        Search::makeSearch({2, 1, 0}, {0, 0, 0}, {0, 2, 2}),
-        Search::makeSearch({1, 2, 0}, {0, 1, 1}, {0, 1, 2})};
+        Search::makeSearch({0, 1, 2}, {0, 0, 2}, {0, 1, 2}, 0),
+        Search::makeSearch({2, 1, 0}, {0, 0, 0}, {0, 2, 2}, 1),
+        Search::makeSearch({1, 2, 0}, {0, 1, 1}, {0, 1, 2}, 2)};
 
     const std::vector<Search> ED3 = {
-        Search::makeSearch({0, 1, 2, 3}, {0, 0, 0, 3}, {0, 2, 3, 3}),
-        Search::makeSearch({1, 2, 3, 0}, {0, 0, 0, 0}, {1, 2, 3, 3}),
-        Search::makeSearch({2, 3, 1, 0}, {0, 0, 2, 2}, {0, 0, 3, 3})};
+        Search::makeSearch({0, 1, 2, 3}, {0, 0, 0, 3}, {0, 2, 3, 3}, 0),
+        Search::makeSearch({1, 2, 3, 0}, {0, 0, 0, 0}, {1, 2, 3, 3}, 1),
+        Search::makeSearch({2, 3, 1, 0}, {0, 0, 2, 2}, {0, 0, 3, 3}, 2)};
 
     const std::vector<Search> ED4 = {
-        Search::makeSearch({0, 1, 2, 3, 4}, {0, 0, 0, 0, 4}, {0, 3, 3, 4, 4}),
-        Search::makeSearch({1, 2, 3, 4, 0}, {0, 0, 0, 0, 0}, {2, 2, 3, 3, 4}),
-        Search::makeSearch({4, 3, 2, 1, 0}, {0, 0, 0, 3, 3}, {0, 0, 4, 4, 4})};
+        Search::makeSearch({0, 1, 2, 3, 4}, {0, 0, 0, 0, 4}, {0, 3, 3, 4, 4},
+                           0),
+        Search::makeSearch({1, 2, 3, 4, 0}, {0, 0, 0, 0, 0}, {2, 2, 3, 3, 4},
+                           1),
+        Search::makeSearch({4, 3, 2, 1, 0}, {0, 0, 0, 3, 3}, {0, 0, 4, 4, 4},
+                           2)};
 
     const std::vector<std::vector<Search>> schemePerED = {ED1, ED2, ED3, ED4};
     const std::vector<std::vector<double>> seedingPositions = {
@@ -889,8 +1300,10 @@ class OptimalKianfar : public SearchStrategy {
     uint calculateNumParts(unsigned int maxED) const {
         return maxED + 1;
     }
-    const std::vector<Search>& createSearches(unsigned int maxED) const {
-        if (maxED < 1 || maxED > 4) {
+    const std::vector<Search>&
+    createSearches(unsigned int maxED,
+                   const std::vector<SARangePair>& ranges) const {
+        if (maxED < 1 || maxED > 5) {
             throw std::invalid_argument("max ED should be between 1 and 4");
         }
         return schemePerED[maxED - 1];
@@ -933,30 +1346,34 @@ class OptimalKianfar : public SearchStrategy {
 class O1StarSearchStrategy : public SearchStrategy {
   private:
     const std::vector<Search> ED1 = {
-        Search::makeSearch({0, 1, 2}, {0, 0, 0}, {0, 1, 1}),
-        Search::makeSearch({1, 2, 0}, {0, 0, 0}, {0, 0, 1})};
+        Search::makeSearch({0, 1, 2}, {0, 0, 0}, {0, 1, 1}, 0),
+        Search::makeSearch({1, 2, 0}, {0, 0, 0}, {0, 0, 1}, 1)};
     const std::vector<Search> ED2 = {
-        Search::makeSearch({0, 1, 2, 3}, {0, 0, 0, 0}, {0, 1, 2, 2}),
-        Search::makeSearch({1, 2, 3, 0}, {0, 0, 0, 0}, {0, 1, 2, 2}),
-        Search::makeSearch({2, 3, 1, 0}, {0, 0, 0, 0}, {0, 0, 2, 2})};
+        Search::makeSearch({0, 1, 2, 3}, {0, 0, 0, 0}, {0, 1, 2, 2}, 0),
+        Search::makeSearch({1, 2, 3, 0}, {0, 0, 0, 0}, {0, 1, 2, 2}, 1),
+        Search::makeSearch({2, 3, 1, 0}, {0, 0, 0, 0}, {0, 0, 2, 2}, 2)};
 
     const std::vector<Search> ED3 = {
-        Search::makeSearch({0, 1, 2, 3, 4}, {0, 0, 0, 0, 0}, {0, 1, 3, 3, 3}),
-        Search::makeSearch({1, 2, 3, 4, 0}, {0, 0, 0, 0, 0}, {0, 1, 3, 3, 3}),
-        Search::makeSearch({2, 3, 4, 1, 0}, {0, 0, 0, 0, 0}, {0, 1, 3, 3, 3}),
-        Search::makeSearch({3, 4, 2, 1, 0}, {0, 0, 0, 0, 0}, {0, 0, 3, 3, 3})};
+        Search::makeSearch({0, 1, 2, 3, 4}, {0, 0, 0, 0, 0}, {0, 1, 3, 3, 3},
+                           0),
+        Search::makeSearch({1, 2, 3, 4, 0}, {0, 0, 0, 0, 0}, {0, 1, 3, 3, 3},
+                           1),
+        Search::makeSearch({2, 3, 4, 1, 0}, {0, 0, 0, 0, 0}, {0, 1, 3, 3, 3},
+                           2),
+        Search::makeSearch({3, 4, 2, 1, 0}, {0, 0, 0, 0, 0}, {0, 0, 3, 3, 3},
+                           3)};
 
     const std::vector<Search> ED4 = {
         Search::makeSearch({0, 1, 2, 3, 4, 5}, {0, 0, 0, 0, 0, 0},
-                           {0, 1, 4, 4, 4, 4}),
+                           {0, 1, 4, 4, 4, 4}, 0),
         Search::makeSearch({1, 2, 3, 4, 5, 0}, {0, 0, 0, 0, 0, 0},
-                           {0, 1, 4, 4, 4, 4}),
+                           {0, 1, 4, 4, 4, 4}, 1),
         Search::makeSearch({2, 3, 4, 5, 1, 0}, {0, 0, 0, 0, 0, 0},
-                           {0, 1, 4, 4, 4, 4}),
+                           {0, 1, 4, 4, 4, 4}, 2),
         Search::makeSearch({3, 4, 5, 2, 1, 0}, {0, 0, 0, 0, 0, 0},
-                           {0, 1, 4, 4, 4, 4}),
+                           {0, 1, 4, 4, 4, 4}, 3),
         Search::makeSearch({4, 5, 3, 2, 1, 0}, {0, 0, 0, 0, 0, 0},
-                           {0, 0, 4, 4, 4, 4}),
+                           {0, 0, 4, 4, 4, 4}, 4),
     };
 
     const std::vector<std::vector<Search>> schemePerED = {ED1, ED2, ED3, ED4};
@@ -964,7 +1381,9 @@ class O1StarSearchStrategy : public SearchStrategy {
     uint calculateNumParts(unsigned int maxED) const {
         return maxED + 2;
     }
-    const std::vector<Search>& createSearches(unsigned int maxED) const {
+    const std::vector<Search>&
+    createSearches(unsigned int maxED,
+                   const std::vector<SARangePair>& ranges) const {
         return schemePerED[maxED - 1];
     }
 
@@ -1007,20 +1426,22 @@ class ManBestStrategy : public SearchStrategy {
   private:
     const std::vector<Search> ED4 = {
         Search::makeSearch({0, 1, 2, 3, 4, 5}, {0, 0, 0, 0, 0, 4},
-                           {0, 3, 3, 3, 4, 4}),
+                           {0, 3, 3, 3, 4, 4}, 0),
         Search::makeSearch({1, 2, 3, 4, 5, 0}, {0, 0, 0, 0, 0, 0},
-                           {0, 2, 2, 3, 3, 4}),
+                           {0, 2, 2, 3, 3, 4}, 1),
         Search::makeSearch({2, 1, 3, 4, 5, 0}, {0, 1, 1, 1, 1, 1},
-                           {0, 2, 2, 3, 3, 4}),
+                           {0, 2, 2, 3, 3, 4}, 2),
         Search::makeSearch({3, 2, 1, 4, 5, 0}, {0, 1, 2, 2, 2, 2},
-                           {0, 1, 2, 3, 3, 4}),
+                           {0, 1, 2, 3, 3, 4}, 3),
         Search::makeSearch({5, 4, 3, 2, 1, 0}, {0, 0, 0, 0, 3, 3},
-                           {0, 0, 4, 4, 4, 4})};
+                           {0, 0, 4, 4, 4, 4}, 4)};
 
     uint calculateNumParts(unsigned int maxED) const {
         return maxED + 2;
     }
-    const std::vector<Search>& createSearches(unsigned int maxED) const {
+    const std::vector<Search>&
+    createSearches(unsigned int maxED,
+                   const std::vector<SARangePair>& ranges) const {
         assert(maxED == 4);
         return ED4;
     }
@@ -1066,36 +1487,44 @@ class ManBestStrategy : public SearchStrategy {
 // + 1) sections then every approximate match has an exact match with at
 // least one of the sections. The strategy iterates over the sections, it
 // tries to exactly match the current section, then approximately match the
-// pattern before this section and after the pattern after this section
+// pattern before this section and after the the pattern after this section
 // with the remaining edit distance.
 class PigeonHoleSearchStrategy : public SearchStrategy {
+
   private:
     const std::vector<Search> ED1 = {
-        Search::makeSearch({0, 1}, {0, 0}, {0, 1}),
-        Search::makeSearch({1, 0}, {0, 0}, {0, 1})};
+        Search::makeSearch({0, 1}, {0, 0}, {0, 1}, 0),
+        Search::makeSearch({1, 0}, {0, 0}, {0, 1}, 1)};
     const std::vector<Search> ED2 = {
-        Search::makeSearch({0, 1, 2}, {0, 0, 0}, {0, 2, 2}),
-        Search::makeSearch({1, 2, 0}, {0, 0, 0}, {0, 2, 2}),
-        Search::makeSearch({2, 1, 0}, {0, 0, 0}, {0, 2, 2})};
+        Search::makeSearch({0, 1, 2}, {0, 0, 0}, {0, 2, 2}, 0),
+        Search::makeSearch({1, 2, 0}, {0, 0, 0}, {0, 2, 2}, 1),
+        Search::makeSearch({2, 1, 0}, {0, 0, 0}, {0, 2, 2}, 2)};
 
     const std::vector<Search> ED3 = {
-        Search::makeSearch({0, 1, 2, 3}, {0, 0, 0, 0}, {0, 3, 3, 3}),
-        Search::makeSearch({1, 0, 2, 3}, {0, 0, 0, 0}, {0, 3, 3, 3}),
-        Search::makeSearch({2, 3, 1, 0}, {0, 0, 0, 0}, {0, 3, 3, 3}),
-        Search::makeSearch({3, 2, 1, 0}, {0, 0, 0, 0}, {0, 3, 3, 3})};
+        Search::makeSearch({0, 1, 2, 3}, {0, 0, 0, 0}, {0, 3, 3, 3}, 0),
+        Search::makeSearch({1, 0, 2, 3}, {0, 0, 0, 0}, {0, 3, 3, 3}, 1),
+        Search::makeSearch({2, 3, 1, 0}, {0, 0, 0, 0}, {0, 3, 3, 3}, 2),
+        Search::makeSearch({3, 2, 1, 0}, {0, 0, 0, 0}, {0, 3, 3, 3}, 3)};
 
     const std::vector<Search> ED4 = {
-        Search::makeSearch({0, 1, 2, 3, 4}, {0, 0, 0, 0, 0}, {0, 4, 4, 4, 4}),
-        Search::makeSearch({1, 2, 3, 4, 0}, {0, 0, 0, 0, 0}, {0, 4, 4, 4, 4}),
-        Search::makeSearch({2, 3, 4, 1, 0}, {0, 0, 0, 0, 0}, {0, 4, 4, 4, 4}),
-        Search::makeSearch({3, 4, 2, 1, 0}, {0, 0, 0, 0, 0}, {0, 4, 4, 4, 4}),
-        Search::makeSearch({4, 3, 2, 1, 0}, {0, 0, 0, 0, 0}, {0, 4, 4, 4, 4})};
+        Search::makeSearch({0, 1, 2, 3, 4}, {0, 0, 0, 0, 0}, {0, 4, 4, 4, 4},
+                           0),
+        Search::makeSearch({1, 2, 3, 4, 0}, {0, 0, 0, 0, 0}, {0, 4, 4, 4, 4},
+                           1),
+        Search::makeSearch({2, 3, 4, 1, 0}, {0, 0, 0, 0, 0}, {0, 4, 4, 4, 4},
+                           2),
+        Search::makeSearch({3, 4, 2, 1, 0}, {0, 0, 0, 0, 0}, {0, 4, 4, 4, 4},
+                           3),
+        Search::makeSearch({4, 3, 2, 1, 0}, {0, 0, 0, 0, 0}, {0, 4, 4, 4, 4},
+                           4)};
 
     const std::vector<std::vector<Search>> schemePerED = {ED1, ED2, ED3, ED4};
     uint calculateNumParts(unsigned int maxED) const {
         return maxED + 1;
     }
-    const std::vector<Search>& createSearches(unsigned int maxED) const {
+    const std::vector<Search>&
+    createSearches(unsigned int maxED,
+                   const std::vector<SARangePair>& ranges) const {
         return schemePerED[maxED - 1];
     }
 

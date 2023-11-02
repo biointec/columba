@@ -1,6 +1,6 @@
 /******************************************************************************
- *  Columba 1.1: Approximate Pattern Matching using Search Schemes            *
- *  Copyright (C) 2020-2022 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Columba 1.2: Approximate Pattern Matching using Search Schemes            *
+ *  Copyright (C) 2020-2023 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -20,8 +20,9 @@
 #ifndef ALPHABET_H
 #define ALPHABET_H
 
-#include "assert.h"
 #include <array>
+#include <cassert>
+#include <cstdint>
 #include <cstdlib>
 #include <vector>
 
@@ -30,7 +31,8 @@
 // ============================================================================
 // CLASS ALPHABET (convert ASCII value <-> character index)
 // ============================================================================
-typedef uint32_t length_t;
+#include "wordlength.h"
+
 template <size_t S> // S is the size of the alphabet (including '$')
 class Alphabet {    // e.g. S = 5 for DNA (A,C,G,T + $)
 
@@ -69,7 +71,7 @@ class Alphabet {    // e.g. S = 5 for DNA (A,C,G,T + $)
      */
     Alphabet(const std::string& T) {
         // count the number of characters in the text
-        std::vector<size_t> charCounts(NUM_CHAR, 0);
+        std::vector<length_t> charCounts(NUM_CHAR, 0);
         for (char c : T)
             charCounts[(unsigned char)c]++;
         initialize(charCounts);
@@ -89,7 +91,6 @@ class Alphabet {    // e.g. S = 5 for DNA (A,C,G,T + $)
      * @return character index
      */
     int c2i(char c) const {
-        assert(inAlphabet(c));
         return charToIndex[(unsigned char)c];
     }
 

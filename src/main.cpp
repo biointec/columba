@@ -1,6 +1,6 @@
 /******************************************************************************
- *  Columba 1.1: Approximate Pattern Matching using Search Schemes            *
- *  Copyright (C) 2020-2022 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Columba 1.2: Approximate Pattern Matching using Search Schemes            *
+ *  Copyright (C) 2020-2023 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -16,42 +16,44 @@
  * You should have received a copy of the GNU Affero General Public License   *
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.     *
  ******************************************************************************/
+
 #include "searchstrategy.h"
+#include "wordlength.h"
 #include <algorithm>
 #include <chrono>
 #include <set>
+#include <sstream> // used for splitting strings
 #include <string.h>
 
 using namespace std;
-vector<string> schemes = {"kuch1",  "kuch2", "kianfar", "manbest",
-                          "pigeon", "01*0",  "custom",  "naive"};
+vector<string> schemes = {"kuch1", "kuch2",  "kianfar", "manbest", "pigeon",
+                          "01*0",  "custom", "naive",   "multiple"};
 
 int editDistDP(string P, string O, int maxED) {
 
-    int n = (int)P.length();
-    int m = (int)O.length();
+    length_t n = P.length();
+    length_t m = O.length();
     string* horizontal = &P;
     string* vertical = &O;
     if (n > m) {
         horizontal = &O;
         vertical = &P;
-        int temp = n;
-        n = m;
-        m = temp;
+        swap(m, n);
     }
 
     // check the dimensions of s1 and s2
-    if ((max(m, n) - min(m, n)) > maxED)
+    if ((max(m, n) - min(m, n)) > (length_t)maxED)
         return numeric_limits<int>::max();
 
-    BandMatrix mat(m + 1 + maxED, maxED);
+    BitParallelED mat;
+    mat.setSequence(horizontal);
+    mat.initializeMatrix(maxED);
 
-    // fill in the rest of the matrix
-    for (int i = 1; i <= m; i++) {
-        for (int j = mat.getFirstColumn(i); j <= mat.getLastColumn(i) && j <= n;
-             j++) {
-            mat.updateMatrix(vertical->at(i - 1) != horizontal->at(j - 1), i,
-                             j);
+    // fill in matrix
+    for (length_t i = 1; i <= m; i++) {
+        bool valid = mat.computeRow(i, vertical->at(i - 1));
+        if (!valid) {
+            return numeric_limits<int>::max();
         }
     }
     return mat(m, n);
@@ -67,8 +69,19 @@ string getFileExt(const string& s) {
     return ("");
 }
 
-vector<pair<string, string>> getReads(const string& file) {
-    vector<pair<string, string>> reads;
+struct ReadRecord {
+    string id;
+    string read;
+
+    string qual;
+
+    ReadRecord(string id, string read, string qual)
+        : id(id), read(read), qual(qual) {
+    }
+};
+
+vector<ReadRecord> getReads(const string& file) {
+    vector<ReadRecord> reads;
     reads.reserve(200000);
 
     const auto& extension = getFileExt(file);
@@ -82,86 +95,64 @@ vector<pair<string, string>> getReads(const string& file) {
         throw runtime_error("Cannot open file " + file);
     }
     if (!fasta && !fastq) {
-        // this is a csv file
-        if (extension != "csv") {
-            throw runtime_error("extension " + extension +
-                                " is not a valid extension for the readsfile");
-        }
-        string line;
-        // get the first line we do not need this
-        getline(ifile, line);
+        // this is a not readable
 
-        while (getline(ifile, line)) {
-            istringstream iss{line};
-
-            vector<string> tokens;
-            string token;
-
-            while (getline(iss, token, ',')) {
-                tokens.push_back(token);
-            }
-            string position = tokens[1];
-            string read =
-                tokens[2]; // ED + 2 column contains a read with ED compared
-                           // to the read at position position with length
-            string p = position;
-            reads.push_back(make_pair(p, read));
-        }
+        throw runtime_error("extension " + extension +
+                            " is not a valid extension for the readsfile");
     } else if (fasta) {
         // fasta file
         string read = "";
-        string p = "";
-        string line;
-        while (getline(ifile, line)) {
-            if (!line.empty() && line[0] == '>') {
+        string id = "";
+        string qual = ""; // empty quality string for fasta
 
-                if (!read.empty()) {
-
-                    reads.push_back(make_pair(p, read));
-                    reads.push_back(
-                        make_pair(p, Nucleotide::getRevCompl(read)));
-                    read.clear();
-                }
-
-                p = (line.substr(1));
-
-            } else {
-                read += line;
+        while (getline(ifile, id) && getline(ifile, read)) {
+            if (!id.empty() && id[0] != '>' && id[0] != '@') {
+                throw runtime_error("File " + file +
+                                    "doesn't appear to be in Fasta format");
             }
-        }
-        if (!read.empty()) {
 
-            reads.push_back(make_pair(p, read));
-            reads.push_back(make_pair(p, Nucleotide::getRevCompl(read)));
-            read.clear();
+            if (id.back() == '\n') {
+                id.pop_back();
+            }
+            if (!read.empty() && read.back() == '\n') {
+                read.pop_back();
+            }
+
+            assert(id.size() > 1);
+            id = (id.substr(1));
+            reads.emplace_back(id, read, qual);
+            reads.emplace_back(id, Nucleotide::getRevCompl(read), qual);
+            id.clear(), read.clear();
         }
     } else {
         // fastQ
         string read = "";
         string id = "";
+        string qual = "";
+        string plusLine = ""; // Skip the '+' line
         string line;
-        bool readLine = false;
-        while (getline(ifile, line)) {
-            if (!line.empty() && line[0] == '@') {
-                if (!read.empty()) {
 
-                    reads.push_back(make_pair(id, read));
-                    reads.push_back(
-                        make_pair(id, Nucleotide::getRevCompl(read)));
-                    read.clear();
-                }
-                id = (line.substr(1));
-                readLine = true;
-            } else if (readLine) {
-                read = line;
-                readLine = false;
+        while (getline(ifile, id) && getline(ifile, read) &&
+               getline(ifile, plusLine) && // Skip the '+' line
+               getline(ifile, qual)) {
+            if (!id.empty() && id[0] != '@') {
+                throw runtime_error("File " + file +
+                                    "doesn't appear to be in FastQ format");
             }
-        }
-        if (!read.empty()) {
 
-            reads.push_back(make_pair(id, read));
-            reads.push_back(make_pair(id, Nucleotide::getRevCompl(read)));
-            read.clear();
+            if (id.back() == '\n') {
+                id.pop_back();
+            }
+            if (!read.empty() && read.back() == '\n') {
+                read.pop_back();
+            }
+
+            assert(id.size() > 1);
+            id = (id.substr(1));
+            reads.emplace_back(id, read, qual);
+            reverse(qual.begin(), qual.end());
+            reads.emplace_back(id, Nucleotide::getRevCompl(read), qual);
+            id.clear(), read.clear(), qual.clear();
         }
     }
 
@@ -169,22 +160,33 @@ vector<pair<string, string>> getReads(const string& file) {
 }
 
 void writeToOutput(const string& file, const vector<vector<TextOcc>>& mPerRead,
-                   const vector<pair<string, string>>& reads) {
+                   const vector<ReadRecord>& reads, length_t textLength,
+                   const std::string& basefile) {
 
     cout << "Writing to output file " << file << " ..." << endl;
     ofstream f2;
     f2.open(file);
 
-    f2 << "identifier\tposition\tlength\tED\tCIGAR\treverseComplement\n";
+    f2 << "@HD"
+       << "\t"
+       << "VN:1.6"
+       << "\t"
+       << "SO:queryname"
+       << "\n";
+    f2 << "@SQ"
+       << "\t"
+       << "SN:" << basefile << "\t"
+       << "LN:" << textLength << "\n";
+
     for (unsigned int i = 0; i < reads.size(); i += 2) {
-        auto id = reads[i].first;
+        auto id = reads[i].id;
 
         for (auto m : mPerRead[i]) {
-            f2 << id << "\t" << m.getOutput() << "\t0\n";
+            f2 << m.getSamLine() << "\n";
         }
 
         for (auto m : mPerRead[i + 1]) {
-            f2 << id << "\t" << m.getOutput() << "\t1\n";
+            f2 << m.getSamLine() << "\n";
         }
     }
 
@@ -222,8 +224,9 @@ double findMedian(vector<length_t> a, int n) {
     }
 }
 
-void doBench(vector<pair<string, string>>& reads, FMIndex& mapper,
-             SearchStrategy* strategy, string readsFile, length_t ED) {
+void doBench(const vector<ReadRecord>& reads, FMIndex& mapper,
+             SearchStrategy* strategy, const string& outputfile, length_t ED,
+             const std::string& basefile) {
 
     size_t totalUniqueMatches = 0, sizes = 0, mappedReads = 0;
 
@@ -242,15 +245,19 @@ void doBench(vector<pair<string, string>>& reads, FMIndex& mapper,
     numberMatchesPerRead.reserve(reads.size());
 
     Counters counters;
+    counters.resetCounters();
 
     auto start = chrono::high_resolution_clock::now();
     for (unsigned int i = 0; i < reads.size(); i += 2) {
 
-        const auto& p = reads[i];
+        const auto& readrecord = reads[i];
+        const auto& revReadrecord = reads[i + 1];
 
-        auto originalPos = p.first;
-        string read = p.second;
-        string revCompl = reads[i + 1].second;
+        const string& id = readrecord.id;
+        const string& read = readrecord.read;
+        const string& revCompl = revReadrecord.read;
+        const string& qual = readrecord.qual;
+        const string& revQual = revReadrecord.qual;
 
         if (((i >> 1) - 1) % (8192 / (1 << ED)) == 0) {
             cout << "Progress: " << i / 2 << "/" << reads.size() / 2 << "\r";
@@ -259,12 +266,13 @@ void doBench(vector<pair<string, string>>& reads, FMIndex& mapper,
 
         sizes += read.size();
 
-        auto matches = strategy->matchApprox(read, ED, counters);
+        auto matches =
+            strategy->matchApprox(read, ED, counters, id, qual, false);
         totalUniqueMatches += matches.size();
 
         // do the same for the reverse complement
         vector<TextOcc> matchesRevCompl =
-            strategy->matchApprox(revCompl, ED, counters);
+            strategy->matchApprox(revCompl, ED, counters, id, revQual, false);
         totalUniqueMatches += matchesRevCompl.size();
 
         // keep track of the number of mapped reads
@@ -275,60 +283,6 @@ void doBench(vector<pair<string, string>>& reads, FMIndex& mapper,
 
         numberMatchesPerRead.emplace_back(matches.size() +
                                           matchesRevCompl.size());
-
-        // correctness check, comment this out if you want to check
-        // For each reported match the reported edit distance is checked and
-        // compared to a recalculated value using a single banded matrix this
-        // is slow WARNING: this checks the EDIT DISTANCE, for it might be that
-        // the hamming distance is higher
-        /*for (auto match : matches) {
-
-            string O = text.substr(match.getRange().getBegin(),
-                                   match.getRange().getEnd() -
-                                       match.getRange().getBegin());
-
-            int trueED = editDistDP(read, O, ED);
-            int foundED = match.getDistance();
-            if (foundED != trueED) {
-                cout << i << "\n";
-                cout << "Wrong ED!!"
-                     << "\n";
-                cout << "P: " << read << "\n";
-                cout << "O: " << O << "\n";
-                cout << "true ED " << trueED << ", found ED " << foundED <<
-        "\n"
-                     << match.getRange().getBegin() << "\n";
-            }
-        }*/
-
-        // this block checks if at least one occurrence is found and if the
-        // identifier is a number and then checks if this position is found as
-        // a match (for checking correctness) if you want to check if the
-        // position is found as a match make sure that the identifier of the
-        // read is the position. Out comment this block for the check
-        /*  bool originalFound = true;
-          try {
-              length_t pos = stoull(originalPos);
-              originalFound = false;
-
-              for (auto match : matches) {
-
-                  if (match.getRange().getBegin() >= pos - (ED + 2) &&
-                      match.getRange().getBegin() <= pos + (ED + 2)) {
-                      originalFound = true;
-                      break;
-                  }
-              }
-          } catch (const std::exception& e) {
-              // nothing to do, identifier is  not the orignal position
-          }
-
-          // check if at least one occurrence was found (for reads that were
-          // sampled from actual reference) Out-cooment this block if you want
-          // to do this.
-          if (matches.size() == 0 || (!originalFound)) {
-              cout << "Could not find occurrence for " << originalPos << endl;
-          }*/
     }
 
     auto finish = chrono::high_resolution_clock::now();
@@ -374,7 +328,8 @@ void doBench(vector<pair<string, string>>& reads, FMIndex& mapper,
 
     cout << "Average size of reads: " << sizes / (reads.size() / 2.0) << endl;
 
-    writeToOutput(readsFile + "_output.txt", matchesPerRead, reads);
+    writeToOutput(outputfile, matchesPerRead, reads, strategy->getText().size(),
+                  basefile);
 }
 
 void showUsage() {
@@ -387,21 +342,32 @@ void showUsage() {
     cout << "  -p  --partitioning \tAdd flag to do uniform/static/dynamic "
             "partitioning [default = "
             "dynamic]\n";
-    cout << "  -m   --metric\tAdd flag to set distance metric "
+    cout << "  -m   --metric\t\tAdd flag to set distance metric "
             "(editnaive/editopt/hamming) [default = "
             "editopt]\n";
-    cout << "  -i  --in-text\tThe tipping point for in-text verification "
+    cout << "  -i  --in-text\t\tThe tipping point for in-text verification "
             "[default = 5]\n";
+    cout << "  -ks --kmer-size\tThe size of the seeds for dynamic partitioning "
+            "[default = 10]\n";
+    cout
+        << "  -o  --output\t\tThe name of the outputfile. This file must be in "
+           ".sam format. [default = ColumbaOutput.sam]\n";
     cout << "  -ss --search-scheme\tChoose the search scheme\n  options:\n\t"
-         << "kuch1\tKucherov k + 1\n\t"
-         << "kuch2\tKucherov k + 2\n\t"
-         << "kianfar\t Optimal Kianfar scheme\n\t"
-         << "manbest\t Manual best improvement for kianfar scheme (only for ed "
+         << "kuch1\t\tKucherov k + 1\n\t"
+         << "kuch2\t\tKucherov k + 2\n\t"
+         << "kianfar\t\tOptimal Kianfar scheme\n\t"
+         << "manbest\t\tManual best improvement for kianfar scheme (only for "
+            "ed "
             "= 4)\n\t"
-         << "pigeon\t Pigeon hole scheme\n\t"
-         << "01*0\t01*0 search scheme\n\t"
-         << "custom\tcustom search scheme, the next parameter should be a path "
-            "to the folder containing this search scheme\n\n";
+         << "pigeon\t\tPigeon hole scheme\n\t"
+         << "01*0\t\t01*0 search scheme\n\t"
+         << "custom\t\tcustom search scheme, the next parameter should be a "
+            "path "
+            "to the folder containing this search scheme\n\t"
+         << "multiple\tmultiple search scheme, the next parameter should be a "
+            "path "
+            "to the folder containing the different search schemes to choose "
+            "from with dynamic selection.\n\n";
 
     cout << "[ext]\n"
          << "\tone of the following: fq, fastq, FASTA, fasta, fa\n";
@@ -420,16 +386,21 @@ void showUsage() {
 
 int main(int argc, char* argv[]) {
 
-    int requiredArguments = 2; // baseFile of files and file containing reads
+    std::cout << "Using " << LENGTH_TYPE_NAME << std::endl;
+
+    int requiredArguments = 3; // baseFile of files and file containing reads
+
+    if (argc == 2 &&
+        (strcmp("help", argv[1]) == 0 || strcmp("--help", argv[1]) == 0 ||
+         strcmp("-h", argv[1]) == 0)) {
+        showUsage();
+        return EXIT_SUCCESS;
+    }
 
     if (argc < requiredArguments) {
         cerr << "Insufficient number of arguments" << endl;
         showUsage();
         return EXIT_FAILURE;
-    }
-    if (argc == 2 && strcmp("help", argv[1]) == 0) {
-        showUsage();
-        return EXIT_SUCCESS;
     }
 
     cout << "Welcome to Columba!\n";
@@ -439,6 +410,9 @@ int main(int argc, char* argv[]) {
     string searchscheme = "kuch1";
     string customFile = "";
     string inTextPoint = "5";
+
+    string kmerSize = "10";
+    string outputfile = "ColumbaOutput.sam";
 
     PartitionStrategy pStrat = DYNAMIC;
     DistanceMetric metric = EDITOPTIMIZED;
@@ -484,12 +458,12 @@ int main(int argc, char* argv[]) {
                     throw runtime_error(searchscheme +
                                         " is not on option as search scheme");
                 }
-                if (searchscheme == "custom") {
+                if (searchscheme == "custom" || searchscheme == "multiple") {
                     if (i + 1 < argc) {
                         customFile = argv[++i];
                     } else {
-                        throw runtime_error(
-                            "custom search scheme takes a folder as argument");
+                        throw runtime_error("custom/multiple search scheme "
+                                            "takes a folder as argument");
                     }
                 }
 
@@ -521,6 +495,18 @@ int main(int argc, char* argv[]) {
             } else {
                 throw runtime_error(arg + " takes 1 argument as input");
             }
+        } else if (arg == "-ks" || arg == "--kmer-size") {
+            if (i + 1 < argc) {
+                kmerSize = argv[++i];
+            } else {
+                throw runtime_error(arg + " takes 1 argument as input");
+            }
+        } else if (arg == "-o" || arg == "--output") {
+            if (i + 1 < argc) {
+                outputfile = argv[++i];
+            } else {
+                throw runtime_error(arg + " takes 1 argument as input");
+            }
         }
 
         else {
@@ -530,11 +516,13 @@ int main(int argc, char* argv[]) {
     }
 
     length_t ed = stoi(maxED);
-    if (ed < 0 || ed > 6) {
-        cerr << ed << " is not allowed as maxED should be in [0, 4]" << endl;
+    if (ed < 0 || ed > MAX_K) {
+        cerr << ed << " is not allowed as maxED should be in [0, " << MAX_K
+             << "]" << endl;
 
         return EXIT_FAILURE;
     }
+
     length_t saSF = stoi(saSparse);
     if (saSF == 0 || saSF > 256 || (saSF & (saSF - 1)) != 0) {
         cerr << saSF
@@ -543,6 +531,16 @@ int main(int argc, char* argv[]) {
     }
 
     length_t inTextSwitchPoint = stoi(inTextPoint);
+    length_t kMerSize = stoi(kmerSize);
+
+    if (ed > 6 && inTextSwitchPoint > 0 && metric != HAMMING) {
+        cout
+            << "Warning in-text verification currently only supports up to k = "
+            << 6
+            << " for the edit distance. Switching of in-text verification..."
+            << endl;
+        inTextSwitchPoint = 0;
+    }
 
     if (ed != 4 && searchscheme == "manbest") {
         throw runtime_error("manbest only supports 4 allowed errors");
@@ -551,8 +549,10 @@ int main(int argc, char* argv[]) {
     string baseFile = argv[argc - 2];
     string readsFile = argv[argc - 1];
 
+    FMIndex index = FMIndex(baseFile, inTextSwitchPoint, saSF, true, kMerSize);
+
     cout << "Reading in reads from " << readsFile << endl;
-    vector<pair<string, string>> reads;
+    vector<ReadRecord> reads;
     try {
         reads = getReads(readsFile);
     } catch (const exception& e) {
@@ -561,32 +561,33 @@ int main(int argc, char* argv[]) {
         throw runtime_error(er);
     }
 
-    FMIndex bwt = FMIndex(baseFile, inTextSwitchPoint, saSF);
-
     SearchStrategy* strategy;
     if (searchscheme == "kuch1") {
-        strategy = new KucherovKplus1(bwt, pStrat, metric);
+        strategy = new KucherovKplus1(index, pStrat, metric);
     } else if (searchscheme == "kuch2") {
-        strategy = new KucherovKplus2(bwt, pStrat, metric);
+        strategy = new KucherovKplus2(index, pStrat, metric);
     } else if (searchscheme == "kianfar") {
-        strategy = new OptimalKianfar(bwt, pStrat, metric);
+        strategy = new OptimalKianfar(index, pStrat, metric);
     } else if (searchscheme == "manbest") {
-        strategy = new ManBestStrategy(bwt, pStrat, metric);
+        strategy = new ManBestStrategy(index, pStrat, metric);
     } else if (searchscheme == "01*0") {
-        strategy = new O1StarSearchStrategy(bwt, pStrat, metric);
+        strategy = new O1StarSearchStrategy(index, pStrat, metric);
     } else if (searchscheme == "pigeon") {
-        strategy = new PigeonHoleSearchStrategy(bwt, pStrat, metric);
+        strategy = new PigeonHoleSearchStrategy(index, pStrat, metric);
     } else if (searchscheme == "custom") {
-        strategy = new CustomSearchStrategy(bwt, customFile, pStrat, metric);
+        strategy = new CustomSearchStrategy(index, customFile, pStrat, metric);
+    } else if (searchscheme == "multiple") {
+        strategy =
+            new MultipleSchemesStrategy(index, customFile, pStrat, metric);
     } else if (searchscheme == "naive") {
-        strategy = new NaiveBackTrackingStrategy(bwt, pStrat, metric);
+        strategy = new NaiveBackTrackingStrategy(index, pStrat, metric);
     } else {
         // should not get here
         throw runtime_error(searchscheme +
                             " is not on option as search scheme");
     }
 
-    doBench(reads, bwt, strategy, readsFile, ed);
+    doBench(reads, index, strategy, outputfile, ed, baseFile);
     delete strategy;
     cout << "Bye...\n";
 }

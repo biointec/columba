@@ -1,5 +1,26 @@
+/******************************************************************************
+ *  Columba 1.2: Approximate Pattern Matching using Search Schemes            *
+ *  Copyright (C) 2020-2023 - Luca Renders <luca.renders@ugent.be> and        *
+ *                            Jan Fostier <jan.fostier@ugent.be>              *
+ *                                                                            *
+ *  This program is free software: you can redistribute it and/or modify      *
+ *  it under the terms of the GNU Affero General Public License as            *
+ *  published by the Free Software Foundation, either version 3 of the        *
+ *  License, or (at your option) any later version.                           *
+ *                                                                            *
+ *  This program is distributed in the hope that it will be useful,           *
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of            *
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the             *
+ *  GNU Affero General Public License for more details.                       *
+ *                                                                            *
+ * You should have received a copy of the GNU Affero General Public License   *
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.     *
+ ******************************************************************************/
+
 #ifndef SUBSTRING_H
 #define SUBSTRING_H
+
+#include <string>
 
 // ============================================================================
 // ENUMS
@@ -10,6 +31,8 @@
  */
 enum Direction { FORWARD, BACKWARD };
 
+#include "wordlength.h"
+
 // ============================================================================
 // CLASS SUBSTRING
 // ============================================================================
@@ -17,8 +40,8 @@ enum Direction { FORWARD, BACKWARD };
 class Substring {
   private:
     const std::string* text; // pointer to the string this is a substring of
-    unsigned int startIndex; // the startIndex of this substring in the text
-    unsigned int
+    length_t startIndex;     // the startIndex of this substring in the text
+    length_t
         endIndex; // the endIndex of this substring in the text (non-inclusive)
     Direction d;  // The direction of this substring
 
@@ -30,8 +53,17 @@ class Substring {
      * @param dir, the direction (defaults to FORWARD)
      */
     Substring(const std::string& t, Direction dir = FORWARD)
-        : startIndex(0), endIndex(t.size()), d(dir) {
-        text = &t;
+        : text(&t), startIndex(0), endIndex(t.size()), d(dir) {
+    }
+
+    /**
+     * Constructor, the start and end index default of 0 and the size of the
+     * text
+     * @param t, the text to point to
+     * @param dir, the direction (defaults to FORWARD)
+     */
+    Substring(const std::string* t, Direction dir = FORWARD)
+        : text(t), startIndex(0), endIndex(t->size()), d(dir) {
     }
 
     /**
@@ -41,9 +73,10 @@ class Substring {
      * @param end, the end index of this substring in t (non-inclusive)
      * @param dir, the direction (defaults to FORWARD)
      */
-    Substring(const std::string* t, unsigned int start, unsigned int end,
+    Substring(const std::string* t, length_t start, length_t end,
               Direction dir = FORWARD)
         : text(t), startIndex(start), endIndex(end), d(dir) {
+        check();
     }
 
     /**
@@ -52,8 +85,9 @@ class Substring {
      * @param start, the start index of this new substring in the original text
      * @param end, the end index of this new stubstring
      */
-    Substring(const Substring* s, unsigned int start, unsigned int end)
+    Substring(const Substring* s, length_t start, length_t end)
         : text(s->text), startIndex(start), endIndex(end), d(s->d) {
+        check();
     }
 
     /**
@@ -63,9 +97,9 @@ class Substring {
      * @param start, the start index of this new substring in the original text
      * @param end, the end index of this new stubstring
      */
-    Substring(const Substring* s, unsigned int start, unsigned int end,
-              Direction dir)
+    Substring(const Substring* s, length_t start, length_t end, Direction dir)
         : text(s->text), startIndex(start), endIndex(end), d(dir) {
+        check();
     }
     /**
      * Constructs a substring of the text another substring points to
@@ -73,8 +107,9 @@ class Substring {
      * @param start, the start index of this new substring in the original text
      * @param end, the end index of this new stubstring
      */
-    Substring(const Substring& s, unsigned int start, unsigned int end)
+    Substring(const Substring& s, length_t start, length_t end)
         : text(s.text), startIndex(start), endIndex(end), d(s.d) {
+        check();
     }
 
     /**
@@ -83,9 +118,9 @@ class Substring {
      * @param start, the start index of this new substring in the original text
      * @param end, the end index of this new stubstring
      */
-    Substring(const Substring& s, unsigned int start, unsigned int end,
-              Direction dir)
+    Substring(const Substring& s, length_t start, length_t end, Direction dir)
         : text(s.text), startIndex(start), endIndex(end), d(dir) {
+        check();
     }
 
     /**
@@ -101,7 +136,7 @@ class Substring {
      * (relative to the direction)
      * @param skip, the number of characters to skip
      */
-    const Substring getSubPiece(unsigned int skip) const {
+    const Substring getSubPiece(length_t skip) const {
         if (d == FORWARD) {
             return Substring(this, startIndex + skip, endIndex);
         } else {
@@ -114,7 +149,7 @@ class Substring {
      * @param i the index to get the character from
      * @returns the character at index i
      */
-    char operator[](unsigned int i) const {
+    char operator[](length_t i) const {
         return (d == FORWARD) ? text->at(startIndex + i)
                               : text->at(endIndex - i - 1);
     }
@@ -123,7 +158,7 @@ class Substring {
      * Get the size of this substring
      * @returns the size of this substring
      */
-    unsigned int size() const {
+    size_t size() const {
         if (empty()) {
             return 0;
         }
@@ -134,7 +169,7 @@ class Substring {
      * Get the length of this substring (equals the size)
      * @returns the length of this substring
      */
-    unsigned int length() const {
+    size_t length() const {
         return size();
     }
 
@@ -146,11 +181,18 @@ class Substring {
         return endIndex <= startIndex;
     }
 
+    void check() {
+
+        if (endIndex > text->size()) {
+            endIndex = text->size();
+        }
+    }
+
     /**
      * Get the end of this substring
      * @returns the end Index of this substring (non-inclusive)
      */
-    unsigned int end() const {
+    length_t end() const {
         return endIndex;
     }
 
@@ -158,7 +200,7 @@ class Substring {
      * Get the begin of this substring
      * @returns the begin index of the substring
      */
-    unsigned int begin() const {
+    length_t begin() const {
         return startIndex;
     }
 
@@ -182,11 +224,11 @@ class Substring {
         return text->substr(startIndex, endIndex - startIndex);
     }
 
-    void setEnd(unsigned int newEnd) {
+    void setEnd(length_t newEnd) {
         endIndex = newEnd;
     }
 
-    void setBegin(unsigned int n) {
+    void setBegin(length_t n) {
         startIndex = n;
     }
 

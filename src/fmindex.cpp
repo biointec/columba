@@ -1,6 +1,6 @@
 /******************************************************************************
- *  Columba 1.1: Approximate Pattern Matching using Search Schemes            *
- *  Copyright (C) 2020-2022 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Columba 1.2: Approximate Pattern Matching using Search Schemes            *
+ *  Copyright (C) 2020-2023 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -20,64 +20,24 @@
 
 using namespace std;
 
-ostream& operator<<(ostream& os, const Range& r) {
-    os << "[" << r.begin << ", " << r.end << ")";
-    return os;
-}
-
-// ============================================================================
-// CLASS BIFMOCC
-// ============================================================================
-
-ostream& operator<<(ostream& o, const FMOcc& m) {
-    return o << "SARange: " << m.getRanges().getRangeSA()
-             << "\tEdit distance: " << m.getDistance()
-             << "\tdepth: " << m.getDepth();
-}
-
-ostream& operator<<(ostream& os, const Search& obj) {
-    os << "{";
-    length_t numParts = obj.getNumParts();
-    for (length_t i = 0; i < numParts; i++) {
-        os << obj.getPart(i) << ((i == numParts - 1) ? "}" : ",");
-    }
-    os << " {";
-    for (length_t i = 0; i < numParts; i++) {
-        os << obj.getLowerBound(i) << ((i == numParts - 1) ? "}" : ",");
-    }
-    os << " {";
-    for (length_t i = 0; i < numParts; i++) {
-        os << obj.getUpperBound(i) << ((i == numParts - 1) ? "}" : ",");
-    }
-    return os;
-}
-
 // ============================================================================
 // CLASS FMIndex
 // ============================================================================
-thread_local length_t Counters::nodeCounter;
-thread_local length_t Counters::abortedInTextVerificationCounter;
-thread_local length_t Counters::totalReportedPositions;
-thread_local length_t Counters::cigarsInTextVerification;
-thread_local length_t Counters::cigarsInIndex;
-thread_local length_t Counters::inTextStarted;
-thread_local length_t Counters::usefulCigarsInText;
-thread_local length_t Counters::immediateSwitch;
-thread_local length_t Counters::approximateSearchStarted;
 
 thread_local Direction FMIndex::dir = BACKWARD;
 thread_local ExtraCharPtr FMIndex::extraChar;
-thread_local FindDiffPtr FMIndex::findDiff;
 
 thread_local vector<vector<FMPosExt>> FMIndex::stacks;
 thread_local vector<BitParallelED> FMIndex::matrices;
+
+thread_local BitParallelED FMIndex::inTextMatrix;
 
 // ----------------------------------------------------------------------------
 // ROUTINES FOR ACCESSING DATA STRUCTURE
 // ----------------------------------------------------------------------------
 length_t FMIndex::findLF(length_t k) const {
 
-    const auto& pos = sigma.c2i((unsigned char)bwt[k]);
+    const auto& pos = bwt[k];
     return counts[pos] + getNumberOfOcc(pos, k);
 }
 
@@ -142,7 +102,7 @@ void FMIndex::fromFiles(const string& baseFile, bool verbose) {
         cout.flush();
     }
 
-    if (!readText(baseFile + ".bwt", bwt)) {
+    if (!bwt.read(baseFile + ".bwt")) {
         throw runtime_error("Cannot open file: " + baseFile + ".bwt");
     }
     if (verbose) {
@@ -192,9 +152,10 @@ void FMIndex::populateTable(bool verbose) {
         word.resize(curr.getRow());
         word[curr.getRow() - 1] = curr.getCharacter();
 
-        if ((length_t)curr.getRow() == wordSize) { // max depth reached
+        if (curr.getRow() == wordSize) { // max depth reached
             Kmer k(word);
-            table.insert(make_pair(k, curr.getRanges()));
+
+            table.insert(make_pair(k, std::move(curr.getRanges())));
 
         } else // add extra characters
             extendFMPos(curr.getRanges(), stack, counters, curr.getRow());
@@ -207,59 +168,6 @@ void FMIndex::populateTable(bool verbose) {
 // ----------------------------------------------------------------------------
 // ROUTINES FOR EXACT PATTERN MATCHING
 // ----------------------------------------------------------------------------
-Range FMIndex::matchString(const string& s, Counters& counters) const {
-    // start at the end
-    auto it = s.crbegin();
-
-    // find the range for this initial character in the BWT string
-    length_t positionInAlphabet = sigma.c2i((unsigned char)*it);
-
-    length_t start = counts[positionInAlphabet];
-    length_t end;
-    if (positionInAlphabet != sigma.size() - 1) {
-        end = counts[positionInAlphabet + 1];
-    } else {
-        end = bwt.size();
-    }
-    counters.nodeCounter++;
-
-    // iterate starting from the second character over the string
-    for (++it; it != s.crend(); it++) {
-        // find number of occurrences of this char before and after and so the
-        // new range is found
-        positionInAlphabet = sigma.c2i((unsigned char)*it);
-        length_t startOfChar = counts[positionInAlphabet];
-        start = getNumberOfOcc(positionInAlphabet, start) + startOfChar;
-        end = getNumberOfOcc(positionInAlphabet, end) + startOfChar;
-        counters.nodeCounter++;
-        if (start == end) {
-            // no matches found
-            return Range();
-        }
-    }
-
-    // return this range as a pair
-    return Range(start, end);
-}
-vector<length_t> FMIndex::exactMatches(const string& s,
-                                       Counters& counters) const {
-
-    // find the range in the suffix array that matches the string
-    Range range = matchString(s, counters);
-
-    // declare the return vector
-    vector<length_t> positions;
-    positions.reserve(range.width());
-
-    // fill in the vector with all values in this range in the suffix array
-    for (length_t i = range.getBegin(); i < range.getEnd(); i++) {
-        positions.emplace_back(findSA(i));
-    }
-
-    // sort the vector and return
-    sort(positions.begin(), positions.end());
-    return positions;
-}
 
 SARangePair FMIndex::matchStringBidirectionally(const Substring& pattern,
                                                 SARangePair rangesOfPrev,
@@ -284,12 +192,11 @@ bool FMIndex::addChar(const char& c, SARangePair& startRange,
 
         if ((this->*extraChar)(posInAlphabet, startRange, startRange)) {
             // each character that we look at is a new node that is visited
-            counters.nodeCounter++;
+            counters.incNodeCounter();
             return true;
         }
     }
     // the range is now empty
-
     return false;
 }
 
@@ -297,14 +204,16 @@ bool FMIndex::addChar(const char& c, SARangePair& startRange,
 // ROUTINES FOR APPROXIMATE PATTERN MATCHING
 // ----------------------------------------------------------------------------
 
-vector<TextOcc> FMIndex::approxMatchesNaive(const string& pattern,
-                                            length_t maxED,
-                                            Counters& counters) {
+const vector<TextOcc> FMIndex::approxMatchesNaive(const string& pattern,
+                                                  length_t maxED,
+                                                  Counters& counters) {
 
     counters.resetCounters();
     Occurrences occurrences;
 
-    BandMatrix matrix(pattern.size() + maxED + 1, maxED);
+    BitParallelED matrix;
+    matrix.setSequence(pattern);
+    matrix.initializeMatrix(maxED);
 
     setDirection(FORWARD);
 
@@ -313,39 +222,38 @@ vector<TextOcc> FMIndex::approxMatchesNaive(const string& pattern,
 
     extendFMPos(getCompleteRange(), stack, counters, 0);
 
+    length_t lastcol = pattern.size();
+
     while (!stack.empty()) {
         const FMPosExt currentNode = stack.back();
         stack.pop_back();
-        int row = currentNode.getDepth();
-        length_t first = matrix.getFirstColumn(row);
-        length_t last = matrix.getLastColumn(row);
-        length_t minimalED = maxED + 1;
-        for (length_t j = first; j <= last; j++) {
-            matrix.updateMatrix(currentNode.getCharacter() != pattern[j - 1],
-                                row, j);
-            minimalED = min(minimalED, matrix(row, j));
+        length_t row = currentNode.getDepth();
+
+        if (row >= matrix.getNumberOfRows()) {
+            continue;
         }
 
-        if (minimalED > maxED) {
+        bool valid = matrix.computeRow(row, currentNode.getCharacter());
+
+        if (!valid) {
             // backtrack
             continue;
         }
 
-        if (last == (length_t)matrix.getLastColumn()) {
+        if (matrix.inFinalColumn(row)) {
+
             // full pattern was matched
-            if (matrix(row, last) <= maxED) {
-                occurrences.addFMOcc(currentNode, matrix(row, last));
+            if (matrix(row, lastcol) <= maxED) {
+                occurrences.addFMOcc(currentNode, matrix(row, lastcol));
             }
         }
 
         extendFMPos(currentNode, stack, counters);
     }
 
-    BitParallelED bpMatrix;
-    bpMatrix.setSequence(pattern);
+    setInTextMatrixSequence(pattern);
 
-    return occurrences.getUniqueTextOccurrences(*this, maxED, bpMatrix,
-                                                counters);
+    return getUniqueTextOccurrences(occurrences, maxED, counters);
 }
 
 bool FMIndex::findRangesWithExtraCharBackward(
@@ -427,36 +335,44 @@ bool FMIndex::findRangesWithExtraCharForward(length_t positionInAlphabet,
 void FMIndex::recApproxMatchEditNaive(const Search& s, const FMOcc& startMatch,
                                       Occurrences& occ,
                                       const vector<Substring>& parts,
-                                      BitParallelED& inTextMatrix,
+
                                       Counters& counters, const int& idx) {
-    const Substring& p = parts[s.getPart(idx)];           // this part
-    const length_t& maxED = s.getUpperBound(idx);         // maxED for this part
-    const length_t& minED = s.getLowerBound(idx);         // minED for this part
-    const length_t& W = maxED - startMatch.getDistance(); // Width of matrix
+    const Substring& p = parts[s.getPart(idx)];   // this part
+    const length_t& maxED = s.getUpperBound(idx); // maxED for this part
+    const length_t& minED = s.getLowerBound(idx); // minED for this part
     const length_t& pSize = p.size();
+    const Direction& dir = s.getDirection(idx); // direction
 
-    BandMatrix matrix = BandMatrix(pSize, W, startMatch.getDistance());
+    // set the direction
+    setDirection(dir);
 
-    if (matrix.getLastColumn(0) == (int)pSize && matrix(0, pSize) <= maxED) {
+    length_t matrixID = s.getPart(idx) + (dir == BACKWARD) * s.getNumParts();
+    auto& bpED = matrices[matrixID];
+
+    if (!bpED.sequenceSet()) {
+        bpED.setSequence(p);
+    }
+
+    bpED.initializeMatrix(maxED, {(uint)startMatch.getDistance()});
+
+    if (bpED.getLastColumn(0) == pSize && bpED(0, pSize) <= maxED) {
         // an occurrence found by gapping entire part
         if (s.isEnd(idx)) {
-            occ.addFMOcc(startMatch.getRanges(), matrix(0, pSize),
+            occ.addFMOcc(startMatch.getRanges(), bpED(0, pSize),
                          startMatch.getDepth());
         } else {
             // go to the next index
-            recApproxMatchEditNaive(
-                s,
-                FMOcc(startMatch.getRanges(), matrix(0, pSize),
-                      startMatch.getDepth()),
-                occ, parts, inTextMatrix, counters, idx + 1);
+            recApproxMatchEditNaive(s,
+                                    FMOcc(startMatch.getRanges(),
+                                          bpED(0, pSize),
+                                          startMatch.getDepth()),
+                                    occ, parts, counters, idx + 1);
             // set direction correct again
             setDirection(dir);
         }
     }
 
-    auto& stack = stacks[idx];                  // stack for this partition
-    const Direction& dir = s.getDirection(idx); // direction
-    setDirection(dir);
+    auto& stack = stacks[idx]; // stack for this partition
 
     extendFMPos(startMatch.getRanges(), stack, counters);
 
@@ -465,37 +381,29 @@ void FMIndex::recApproxMatchEditNaive(const Search& s, const FMOcc& startMatch,
         stack.pop_back();
 
         const length_t& row = currentNode.getRow();
-        const length_t firstCol = matrix.getFirstColumn(row);
-        const length_t lastCol = matrix.getLastColumn(row);
+        const length_t firstCol = bpED.getFirstColumn(row);
+        const length_t lastCol = bpED.getLastColumn(row);
 
-        length_t minimalEDOfRow = matrix(row, firstCol - 1);
-        for (length_t col = firstCol; col <= lastCol; col++) {
-            length_t filledIn = matrix.updateMatrix(
-                currentNode.getCharacter() != p[col - 1], row, col);
-            counters.abortedInTextVerificationCounter++;
-            if (filledIn < minimalEDOfRow) {
-                minimalEDOfRow = filledIn;
-            }
-        }
+        bool valid = bpED.computeRow(row, currentNode.getCharacter());
 
-        if (minimalEDOfRow > maxED) {
+        if (!valid) {
             // backtracking
             continue;
         }
 
-        if (lastCol == pSize && matrix(row, pSize) <= maxED &&
-            matrix(row, pSize) >= minED) {
+        if (lastCol == pSize && bpED(row, pSize) <= maxED &&
+            bpED(row, pSize) >= minED) {
             if (s.isEnd(idx)) {
-                occ.addFMOcc(currentNode.getRanges(), matrix(row, pSize),
+                occ.addFMOcc(currentNode.getRanges(), bpED(row, pSize),
                              startMatch.getDepth() + currentNode.getDepth());
             } else {
                 // go deeper in search
                 Direction originalDir = dir;
                 recApproxMatchEditNaive(
                     s,
-                    FMOcc(currentNode.getRanges(), matrix(row, pSize),
+                    FMOcc(currentNode.getRanges(), bpED(row, pSize),
                           startMatch.getDepth() + currentNode.getDepth()),
-                    occ, parts, inTextMatrix, counters, idx + 1);
+                    occ, parts, counters, idx + 1);
                 // set direction correct again
                 setDirection(originalDir);
             }
@@ -511,10 +419,10 @@ void FMIndex::recApproxMatchEditNaive(const Search& s, const FMOcc& startMatch,
 }
 
 void FMIndex::recApproxMatchEditOptimized(
-    BitParallelED& intextMatrix, const Search& s, const FMOcc& startMatch,
-    Occurrences& occ, const vector<Substring>& parts, Counters& counters,
-    const int& idx, const vector<FMPosExt>& descPrevDir,
-    const vector<uint>& initPrevDir, const vector<FMPosExt>& descNotPrevDir,
+    const Search& s, const FMOcc& startMatch, Occurrences& occ,
+    const vector<Substring>& parts, Counters& counters, const int& idx,
+    const vector<FMPosExt>& descPrevDir, const vector<uint>& initPrevDir,
+    const vector<FMPosExt>& descNotPrevDir,
     const vector<uint>& initNotPrevDir) {
 
     // shortcut Variables
@@ -541,9 +449,10 @@ void FMIndex::recApproxMatchEditOptimized(
     if (initEds.empty()) {
         initED = vector<uint>(1, startMatch.getDistance());
     } else {
-        uint prevED = (dSwitch ? *min_element(initEds.begin(), initEds.end())
-                               : initEds[0]);
-        uint increase = startMatch.getDistance() - prevED;
+        length_t prevED =
+            (dSwitch ? *min_element(initEds.begin(), initEds.end())
+                     : initEds[0]);
+        length_t increase = startMatch.getDistance() - prevED;
         initED = vector<uint>(initEds.size());
         for (size_t i = 0; i < initED.size(); i++) {
             initED[i] = initEds[i] + increase;
@@ -558,7 +467,7 @@ void FMIndex::recApproxMatchEditOptimized(
     // initialize bit-parallel matrix
     bpED.initializeMatrix(maxED, initED);
 
-    // initialize matrix and cluster
+    // initialize  cluster
     Cluster clus(bpED.getSizeOfFinalColumn(), maxED, startMatch.getDepth(),
                  startMatch.getShift());
 
@@ -583,15 +492,14 @@ void FMIndex::recApproxMatchEditOptimized(
              i++) {
 
             if (branchAndBound(
-                    intextMatrix, clus, descendants[i], s, idx, parts, occ,
-                    counters, initOther, descOther,
+                    bpED, clus, descendants[i], s, idx, parts, occ, counters,
+                    initOther, descOther,
                     {descendants.begin() + i + 1, descendants.end()})) {
                 return;
             }
         }
         if (descendants.back().getDepth() == maxRow) {
-            // minimal ed exceeded no more options to get lower ed from
-            // first column, or no more rows to possibly check
+            //  no more rows to possibly check
             return;
         }
 
@@ -615,71 +523,71 @@ void FMIndex::recApproxMatchEditOptimized(
         const FMPosExt currentNode = stack.back();
         stack.pop_back();
 
-        if (branchAndBound(intextMatrix, clus, currentNode, s, idx, parts, occ,
+        if (branchAndBound(bpED, clus, currentNode, s, idx, parts, occ,
                            counters, initOther, descOther)) {
 
             continue;
         }
 
-        bool lastCol = bpED.inFinalColumn(currentNode.getRow());
-
-        if (lastCol || currentNode.getRanges().width() > inTextSwitchPoint ||
-            idxZero) {
+        if (currentNode.getRanges().width() > inTextSwitchPoint || idxZero) {
             // continue the search for children of this node in-index
             extendFMPos(currentNode, stack, counters);
             continue;
         }
         // crossing-over
         // convert node to an occurrence in the text with the
-        FMOcc fmocc(currentNode.getRanges(), 0,
-                    startMatch.getDepth() + currentNode.getDepth(),
-                    startMatch.getShift());
-        const auto& textOcc = convertToMatchesInText(fmocc);
-
-        // find the decrease and increase as compared to partialStart
-        length_t lStartDec = 0, hStartDec = 0, hStartInc = 0;
 
         length_t startBeforeThis =
             parts[s.getLowestPartProcessedBefore(idx)].begin();
+        length_t globalMaxED = s.getMaxED();
+        length_t startDiff = startBeforeThis + globalMaxED;
 
-        (this->*findDiff)(lStartDec, hStartDec, hStartInc, startBeforeThis,
-                          s.getMaxED(), bpED, currentNode.getRow(), maxED,
-                          descOther.size(), initOther);
+        if (startBeforeThis == 0) {
+            startDiff = 0;
+        } else if (dir == BACKWARD) {
+            length_t row = currentNode.getRow();
+            length_t col = bpED.getFirstColumn(row);
+            startDiff -= col + bpED(row, col);
 
-        inTextVerification(textOcc, s.getMaxED(), s.getMinED(), intextMatrix,
-                           occ, counters, lStartDec, hStartDec, hStartInc);
+        } else if (!descOther.empty()) {
+            // FORWARD DIRECTION
+            // descOther are thus in backwards direction
+            startDiff -= descOther.size() - initOther.size() + initOther.back();
+        }
+
+        const auto& startPos =
+            getBeginPositions(currentNode.getRanges().getRangeSA(), startDiff,
+                              startMatch.getShift());
+
+        inTextVerification(startPos, globalMaxED, s.getMinED(), occ, counters);
     }
 }
 
-bool FMIndex::branchAndBound(BitParallelED& inTextMatrix, Cluster& clus,
+bool FMIndex::branchAndBound(BitParallelED& bpED, Cluster& clus,
                              const FMPosExt& currentNode, const Search& s,
                              const length_t& idx,
                              const vector<Substring>& parts, Occurrences& occ,
                              Counters& counters, const vector<uint>& initOther,
                              const vector<FMPosExt>& descOther,
                              const vector<FMPosExt>& remainingDesc) {
-    // get the appropriate matrix
-    size_t matrixIdx = s.getPart(idx) + (dir == BACKWARD) * s.getNumParts();
-    BitParallelED& bpED = matrices[matrixIdx];
 
     // compute, in a bit-parallel manner, a single row of the ED matrix
     const length_t row = currentNode.getDepth();
     bool validED = bpED.computeRow(row, currentNode.getCharacter());
 
     // check if we have reached the final column of the matrix
-    const length_t lastCol = bpED.getLastColumn(row);
-
-    if ((lastCol + 1) == bpED.getNumberOfCols()) {
+    if (bpED.inFinalColumn(row)) {
         // update the cluster
         length_t clusIdx = clus.size() + row - bpED.getNumberOfRows();
-        clus.setValue(clusIdx, currentNode, bpED(row, lastCol));
+        clus.setValue(clusIdx, currentNode,
+                      bpED(row, bpED.getNumberOfCols() - 1));
 
         if (!validED || bpED.onlyVerticalGapsLeft(row)) {
             // no need to further explore this branch for this part -> go to
             // next part
-            goDeeper(inTextMatrix, clus, idx + 1, s, parts, occ,
-                     s.getLowerBound(idx), counters, descOther, initOther,
-                     remainingDesc);
+
+            goDeeper(clus, idx + 1, s, parts, occ, counters, descOther,
+                     initOther, remainingDesc);
             return true;
         }
     }
@@ -687,20 +595,19 @@ bool FMIndex::branchAndBound(BitParallelED& inTextMatrix, Cluster& clus,
     return !validED;
 }
 
-void FMIndex::goDeeper(BitParallelED& inTextMatrix, Cluster& cluster,
-                       const length_t& nextIdx, const Search& s,
+void FMIndex::goDeeper(Cluster& cluster, const length_t& nIdx, const Search& s,
                        const vector<Substring>& parts, Occurrences& occ,
-                       const length_t& lowerBound, Counters& counters,
-                       const vector<FMPosExt>& descOtherD,
+                       Counters& counters, const vector<FMPosExt>& descOtherD,
                        const vector<uint>& initOtherD,
-                       const vector<FMPosExt>& remainingDesc) {
+                       const vector<FMPosExt>& remDesc) {
 
-    bool isEdge = s.isEdge(nextIdx - 1);
+    bool isEdge = s.isEdge(nIdx - 1);
+    const auto& lowerBound = s.getLowerBound(nIdx - 1);
 
     if (isEdge) {
         // if this is final piece report highest minimum (to get shortest
         // match)
-        if (nextIdx == parts.size()) {
+        if (nIdx == parts.size()) {
             auto matches = cluster.reportCentersAtEnd();
             for (const auto& match : matches) {
                 if (match.isValid() && match.getDistance() >= lowerBound) {
@@ -712,9 +619,9 @@ void FMIndex::goDeeper(BitParallelED& inTextMatrix, Cluster& cluster,
             if (match.isValid() && match.getDistance() >= lowerBound) {
                 // go deeper in search
                 Direction originalDir = this->dir;
-                recApproxMatchEditOptimized(inTextMatrix, s, match, occ, parts,
-                                            counters, nextIdx, {}, {},
-                                            descOtherD, initOtherD);
+                recApproxMatchEditOptimized(s, match, occ, parts, counters,
+                                            nIdx, {}, {}, descOtherD,
+                                            initOtherD);
                 // set direction back again
                 setDirection(originalDir);
             }
@@ -734,15 +641,14 @@ void FMIndex::goDeeper(BitParallelED& inTextMatrix, Cluster& cluster,
         return;
     }
 
-    // add the remaining descendants
-    descendants.insert(descendants.end(), remainingDesc.begin(),
-                       remainingDesc.end());
+    // add the remaining descendants (copy)
+    descendants.insert(descendants.end(), remDesc.begin(), remDesc.end());
 
     // reset the depth of all the descendants
     for (length_t i = 0; i < descendants.size(); i++) {
         descendants[i].setDepth(i + 1);
     }
-    length_t maxEDNext = s.getUpperBound(nextIdx);
+    length_t maxEDNext = s.getUpperBound(nIdx);
 
     // remove trailing initEds that are higher than maxEDNext
     while (initEds.back() > maxEDNext) {
@@ -750,7 +656,7 @@ void FMIndex::goDeeper(BitParallelED& inTextMatrix, Cluster& cluster,
     }
 
     // is the next direction equal to this direction?
-    bool switchAfter = s.getDirectionSwitch(nextIdx);
+    bool switchAfter = s.getDirectionSwitch(nIdx);
 
     if (switchAfter) {
         // switching direction as this is not the end of a search direction,
@@ -766,153 +672,40 @@ void FMIndex::goDeeper(BitParallelED& inTextMatrix, Cluster& cluster,
 
         Direction originalDir = this->dir;
 
-        recApproxMatchEditOptimized(inTextMatrix, s, newMatch, occ, parts,
-                                    counters, nextIdx, descendants, initEds,
-                                    descOtherD, initOtherD);
+        recApproxMatchEditOptimized(s, newMatch, occ, parts, counters, nIdx,
+                                    descendants, initEds, descOtherD,
+                                    initOtherD);
 
         // set direction back again
         setDirection(originalDir);
     } else {
         // go deeper on next piece
-        recApproxMatchEditOptimized(inTextMatrix, s, newMatch, occ, parts,
-                                    counters, nextIdx, descendants, initEds,
-                                    descOtherD, initOtherD);
+        recApproxMatchEditOptimized(s, newMatch, occ, parts, counters, nIdx,
+                                    descendants, initEds, descOtherD,
+                                    initOtherD);
     }
 }
 
-void FMIndex::findDiffStartPositionBackward(
-    length_t& lStartDec, length_t& hStartDec, length_t& hStartInc,
-    const length_t& startBeforeThis, const length_t& maxED,
-    const BitParallelED& bpED, const length_t& row, const length_t& maxEDPart,
-    const length_t& descOtherSize, const vector<uint>& initOther) const {
-    assert(dir == BACKWARD);
-    // the cluster centers of the final row
-    vector<pair<uint, uint>> centers;
-    centers.reserve(2 * maxEDPart + 1);
-
-    // find the local minima
-    bpED.findLocalMinimaRow(row, maxEDPart, centers);
-    lStartDec = 0, hStartDec = numeric_limits<length_t>::max();
-    hStartInc = 0;
-    for (const auto& c : centers) {
-        length_t remPatternLeft = startBeforeThis - c.first;
-        length_t remED = maxED - c.second;
-        lStartDec = max(lStartDec, remPatternLeft + remED);
-        if (remPatternLeft >= remED) {
-            hStartDec = min(hStartDec, remPatternLeft - remED);
-        } else {
-            hStartInc = max(hStartInc, remED - remPatternLeft);
-        }
-    }
-    if (hStartInc) {
-        hStartDec = 0;
-    }
-}
-
-void FMIndex::findDiffStartPositionForward(
-    length_t& lStartDec, length_t& hStartDec, length_t& hStartInc,
-    const length_t& startBeforeThis, const length_t& maxED,
-    const BitParallelED& bpED, const length_t& row, const length_t& maxEDPart,
-    const length_t& descOtherSize, const vector<uint>& initOther) const {
-    assert(dir == FORWARD),
-
-        lStartDec = 0, hStartDec = numeric_limits<length_t>::max();
-    hStartInc = 0;
-
-    if (startBeforeThis == 0) {
-        // start position is already fixed
-        hStartDec = 0;
-        return;
-    }
-    // find the absolute minimum value of the final row
-    length_t minPartialED, minIndex;
-    bpED.findMinimumAtRow(row, minIndex, minPartialED);
-    if (descOtherSize == 0) {
-        // partial match has fixed start position
-        // allow for extra characters and errors
-        lStartDec = startBeforeThis + (maxED - minPartialED);
-        hStartDec = startBeforeThis - (maxED - minPartialED);
-        return;
-    }
-    // BACKWARDS already started and has influence on startpositions
-    // we have started the backwards match, but not completed it
-    // -> the partialStart refers to the deepest descendant
-
-    length_t deepestMDec = startBeforeThis;
-
-    for (length_t cc = 0; cc < initOther.size(); cc++) {
-        bool betterThanAbove = (cc == 0) || initOther[cc] <= initOther[cc - 1];
-        bool betterThanBelow =
-            (cc == initOther.size() - 1) || initOther[cc] <= initOther[cc + 1];
-        if (betterThanAbove && betterThanBelow) {
-            // this is a center
-            int centerDiff = initOther[cc] - initOther[0];
-            length_t remED = maxED - minPartialED - centerDiff;
-            length_t mDec = deepestMDec - (descOtherSize - cc);
-            lStartDec = max(lStartDec, mDec + remED);
-            hStartDec = min(hStartDec, mDec - remED);
-        }
-    }
-}
-
-void FMIndex::inTextVerification(const vector<TextOcc>& tos,
+void FMIndex::inTextVerification(const vector<length_t>& startPos,
                                  const length_t& maxED, const length_t& minED,
-                                 BitParallelED& intextMatrix, Occurrences& occ,
-                                 Counters& counters, const length_t& lStartDec,
-                                 const length_t& hStartDec,
-                                 const length_t& hStartInc) const {
+                                 Occurrences& occ, Counters& counters) const {
 
     // initialize matrix with correct number of zeros
-    vector<uint> zeros(lStartDec - hStartDec + hStartInc + 1, 0);
-    intextMatrix.initializeMatrix(maxED, zeros);
+    vector<uint> zeros(2 * maxED + 1, 0);
+    inTextMatrix.initializeMatrix(maxED, zeros);
 
-    counters.inTextStarted += tos.size();
-    for (const auto& to : tos) {
-        const length_t& partialStart = to.getRange().getBegin();
-        // A) find the lowest  possible starts
-        length_t lStart = partialStart - lStartDec;
+    vector<Substring> refs;
+    refs.reserve(startPos.size());
 
+    counters.inTextStarted += startPos.size();
+    for (const auto& start : startPos) {
         // B) find the highest possible end
-        length_t hEnd = intextMatrix.getNumberOfRows() - 1 + lStart;
+        length_t hEnd = start + inTextMatrix.getNumberOfRows() - 1;
         // C) Get the reference subsequence
-        Substring ref(&text, lStart, hEnd, FORWARD);
-
-        // D) fill in the matrix row by row
-        length_t i;
-
-        for (i = 0; i < ref.size(); i++) {
-            if (!intextMatrix.computeRow(i + 1, ref[i])) {
-                break;
-            }
-        }
-
-        // did we break before a possible match?
-        if (i <= ref.size() - intextMatrix.getSizeOfFinalColumn()) {
-            counters.abortedInTextVerificationCounter++;
-            continue;
-        }
-
-        vector<uint> refEnds;
-        intextMatrix.findClusterCenters(i, refEnds, maxED, minED);
-
-        if (refEnds.empty()) {
-            counters.abortedInTextVerificationCounter++;
-            continue;
-        }
-
-        // for each valid end -> calculate CIGAR string and report
-        for (const auto& refEnd : refEnds) {
-            length_t bestScore = maxED + 1, bestBegin = 0;
-
-            vector<pair<char, uint>> CIGAR;
-            intextMatrix.trackBack(ref, refEnd, bestBegin, bestScore, CIGAR);
-            counters.cigarsInTextVerification++;
-
-            // make an occurrence
-            occ.addTextOcc(Range(lStart + bestBegin, lStart + refEnd),
-                           bestScore, CIGAR);
-        }
+        refs.emplace_back(&text, start, hEnd, FORWARD);
     }
+    IntextVerificationTask task(refs, inTextMatrix, maxED, minED);
+    task.doTask(counters, occ);
 }
 
 void FMIndex::recApproxMatchHamming(const Search& s, const FMOcc& startMatch,
@@ -1042,7 +835,7 @@ void FMIndex::extendFMPos(const SARangePair& parentRanges,
             // push this range and character for the next iteration
             stack.emplace_back(sigma.i2c(i), pairForNewChar, row + 1);
 
-            counters.nodeCounter++;
+            counters.incNodeCounter();
         }
     }
 }
@@ -1072,4 +865,103 @@ vector<TextOcc> FMIndex::convertToMatchesInText(const FMOcc& saMatch) const {
                                  saMatch.getDistance());
     }
     return textMatches;
+}
+
+std::vector<TextOcc> FMIndex::getUniqueTextOccurrences(Occurrences& occ,
+                                                       const length_t& maxED,
+                                                       Counters& counters) {
+
+    // increment reporte position counter
+    counters.totalReportedPositions += occ.textOccSize();
+
+    // erase equal occurrences from the in-index occurrences
+    occ.eraseDoublesFM();
+
+    // convert the in-index occurrences to in-text occurrences
+    const auto& fmocc = occ.getFMOccurrences();
+    for (const auto& f : fmocc) {
+
+        const Range& saRange = f.getRanges().getRangeSA();
+
+        // increment reported positions counter
+        counters.totalReportedPositions += saRange.width();
+
+        auto depth = f.getDepth(), distance = f.getDistance();
+        auto end = saRange.getEnd();
+        length_t shift = f.getShift();
+
+        for (length_t i = saRange.getBegin(); i < end; i++) {
+            // find the startPosition in the text by looking at the
+            // SA
+            length_t startPos = findSA(i) + shift;
+
+            occ.addTextOcc(Range(startPos, startPos + depth), distance);
+        }
+    }
+    // erase equal occurrences from the in-text occurrences, note
+    // that an in-text occurrence with calculated CIGAR string takes
+    // preference over an equal one without CIGAR string
+    occ.eraseDoublesText();
+
+    // find the non-redundant occurrences
+    std::vector<TextOcc> nonRedundantOcc;
+    nonRedundantOcc.reserve(occ.textOccSize());
+
+    length_t maxDiff = 2 * maxED;
+    length_t prevBegin = std::numeric_limits<length_t>::max();
+    length_t prevDepth = std::numeric_limits<length_t>::max();
+    length_t prevED = maxED + 1;
+
+    const auto& textocc = occ.getTextOccurrences();
+    for (const auto& o : textocc) {
+        // find the difference between this and the previous
+        // occurrence
+        auto diff = abs_diff<length_t>(o.getRange().getBegin(), prevBegin);
+
+        if (diff == 0) {
+            // same location -> skip
+            continue;
+        }
+
+        if (diff <= maxDiff) {
+            // check if this later occurrence is better than the
+            // previous one
+            if (o.getDistance() > prevED ||
+                (o.getDistance() == prevED &&
+                 o.getRange().width() >= prevDepth)) {
+                continue;
+            }
+
+            // prev was worse so pop_back
+            nonRedundantOcc.pop_back();
+        }
+
+        prevBegin = o.getRange().getBegin();
+        prevED = o.getDistance();
+        prevDepth = o.getRange().width();
+
+        nonRedundantOcc.emplace_back(o);
+    }
+
+    for (TextOcc& t : nonRedundantOcc) {
+
+        if (!t.hasCigar()) {
+
+            // this was an in-index occurrence which needs to
+            // calculate the CIGAR string
+            std::vector<std::pair<char, uint>> CIGAR;
+            inTextMatrix.findCIGAR(getSubstring(t.getRange()), t.getDistance(),
+                                   CIGAR);
+
+            t.setCigar(CIGAR);
+
+            counters.cigarsInIndex++;
+
+        } else {
+            // this was a useful in-text cigar
+            counters.usefulCigarsInText++;
+        }
+    }
+
+    return nonRedundantOcc;
 }
