@@ -75,6 +75,9 @@ struct ReadRecord {
 
     string qual;
 
+    /**
+     * Deep copies the strings
+     */
     ReadRecord(string id, string read, string qual)
         : id(id), read(read), qual(qual) {
     }
@@ -104,25 +107,33 @@ vector<ReadRecord> getReads(const string& file) {
         string read = "";
         string id = "";
         string qual = ""; // empty quality string for fasta
+        string line;
 
-        while (getline(ifile, id) && getline(ifile, read)) {
-            if (!id.empty() && id[0] != '>' && id[0] != '@') {
-                throw runtime_error("File " + file +
-                                    "doesn't appear to be in Fasta format");
+        while (getline(ifile, line)) {
+            if (line.empty()) {
+                continue; // Skip empty lines
             }
 
-            if (id.back() == '\n') {
-                id.pop_back();
+            if (line[0] == '>' || line[0] == '@') {
+                // This is an ID line
+                if (!id.empty()) {
+                    // If we already have data, process it and clear
+                    reads.emplace_back(id, read, qual);
+                    reads.emplace_back(id, Nucleotide::getRevCompl(read), qual);
+                    id.clear();
+                    read.clear();
+                }
+                id = line.substr(1); // Extract ID (skip '>')
+            } else {
+                // This is a sequence line
+                read += line;
             }
-            if (!read.empty() && read.back() == '\n') {
-                read.pop_back();
-            }
+        }
 
-            assert(id.size() > 1);
-            id = (id.substr(1));
+        // Process the last entry if it exists
+        if (!id.empty()) {
             reads.emplace_back(id, read, qual);
             reads.emplace_back(id, Nucleotide::getRevCompl(read), qual);
-            id.clear(), read.clear();
         }
     } else {
         // fastQ
@@ -540,6 +551,13 @@ int main(int argc, char* argv[]) {
             << " for the edit distance. Switching of in-text verification..."
             << endl;
         inTextSwitchPoint = 0;
+    }
+
+    if (ed > 4 && searchscheme != "custom" && searchscheme != "multiple" &&
+        searchscheme != "naive") {
+        throw runtime_error(
+            "Hard-coded search schemes are only available for "
+            "up to 4 errors. Use a custom search scheme instead.");
     }
 
     if (ed != 4 && searchscheme == "manbest") {
