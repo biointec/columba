@@ -1,6 +1,6 @@
 /******************************************************************************
- *  Columba: Approximate Pattern Matching using Search Schemes                *
- *  Copyright (C) 2020-2022 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Columba 1.2: Approximate Pattern Matching using Search Schemes            *
+ *  Copyright (C) 2020-2023 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU Affero General Public License   *
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.     *
  ******************************************************************************/
+
 #include "searchstrategy.h"
 #include "wordlength.h"
 #include <algorithm>
@@ -176,8 +177,6 @@ void writeToOutput(const string& file, const vector<vector<TextOcc>>& mPerRead,
     cout << "Writing to output file " << file << " ..." << endl;
     ofstream f2;
     f2.open(file);
-
-    // TODO SAM header
 
     f2 << "@HD"
        << "\t"
@@ -400,16 +399,19 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Using " << LENGTH_TYPE_NAME << std::endl;
 
-    int requiredArguments = 2; // baseFile of files and file containing reads
+    int requiredArguments = 3; // baseFile of files and file containing reads
+
+    if (argc == 2 &&
+        (strcmp("help", argv[1]) == 0 || strcmp("--help", argv[1]) == 0 ||
+         strcmp("-h", argv[1]) == 0)) {
+        showUsage();
+        return EXIT_SUCCESS;
+    }
 
     if (argc < requiredArguments) {
         cerr << "Insufficient number of arguments" << endl;
         showUsage();
         return EXIT_FAILURE;
-    }
-    if (argc == 2 && strcmp("help", argv[1]) == 0) {
-        showUsage();
-        return EXIT_SUCCESS;
     }
 
     cout << "Welcome to Columba!\n";
