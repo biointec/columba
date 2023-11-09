@@ -1,6 +1,6 @@
 /******************************************************************************
- *  Columba 1.2: Approximate Pattern Matching using Search Schemes            *
- *  Copyright (C) 2020-2023 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Columba: Approximate Pattern Matching using Search Schemes                *
+ *  Copyright (C) 2020-2022 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -16,7 +16,6 @@
  * You should have received a copy of the GNU Affero General Public License   *
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.     *
  ******************************************************************************/
-
 #include "searchstrategy.h"
 #include "wordlength.h"
 #include <algorithm>
@@ -75,6 +74,9 @@ struct ReadRecord {
 
     string qual;
 
+    /**
+     * Deep copies the strings
+     */
     ReadRecord(string id, string read, string qual)
         : id(id), read(read), qual(qual) {
     }
@@ -104,25 +106,33 @@ vector<ReadRecord> getReads(const string& file) {
         string read = "";
         string id = "";
         string qual = ""; // empty quality string for fasta
+        string line;
 
-        while (getline(ifile, id) && getline(ifile, read)) {
-            if (!id.empty() && id[0] != '>' && id[0] != '@') {
-                throw runtime_error("File " + file +
-                                    "doesn't appear to be in Fasta format");
+        while (getline(ifile, line)) {
+            if (line.empty()) {
+                continue; // Skip empty lines
             }
 
-            if (id.back() == '\n') {
-                id.pop_back();
+            if (line[0] == '>' || line[0] == '@') {
+                // This is an ID line
+                if (!id.empty()) {
+                    // If we already have data, process it and clear
+                    reads.emplace_back(id, read, qual);
+                    reads.emplace_back(id, Nucleotide::getRevCompl(read), qual);
+                    id.clear();
+                    read.clear();
+                }
+                id = line.substr(1); // Extract ID (skip '>')
+            } else {
+                // This is a sequence line
+                read += line;
             }
-            if (!read.empty() && read.back() == '\n') {
-                read.pop_back();
-            }
+        }
 
-            assert(id.size() > 1);
-            id = (id.substr(1));
+        // Process the last entry if it exists
+        if (!id.empty()) {
             reads.emplace_back(id, read, qual);
             reads.emplace_back(id, Nucleotide::getRevCompl(read), qual);
-            id.clear(), read.clear();
         }
     } else {
         // fastQ
@@ -166,6 +176,8 @@ void writeToOutput(const string& file, const vector<vector<TextOcc>>& mPerRead,
     cout << "Writing to output file " << file << " ..." << endl;
     ofstream f2;
     f2.open(file);
+
+    // TODO SAM header
 
     f2 << "@HD"
        << "\t"
@@ -388,19 +400,16 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Using " << LENGTH_TYPE_NAME << std::endl;
 
-    int requiredArguments = 3; // baseFile of files and file containing reads
-
-    if (argc == 2 &&
-        (strcmp("help", argv[1]) == 0 || strcmp("--help", argv[1]) == 0 ||
-         strcmp("-h", argv[1]) == 0)) {
-        showUsage();
-        return EXIT_SUCCESS;
-    }
+    int requiredArguments = 2; // baseFile of files and file containing reads
 
     if (argc < requiredArguments) {
         cerr << "Insufficient number of arguments" << endl;
         showUsage();
         return EXIT_FAILURE;
+    }
+    if (argc == 2 && strcmp("help", argv[1]) == 0) {
+        showUsage();
+        return EXIT_SUCCESS;
     }
 
     cout << "Welcome to Columba!\n";
@@ -540,6 +549,13 @@ int main(int argc, char* argv[]) {
             << " for the edit distance. Switching of in-text verification..."
             << endl;
         inTextSwitchPoint = 0;
+    }
+
+    if (ed > 4 && searchscheme != "custom" && searchscheme != "multiple" &&
+        searchscheme != "naive") {
+        throw runtime_error(
+            "Hard-coded search schemes are only available for "
+            "up to 4 errors. Use a custom search scheme instead.");
     }
 
     if (ed != 4 && searchscheme == "manbest") {
