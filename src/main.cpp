@@ -283,7 +283,7 @@ void doBench(const vector<ReadRecord>& reads, FMIndex& mapper,
 
         // do the same for the reverse complement
         vector<TextOcc> matchesRevCompl =
-            strategy->matchApprox(revCompl, ED, counters, id, revQual, false);
+            strategy->matchApprox(revCompl, ED, counters, id, revQual, true);
         totalUniqueMatches += matchesRevCompl.size();
 
         // keep track of the number of mapped reads
