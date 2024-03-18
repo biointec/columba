@@ -109,6 +109,8 @@ vector<ReadRecord> getReads(const string& file) {
         string qual = ""; // empty quality string for fasta
         string line;
 
+        bool idline = false;
+
         while (getline(ifile, line)) {
             if (line.empty()) {
                 continue; // Skip empty lines
@@ -116,7 +118,8 @@ vector<ReadRecord> getReads(const string& file) {
 
             if (line[0] == '>' || line[0] == '@') {
                 // This is an ID line
-                if (!id.empty()) {
+
+                if (idline) {
                     // If we already have data, process it and clear
                     reads.emplace_back(id, read, qual);
                     reads.emplace_back(id, Nucleotide::getRevCompl(read), qual);
@@ -124,6 +127,7 @@ vector<ReadRecord> getReads(const string& file) {
                     read.clear();
                 }
                 id = line.substr(1); // Extract ID (skip '>')
+                idline = true;
             } else {
                 // This is a sequence line
                 read += line;
@@ -131,7 +135,7 @@ vector<ReadRecord> getReads(const string& file) {
         }
 
         // Process the last entry if it exists
-        if (!id.empty()) {
+        if (idline) {
             reads.emplace_back(id, read, qual);
             reads.emplace_back(id, Nucleotide::getRevCompl(read), qual);
         }
