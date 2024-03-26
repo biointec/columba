@@ -461,7 +461,7 @@ isbn="978-3-031-07802-6"
 }
 ```
 
-Columba 1.2 was introduced in our newest paper "Automated design of efficient search schemes for lossless approximate pattern matching", submitted to RECOMB 2024.
+Columba 1.2 was introduced in our newest paper "Automated design of efficient search schemes for lossless approximate pattern matching", accepted at RECOMB 2024.
 
 ```bibtex
 @unpublished{renders2023,
