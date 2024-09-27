@@ -1,6 +1,7 @@
 /******************************************************************************
- *  Columba 1.2: Approximate Pattern Matching using Search Schemes            *
- *  Copyright (C) 2020-2023 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Columba: Approximate Pattern Matching using Search Schemes                *
+ *  Copyright (C) 2020-2024 - Luca Renders <luca.renders@ugent.be> and        *
+ *                            Lore Depuydt <lore.depuydt@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -18,22 +19,25 @@
  ******************************************************************************/
 
 #include "searchstrategy.h"
+#include "logger.h"    // for Logger, logger
+#include "substring.h" // for Substring
 
-#include <sstream> // used for splitting strings
-
+#include <sstream> // for char_traits, basic_istream, ifstream, strings...
 using namespace std;
 
 // ============================================================================
-// CLASS SEARCHSTRATEGY
+// CLASS SEARCH STRATEGY
 // ============================================================================
 
 // ----------------------------------------------------------------------------
 // CONSTRUCTOR
 // ----------------------------------------------------------------------------
 
-SearchStrategy::SearchStrategy(FMIndex& argument, PartitionStrategy p,
-                               DistanceMetric distanceMetric)
-    : index(argument), partitionStrategy(p), distanceMetric(distanceMetric) {
+SearchStrategy::SearchStrategy(IndexInterface& argument, PartitionStrategy p,
+                               DistanceMetric distanceMetric, MappingMode m,
+                               SequencingMode sequencingMode)
+    : index(argument), distanceMetric(distanceMetric), partitionStrategy(p),
+      mode(m) {
 
     // set the partition strategy
     switch (p) {
@@ -55,17 +59,27 @@ SearchStrategy::SearchStrategy(FMIndex& argument, PartitionStrategy p,
     case HAMMING:
         startIdxPtr = &SearchStrategy::startIndexHamming;
         filterPtr = &SearchStrategy::filterHamming;
+#ifndef RUN_LENGTH_COMPRESSION
+        inTextVerificationPtr = &SearchStrategy::inTextVerificationHamming;
+#endif
         break;
-    case EDITNAIVE:
-        startIdxPtr = &SearchStrategy::startIndexEditNaive;
-        filterPtr = &SearchStrategy::filterEdit;
-        break;
-    case EDITOPTIMIZED:
-        startIdxPtr = &SearchStrategy::startIndexEditOptimized;
-        filterPtr = &SearchStrategy::filterEdit;
+    case EDIT:
+        startIdxPtr = &SearchStrategy::startIndexEdit;
+#ifdef RUN_LENGTH_COMPRESSION
+        filterPtr = &SearchStrategy::filterEditWithoutCIGARCalculation;
+#else
+        filterPtr = (sequencingMode == SINGLE_END)
+                        ? &SearchStrategy::filterEditWithCIGARCalculation
+                        : &SearchStrategy::filterEditWithoutCIGARCalculation;
+        inTextVerificationPtr = &SearchStrategy::inTextVerificationEdit;
+#endif
+
     default:
         break;
     }
+
+    // set the mode
+    setMappingMode(m);
 }
 
 // ----------------------------------------------------------------------------
@@ -94,11 +108,8 @@ string SearchStrategy::getDistanceMetric() const {
     case HAMMING:
         return "HAMMING";
         break;
-    case EDITOPTIMIZED:
-        return "(OPTIMIZED) EDIT";
-        break;
-    case EDITNAIVE:
-        return "(NAIVE) EDIT";
+    case EDIT:
+        return "EDIT";
         break;
 
     default:
@@ -106,123 +117,20 @@ string SearchStrategy::getDistanceMetric() const {
         return "";
     }
 }
-// ----------------------------------------------------------------------------
-// SANITY CHECKS
-// ----------------------------------------------------------------------------
 
-void SearchStrategy::genErrorDistributions(
-    int P, int K, vector<Distribution>& distributions) {
-    Distribution distribution(P, 0);
+string SearchStrategy::getMappingModeString() const {
+    switch (mode) {
+    case BEST:
+        return "BEST";
+        break;
+    case ALL:
+        return "ALL";
+        break;
 
-    for (int i = 0; i < pow(K + 1, P); i++) {
-        int sum = accumulate(distribution.begin(), distribution.end(), 0);
-        if (sum <= K)
-            distributions.push_back(distribution);
-
-        for (int j = 0; j < P; j++) {
-            distribution[j]++;
-            if (distribution[j] != K + 1)
-                break;
-            distribution[j] = 0;
-        }
+    default:
+        // should not get here
+        return "";
     }
-}
-
-bool SearchStrategy::coversDistributions(
-    const vector<Distribution>& distributions, const vector<Search>& scheme,
-    bool verbose) {
-    vector<int> numCover(scheme.size(), 0);
-
-    bool ret = true;
-
-    // and error distribution is simply a vector containing
-    // the number of errors in each partition P
-    for (const Distribution& distribution : distributions) {
-        int numberOfCovers = 0;
-
-        vector<int> searchesThatCover;
-        // check if a search covers the distribution
-        bool distributionCovered = false;
-        for (size_t si = 0; si < scheme.size(); si++) {
-            const Search& s = scheme[si];
-            bool thisCover = true;
-            length_t numErrors = 0;
-
-            // check if search covers distribution
-            for (length_t i = 0; i < s.getNumParts(); i++) {
-                length_t p = s.getPart(i);
-                numErrors += distribution[p];
-                if ((numErrors > s.getUpperBound(i)) ||
-                    (numErrors < s.getLowerBound(i)))
-                    thisCover = false;
-            }
-
-            // print the distribution and the search that covers it
-            if (thisCover) {
-                searchesThatCover.push_back(si + 1);
-                numberOfCovers++;
-                numCover[si]++;
-
-                if (verbose) {
-                    cout << "Pattern: ";
-                    for (length_t i = 0; i < distribution.size(); i++)
-                        cout << distribution[i];
-                    cout << " is covered by search:" << si + 1 << " (";
-                    for (length_t i = 0; i < distribution.size(); i++)
-                        cout << s.getPart(i);
-                    cout << "), (";
-                    for (length_t i = 0; i < s.getNumParts(); i++)
-                        cout << s.getLowerBound(i);
-                    cout << "), (";
-                    for (length_t i = 0; i < s.getNumParts(); i++)
-                        cout << s.getUpperBound(i);
-                    cout << ")";
-
-                    if (distributionCovered)
-                        cout << " * "; // * means redundant
-                    cout << endl;
-                }
-                distributionCovered = true;
-            }
-        }
-
-        if (!distributionCovered && verbose) {
-            cout << "Pattern is not covered: ";
-            for (length_t i = 0; i < distribution.size(); i++)
-                cout << distribution[i];
-            cout << endl;
-        }
-
-        ret &= distributionCovered;
-
-        if (!ret && !verbose)
-            return ret;
-
-        if (verbose) {
-            cout << "Pattern ";
-            for (length_t i = 0; i < distribution.size(); i++)
-                cout << distribution[i];
-            cout << " is covered by searches: ";
-            for (auto si : searchesThatCover)
-                cout << si << ",";
-            cout << "\n";
-        }
-    }
-
-    if (verbose)
-        cout << distributions.size() << " distributions covered" << endl;
-
-    // check if all searches cover at least one distribution
-    for (size_t i = 0; i < numCover.size(); i++) {
-        if (verbose)
-            cout << "Search " << i << " is used " << numCover[i] << " times\n";
-
-        if (numCover[i] == 0)
-            cout << "Warning: search " << scheme[i]
-                 << " covers no error distributions!\n";
-    }
-
-    return ret;
 }
 
 // ----------------------------------------------------------------------------
@@ -245,6 +153,40 @@ void SearchStrategy::partition(const string& pattern, vector<Substring>& parts,
                           counters);
 }
 
+void SearchStrategy::calculateExactMatchRanges(
+    vector<Substring>& parts, vector<SARangePair>& exactMatchRanges,
+    Counters& counters) const {
+
+    index.setDirection(FORWARD, false); // Bidirectional ranges
+    length_t wordSize = index.getWordSize();
+
+    // Match exact ranges for each part bidirectionally except the last
+    for (length_t i = 0; i < parts.size() - 0; ++i) {
+        auto& current = parts[i];
+        auto size = current.size();
+        auto start = current.begin() + ((size >= wordSize) ? wordSize : 0);
+        auto initRanges =
+            (size >= wordSize)
+                ? index.lookUpInKmerTable({current, current.begin(), start})
+                : index.getCompleteRange();
+        exactMatchRanges[i] = index.matchStringBidirectionally(
+            {current, start, current.end()}, initRanges, counters);
+    }
+
+    // Last part matched unidirectional backwards
+    index.setDirection(BACKWARD, true);
+    auto& lastPart = parts.back();
+    lastPart.setDirection(BACKWARD);
+    auto size = lastPart.size();
+    auto end = (size >= wordSize) ? lastPart.end() - wordSize : lastPart.end();
+    auto initRanges =
+        (size >= wordSize)
+            ? index.lookUpInKmerTable({lastPart, end, lastPart.end()})
+            : index.getCompleteRange();
+    exactMatchRanges.back() = index.matchStringBidirectionally(
+        {lastPart, lastPart.begin(), end}, initRanges, counters);
+}
+
 // Uniform Partitioning
 
 void SearchStrategy::partitionUniform(const string& pattern,
@@ -260,28 +202,8 @@ void SearchStrategy::partitionUniform(const string& pattern,
     // set end of final part correct
     parts.back().setEnd(pattern.size());
 
-    // match the exactRanges for each part
-    index.setDirection(FORWARD);
-
-    // the size of kmers in the kmer hash table
-    length_t wordSize = index.getWordSize();
-
-    for (int i = 0; i < numParts; i++) {
-        const auto& current = parts[i];
-        SARangePair initialRanges = index.getCompleteRange();
-
-        length_t start = 0;
-        if (current.size() >= wordSize) {
-            // skip wordsize
-            initialRanges = index.lookUpInKmerTable(Substring(
-                current, current.begin() + 0, current.begin() + wordSize));
-            start = wordSize;
-        }
-        Substring remainingPart(current, current.begin() + start,
-                                current.end());
-        exactMatchRanges[i] = index.matchStringBidirectionally(
-            remainingPart, initialRanges, counters);
-    }
+    // calculate the exact match ranges
+    calculateExactMatchRanges(parts, exactMatchRanges, counters);
 }
 
 // Static Partitioning
@@ -291,29 +213,7 @@ void SearchStrategy::partitionOptimalStatic(
     Counters& counters) const {
 
     setParts(pattern, parts, numParts, maxScore);
-
-    // match the exactRanges for each part
-    index.setDirection(FORWARD);
-
-    // the size of kmers in the kmer hash table
-    length_t wordSize = index.getWordSize();
-
-    for (int i = 0; i < numParts; i++) {
-        const auto& current = parts[i];
-        SARangePair initialRanges = index.getCompleteRange();
-
-        length_t start = 0;
-        if (current.size() >= wordSize) {
-            // skip wordsize
-            initialRanges = index.lookUpInKmerTable(Substring(
-                current, current.begin() + 0, current.begin() + wordSize));
-            start = wordSize;
-        }
-        Substring remainingPart(current, current.begin() + start,
-                                current.end());
-        exactMatchRanges[i] = index.matchStringBidirectionally(
-            remainingPart, initialRanges, counters);
-    }
+    calculateExactMatchRanges(parts, exactMatchRanges, counters);
 }
 
 void SearchStrategy::setParts(const string& pattern, vector<Substring>& parts,
@@ -340,6 +240,7 @@ void SearchStrategy::partitionDynamic(const string& pattern,
 
     int matchedChars =
         seed(pattern, parts, numParts, maxScore, exactMatchRanges);
+
     int pSize = pattern.size();
     vector<int> weights = getWeights(numParts, maxScore);
 
@@ -399,8 +300,9 @@ void SearchStrategy::partitionDynamic(const string& pattern,
             c = pattern[parts[partToExtend].begin()];
         }
 
-        // match the new character
-        index.setDirection(dir);
+        // match the new character, if this is the last part use unidirectional
+        // backward matching
+        index.setDirection(dir, partToExtend == numParts - 1);
         index.addChar(c, exactMatchRanges.at(partToExtend), counters);
     }
 }
@@ -408,8 +310,8 @@ void SearchStrategy::partitionDynamic(const string& pattern,
 int SearchStrategy::seed(const string& pattern, vector<Substring>& parts,
                          const int& numParts, const int& maxScore,
                          vector<SARangePair>& exactMatchRanges) const {
-    int pSize = pattern.size();
-    bool useKmerTable = (pSize >= 100);
+    auto pSize = pattern.size();
+    bool useKmerTable = (numParts * index.getWordSize() < (pSize * 2) / 3);
     int wSize = (useKmerTable) ? index.getWordSize() : 1;
 
     const auto& seedPercent = getSeedingPositions(numParts, maxScore);
@@ -432,6 +334,7 @@ int SearchStrategy::seed(const string& pattern, vector<Substring>& parts,
 
     exactMatchRanges.resize(numParts);
     for (int i = 0; i < numParts; i++) {
+
         exactMatchRanges[i] = (useKmerTable)
                                   ? index.lookUpInKmerTable(parts[i])
                                   : index.getRangeOfSingleChar(parts[i][0]);
@@ -459,84 +362,742 @@ void SearchStrategy::extendParts(const string& pattern,
 // ----------------------------------------------------------------------------
 // (APPROXIMATE) MATCHING
 // ----------------------------------------------------------------------------
-vector<TextOcc> SearchStrategy::matchApprox(const string& pattern,
-                                            length_t maxED, Counters& counters,
-                                            const string& ID,
-                                            const string& qual, bool revCompl) {
 
-    if (maxED == 0) {
-        index.setDirection(FORWARD);
-        auto m = index.exactMatchesOutput(pattern, counters);
-        generateSAM(m, pattern, ID, qual, revCompl);
-        return m;
-    }
-    // create the parts of the pattern
-    vector<Substring> parts;
+void SearchStrategy::matchWithSearches(const string& seq, const length_t k,
+                                       Counters& counters, Occurrences& occs,
+                                       const length_t minDistance) {
+    // calculate number of parts
+    length_t numParts = calculateNumParts(k);
 
-    // calculate how many parts there will be
-    uint numParts = calculateNumParts(maxED);
-
-    // the ranges corresponding to the exact match for each part
+    // create ranges for exact matches of parts
     vector<SARangePair> exactMatchRanges(numParts);
 
+    // create a vector for the parts
+    vector<Substring> parts;
+
     // partition the read
-    partition(pattern, parts, numParts, maxED, exactMatchRanges, counters);
+    partition(seq, parts, numParts, k, exactMatchRanges, counters);
 
-    if (parts.empty() || numParts * maxED >= pattern.size()) {
+    if (parts.empty()) {
         // splitting up was not viable -> just search the entire pattern
-        cerr << "Warning: Normal bidirectional search was used as "
-                "entered pattern is too short "
-             << pattern.size() << endl;
+        if (name != "Naive backtracking") {
+            stringstream ss;
+            ss << "Normal bidirectional search was used as "
+                  "entered pattern is too short "
+               << seq.size();
+            logger.logWarning(ss);
+        }
 
-        auto m = index.approxMatchesNaive(pattern, maxED, counters);
-        generateSAM(m, pattern, ID, qual, revCompl);
-        return m;
+        vector<TextOcc> textOccs;
+
+        index.approxMatchesNaive(seq, k, counters, textOccs);
+        occs.addTextOccs(textOccs);
+        return;
+    }
+
+#ifndef RUN_LENGTH_COMPRESSION // No in-text verification in B-move
+    // A) In-text verification for parts that have low number of exact
+    // matches
+    for (uint16_t i = 0; i < numParts; i++) {
+        size_t width = exactMatchRanges[i].width();
+        if (width != 0 && width <= index.getSwitchPoint()) {
+            // do in-text verification on this part
+            const auto& part = parts[i];
+            FMOcc startMatch(exactMatchRanges[i], 0, part.size(),
+                             FORWARD_STRAND,
+                             FIRST_IN_PAIR); // strand and pairStatus of
+                                             // startMatch do not matter
+            (this->*inTextVerificationPtr)(startMatch, part.begin(), k, parts,
+                                           occs, counters, minDistance);
+        }
+    }
+#endif
+
+    // B) do the searches from search schemes
+    // create the searches
+    const vector<Search>& searches = createSearches(k, exactMatchRanges);
+
+    // reserve stacks and matrices for each part
+    index.reserveStacks(numParts,
+                        seq.length()); // reserve stacks for each part
+    // create the bit-parallel alignment matrices
+    index.resetMatrices(parts.size()); // reset the alignment matrix that will
+                                       // be (possibly) used for each part
+
+    for (const Search& s : searches) {
+        doRecSearch(s, parts, occs, exactMatchRanges, counters);
+    }
+}
+
+void SearchStrategy::matchApproxAllMap(ReadBundle& bundle, length_t maxED,
+                                       Counters& counters,
+                                       vector<TextOcc>& result) {
+
+    if (maxED == 0) {
+
+        index.setIndexInMode(FORWARD_STRAND, FIRST_IN_PAIR);
+        index.exactMatchesOutput(bundle.getRead(), counters, result);
+        index.setIndexInMode(REVERSE_C_STRAND, FIRST_IN_PAIR);
+        index.exactMatchesOutput(bundle.getRevComp(), counters, result);
+
+        if (generateSAMLines) {
+            generateOutputSingleEnd(result, bundle, counters, 0);
+        }
+        return;
     }
 
     // The occurrences in the text and index
     Occurrences occ;
 
-    // set sequence to this matrix
-    index.setInTextMatrixSequence(pattern);
+#ifndef RUN_LENGTH_COMPRESSION
+    // reset all in-text verification matrices
+    index.resetInTextMatrices();
+#endif
+    // set the index in forward mode with the correct sequence
+    index.setIndexInMode(FORWARD_STRAND);
+    // map with the searches
+    matchWithSearches(bundle.getRead(), maxED, counters, occ);
 
-    // END of preprocessing
+    // set the index in reverse complement mode with the correct sequence
+    index.setIndexInMode(REVERSE_C_STRAND);
+    // map with the searches
+    matchWithSearches(bundle.getRevComp(), maxED, counters, occ);
 
-    // A) do in-text verification for the parts that occur less than the index's
-    // switch point
-    for (uint i = 0; i < numParts; i++) {
-        size_t width = exactMatchRanges[i].width();
-        if (width != 0 && width <= index.getSwitchPoint()) {
-            // do in-text verification on this part
-            const auto& part = parts[i];
-            FMOcc startMatch(exactMatchRanges[i], 0, part.size());
-            index.verifyExactPartialMatchInText(startMatch, part.begin(), maxED,
-                                                occ, counters);
+    // C) get all non-redundant matches mapped to the text
+    result = (this->*filterPtr)(occ, maxED, counters, bundle);
+
+    // D) generate sam output
+    if (generateSAMLines) {
+        generateOutputSingleEnd(result, bundle, counters, maxED);
+    }
+}
+
+void SearchStrategy::checkAlignments(OccVector& occVector, uint32_t& best,
+                                     uint32_t l, Counters& counters,
+                                     uint32_t cutOff, const string& seq) const {
+    std::vector<TextOcc> trimmedOccs = {};
+    std::vector<TextOcc> assignedOccs = {};
+    for (length_t i = 0; i < occVector[l].second.size(); i++) {
+        auto& occ = occVector[l].second[i];
+#ifndef RUN_LENGTH_COMPRESSION
+        if (!occ.hasCigar()) {
+            index.generateCIGAR(occ, counters, seq);
+        }
+#endif
+        auto seqFound = assignSequence(occ, counters, cutOff, seq);
+        if (seqFound != FOUND) {
+            if (seqFound == FOUND_WITH_TRIMMING && occ.getDistance() > l) {
+                trimmedOccs.emplace_back(std::move(occ));
+            }
+        } else {
+            assignedOccs.emplace_back(std::move(occ));
+            if (l < best) {
+                best = l;
+            }
+        }
+    }
+    occVector[l].second = std::move(assignedOccs);
+    // the occurrences found with trimming should be added
+    // to the correct vector according to their new distance
+    for (auto& occ : trimmedOccs) {
+        occ.removeTrimmingLabel();
+        occVector[occ.getDistance()].second.emplace_back(std::move(occ));
+    }
+}
+
+vector<TextOcc> SearchStrategy::combineOccVectors(OccVector& ovFW,
+                                                  OccVector& ovRC,
+                                                  length_t best, length_t max) {
+    assert(ovRC.size() == ovFW.size());
+    assert(max < ovFW.size());
+
+    auto compare = [](const TextOcc& a, const TextOcc& b) {
+        return a.getAssignedSequenceID() < b.getAssignedSequenceID() ||
+               (a.getAssignedSequenceID() == b.getAssignedSequenceID() &&
+                a.getRange().getBegin() < b.getRange().getBegin());
+    };
+    auto equal = [](const TextOcc& a, const TextOcc& b) {
+        return a.getAssignedSequenceID() == b.getAssignedSequenceID() &&
+               a.getRange().getBegin() == b.getRange().getBegin();
+    };
+
+    std::vector<TextOcc> matches;
+    matches.reserve(numElements(ovFW) + numElements(ovRC));
+
+    for (length_t i = best; i <= max; i++) {
+// some occurrences might be represented more than once
+// sort the occurrences first on assigned sequence name and then on
+// begin position in the text
+#ifdef DEVELOPER_MODE
+        std::stable_sort(ovFW[i].second.begin(), ovFW[i].second.end(), compare);
+        std::stable_sort(ovRC[i].second.begin(), ovRC[i].second.end(), compare);
+#else
+        std::sort(ovFW[i].second.begin(), ovFW[i].second.end(), compare);
+        std::sort(ovRC[i].second.begin(), ovRC[i].second.end(), compare);
+#endif
+
+        // remove duplicates
+        // Remove duplicates from ovFW[i].second
+        auto fw_end =
+            std::unique(ovFW[i].second.begin(), ovFW[i].second.end(), equal);
+        ovFW[i].second.erase(fw_end, ovFW[i].second.end());
+
+        // Remove duplicates from ovRC[i].second
+        auto rc_end =
+            std::unique(ovRC[i].second.begin(), ovRC[i].second.end(), equal);
+        ovRC[i].second.erase(rc_end, ovRC[i].second.end());
+
+        matches.insert(matches.end(),
+                       make_move_iterator(ovFW[i].second.begin()),
+                       make_move_iterator(ovFW[i].second.end()));
+        matches.insert(matches.end(),
+                       make_move_iterator(ovRC[i].second.begin()),
+                       make_move_iterator(ovRC[i].second.end()));
+    }
+
+    return matches;
+}
+
+bool SearchStrategy::findBestAlignments(const ReadBundle& bundle,
+                                        OccVector& ovFW, OccVector& ovRC,
+                                        Counters& counters, uint32_t x,
+                                        uint32_t& best, PairStatus status) {
+
+    length_t cutOff = ovFW.size() - 1;
+    best = cutOff + 1;
+    bool bestFound = false;
+
+    // get the read and the revC from the bundle
+    const auto& read = bundle.getRead();
+    const auto& revC = bundle.getRevComp();
+
+    if (!ovFW[0].first) {
+        // start with exact match, this does not need an in-text verification
+        // matrix as an exact match has no insertions or deletions
+        index.setIndexInMode(FORWARD_STRAND);
+        index.exactMatchesOutput(bundle.getRead(), counters, ovFW[0].second);
+        ovFW[0].first = true;
+    }
+    if (!ovRC[0].first) {
+        index.setIndexInMode(REVERSE_C_STRAND);
+        index.exactMatchesOutput(bundle.getRevComp(), counters, ovRC[0].second);
+        ovRC[0].first = true; // processing for 0 finished
+    }
+
+    if (!ovFW[0].second.empty() || !ovRC[0].second.empty()) {
+        checkAlignments(ovFW, best, 0, counters, cutOff, read);
+        checkAlignments(ovRC, best, 0, counters, cutOff, revC);
+        if (best == 0) {
+            bestFound = true;
         }
     }
 
-    // B) do the searches for which the first part occurs more than the switch
-    // point
+    // moving to approximate pattern matching if necessary
+    uint32_t maxED = (best == 0) ? x : cutOff;
+    uint32_t prevK = 0;
 
-    index.reserveStacks(numParts,
-                        pattern.length()); // reserve stacks for each part
+    // define a function that checks whether a match was found in this stratum
+    auto hasUpdate = [&](const string& seq, PairStatus status, Strand strand,
+                         uint32_t k, OccVector& vector, Counters& counters) {
+        if (vector[k].first) {
+            return !vector[k].second.empty();
+        }
+        return processSeq(seq, status, strand, k, vector, counters);
+    };
 
-    // create the bit-parallel alignment matrices
-    index.resetMatrices(parts.size()); // reset the alignment matrix that will
-                                       // be (possibly) used for each part
+    for (uint32_t k = std::max(x, (uint32_t)1); k <= maxED;) {
+        bool update = false;
+        // start with forward direction
+        update |= hasUpdate(read, status, FORWARD_STRAND, k, ovFW, counters);
+        // then reverse complement
+        update |= hasUpdate(revC, status, REVERSE_C_STRAND, k, ovRC, counters);
 
-    // create the searches
-    const vector<Search>& searches = createSearches(maxED, exactMatchRanges);
-
-    for (const Search& s : searches) {
-        doRecSearch(s, parts, occ, exactMatchRanges, counters);
+        if (update) {
+            // new matches were found, we need to process them to see if
+            // they need trimming
+            for (length_t l = prevK + 1; l <= std::min(k, best + x); l++) {
+                checkAlignments(ovFW, best, l, counters, maxED, read);
+                checkAlignments(ovRC, best, l, counters, maxED, revC);
+            }
+        }
+        if (bestFound) {
+            break; // this was the last iteration
+        }
+        if (update && best < cutOff + 1) {
+            bestFound = true;
+            if (x == 0) {
+                break;
+            }
+            prevK = k, k = std::min(best + x,
+                                    maxED); // check the final x strata
+        } else {
+            // continue to next stratum
+            if (k == maxED)
+                break;
+            uint32_t step = (k < 5) ? 2 : 4;
+            prevK = k;
+            k = std::min(k + x + step, maxED);
+        }
     }
 
-    // C) get all matches mapped to the text
-    auto matches = (this->*filterPtr)(occ, maxED, counters);
-    // D) generate sam output
-    generateSAM(matches, pattern, ID, qual, revCompl);
+    return bestFound;
+}
 
-    return matches;
+void SearchStrategy::matchApproxBestPlusX(ReadBundle& bundle, length_t x,
+                                          Counters& counters,
+                                          const length_t minIdentity,
+                                          vector<TextOcc>& result) {
+
+#ifndef RUN_LENGTH_COMPRESSION
+    // reset the in-text verification matrices from previous read
+    index.resetInTextMatrices();
+#endif
+
+    length_t cutOff = getMaxED(minIdentity, bundle.size());
+    OccVector occVectorFW(cutOff + 1), occVectorRC(cutOff + 1);
+
+    uint32_t best;
+    bool bestFound =
+        findBestAlignments(bundle, occVectorFW, occVectorRC, counters, x, best);
+
+    if (!bestFound) {
+        if (unmappedSAM) {
+            result.emplace_back(createUnmappedRecordSE(bundle));
+        }
+        return;
+    }
+
+    // find out the number of hits for best
+    uint32_t nHits =
+        occVectorFW[best].second.size() + occVectorRC[best].second.size();
+
+    result = combineOccVectors(occVectorFW, occVectorRC, best,
+                               std::min(best + x, cutOff));
+
+    (this->*generateOutputSEPtr)(bundle, nHits, best, result, counters);
+}
+
+vector<PairedTextOccs> SearchStrategy::matchApproxPairedEndAll(
+    ReadPair& pair, length_t maxEDOrIdentity, length_t maxFragSize,
+    length_t minFragSize, Counters& counters,
+    vector<TextOcc>& unpairedOccurrences) {
+
+    length_t maxED = maxEDOrIdentity;     // maximal distance
+    vector<PairedTextOccs> pairedMatches; // output vector
+
+    // vector of occurrences per distance per strand and read
+    BoolAndVector matches1forward, matches2forward, matches2revCompl,
+        matches1revCompl;
+
+#ifndef RUN_LENGTH_COMPRESSION
+    // reset all in-text verification matrices from the previous pair
+    index.resetInTextMatrices();
+#endif
+
+    (this->*processOriAllPtr)(pair, matches1forward, matches1revCompl,
+                              matches2forward, matches2revCompl, pairedMatches,
+                              maxFragSize, minFragSize, maxED, counters);
+
+    if (pairedMatches.empty()) {
+        pairDiscordantly(matches1forward, matches1revCompl, matches2forward,
+                         matches2revCompl, pairedMatches, pair, maxED, counters,
+                         unpairedOccurrences);
+    }
+
+    // now we need to generate SAM lines for the paired matches
+    generateSAMPairedEnd(pairedMatches, pair);
+
+    return pairedMatches;
+}
+
+bool SearchStrategy::processSeq(const string& seq, const PairStatus status,
+                                const Strand strand, const length_t maxDist,
+                                OccVector& vector, Counters& counters) {
+    assert(maxDist < vector.size());
+    // if maxDist has been processed then all distances below it have
+    // also been processed
+    if (!vector[maxDist].first) {
+
+        // find the minimum distance (first distance d for which
+        // vector[d].first == false)
+        auto it =
+            find_if(vector.begin(), vector.end(),
+                    [](const BoolAndVector& pair) { return !pair.first; });
+        length_t minD = min((length_t)distance(vector.begin(), it), maxDist);
+
+        auto occs = mapRead(seq, maxDist, counters, status, strand, minD);
+
+        // the mapped occurrences can be between the min and max
+        // distance they need to be split up according to their
+        // distances and added to the correct vector
+        for (auto& occ : occs) {
+            vector[occ.getDistance()].second.emplace_back(std::move(occ));
+        }
+        // set distance processed to true
+        for (length_t i = minD; i <= maxDist; i++) {
+            vector[i].first = true;
+        }
+    }
+    // return true if any of the distances between 0 and maxDist have an
+    // occurrence
+    bool found =
+        any_of(vector.begin(), vector.begin() + maxDist + 1,
+               [](const BoolAndVector& pair) { return !pair.second.empty(); });
+    return found;
+}
+
+void SearchStrategy::handleTrimmedOccs(vector<length_t>& trimmedIds,
+                                       const length_t oDist, OccVector& v) {
+
+// sort the vector by id
+#ifdef DEVELOPER_MODE
+    stable_sort(trimmedIds.begin(), trimmedIds.end());
+#else
+    sort(trimmedIds.begin(), trimmedIds.end());
+#endif
+    for (auto idIt = trimmedIds.rbegin(); idIt != trimmedIds.rend(); ++idIt) {
+        auto id = *idIt;
+        auto& occ = v[oDist].second[id];
+        occ.removeTrimmingLabel();
+        // insert occ in the correct vector and remove from old vector
+        auto& tVector = v[occ.getDistance()].second;
+        auto point = lower_bound(tVector.begin(), tVector.end(), occ);
+        tVector.insert(point, std::move(occ));
+        v[oDist].second.erase(v[oDist].second.begin() + id);
+    }
+}
+
+void SearchStrategy::processComb(
+    const string& uSeq, const string& dSeq, Counters& counters,
+    PairStatus uStatus, Strand uStrand, PairStatus dStatus, Strand dStrand,
+    OccVector& uVector, OccVector& dVector, vector<PairedTextOccs>& pairs,
+    int maxFragSize, int minFragSize, length_t totDist, length_t minTotDist) {
+    assert(!uVector.empty());
+    assert(!dVector.empty());
+
+    auto findFirstPosDist = [](const OccVector& vector) {
+        return find_if(vector.begin(), vector.end(),
+                       [](const BoolAndVector& pair) {
+                           return !pair.second.empty() || !pair.first;
+                       });
+    };
+
+    auto processRead = [&](const string& seq, PairStatus status, Strand strand,
+                           OccVector& vector, length_t& max,
+                           length_t& maxOther) {
+        if (!processSeq(seq, status, strand, max, vector, counters)) {
+            return false; // no occurrences found for read
+        }
+        // Recalculate minDist and maxOther
+        length_t minD = distance(vector.cbegin(), findFirstPosDist(vector));
+        maxOther = min(totDist - minD, maxOther);
+        return true;
+    };
+
+    // find the max possible distance for up and downstream
+    // the max distance is the total distance minus the minimum distance
+    // for the other stream
+
+    length_t minDDist = distance(dVector.cbegin(), findFirstPosDist(dVector));
+    length_t minUDist = distance(uVector.cbegin(), findFirstPosDist(uVector));
+
+    length_t maxUp = min(totDist - minDDist, (length_t)uVector.size() - 1);
+    length_t maxDown = min(totDist - minUDist, (length_t)dVector.size() - 1);
+
+    if (maxUp <= maxDown) {
+        if (!(processRead(uSeq, uStatus, uStrand, uVector, maxUp, maxDown) &&
+              processRead(dSeq, dStatus, dStrand, dVector, maxDown, maxUp)))
+            return;
+
+    } else {
+        if (!(processRead(dSeq, dStatus, dStrand, dVector, maxDown, maxUp) &&
+              processRead(uSeq, uStatus, uStrand, uVector, maxUp, maxDown)))
+            return;
+    }
+
+    for (length_t dist = minUDist + minDDist; dist <= totDist; dist++) {
+        for (length_t uDist = minUDist; uDist <= min(maxUp, dist); uDist++) {
+
+            length_t dDist = dist - uDist;
+            if (dDist > maxDown || dDist < minDDist) {
+                continue;
+            }
+            set<length_t> uTrimmedIds;
+            set<length_t> dTrimmedIds;
+            // pair the occurrences that have a distance of uDist +
+            // dDist
+            pairOccurrencesForBestMapping(
+                uVector[uDist].second, dVector[dDist].second, pairs,
+                maxFragSize, minFragSize, maxUp, maxDown, counters, uTrimmedIds,
+                dTrimmedIds, uSeq, dSeq);
+
+            // convert the sets to vectors
+            vector<length_t> uTrimmedIdsVec(uTrimmedIds.begin(),
+                                            uTrimmedIds.end());
+            vector<length_t> dTrimmedIdsVec(dTrimmedIds.begin(),
+                                            dTrimmedIds.end());
+
+            // the occurrences found with trimming should be added to
+            // the correct vector according to their new distance and
+            // removed from the old vector
+            handleTrimmedOccs(uTrimmedIdsVec, uDist, uVector);
+            handleTrimmedOccs(dTrimmedIdsVec, dDist, dVector);
+        }
+        if (!pairs.empty()) {
+            // no need to further explore higher strata
+            return;
+        }
+    }
+}
+
+void SearchStrategy::mergeOrMovePairs(vector<PairedTextOccs>& pairs12,
+                                      vector<PairedTextOccs>& pairs21,
+                                      vector<PairedTextOccs>& pairs) {
+    if (pairs12.empty() || pairs21.empty()) {
+        pairs = std::move(pairs12.empty() ? pairs21 : pairs12);
+        return;
+    }
+    length_t distance12 = pairs12.front().getDistance(),
+             distance21 = pairs21.front().getDistance();
+    if (distance12 <= distance21) {
+        pairs = std::move(pairs12); // pairs12 is best or ex-aequo
+        if (distance12 == distance21) {
+            pairs.insert(pairs.end(), make_move_iterator(pairs21.begin()),
+                         make_move_iterator(pairs21.end()));
+        }
+        return;
+    }
+    pairs = std::move(pairs21);
+    return;
+}
+
+void SearchStrategy::processCombFF(ReadPair& pair, OccVector& matches1,
+                                   OccVector& matches2, OccVector& matchesRC1,
+                                   OccVector& matchesRC2,
+                                   vector<PairedTextOccs>& pairs,
+                                   int maxFragSize, int minFragSize,
+                                   length_t totDist, length_t minTotDist,
+                                   Counters& counters) {
+
+    vector<PairedTextOccs> pairsFF; // the pairs that are forward-forward
+    vector<PairedTextOccs> pairsRR; // the pairs that are reverseC-reverseC
+
+    auto processFF = [&]() {
+        processComb(pair.getBundle1().getRead(), pair.getBundle2().getRead(),
+                    counters, FIRST_IN_PAIR, FORWARD_STRAND, SECOND_IN_PAIR,
+                    FORWARD_STRAND, matches1, matches2, pairsFF, maxFragSize,
+                    minFragSize, totDist, minTotDist);
+    };
+    auto processRR = [&]() {
+        processComb(pair.getBundle2().getRevComp(),
+                    pair.getBundle1().getRevComp(), counters, SECOND_IN_PAIR,
+                    REVERSE_C_STRAND, FIRST_IN_PAIR, REVERSE_C_STRAND,
+                    matchesRC2, matchesRC1, pairsRR, maxFragSize, minFragSize,
+                    totDist, minTotDist);
+    };
+
+    // choose ordering of what combination to process first based on of
+    // the comb already has a match for dist < minTotDist
+    if (any_of(matches1.begin(), matches1.end(),
+               [](BoolAndVector& bv) { return !bv.second.empty(); }) ||
+        any_of(matches2.begin(), matches2.end(),
+               [](BoolAndVector& bv) { return !bv.second.empty(); })) {
+
+        processFF();
+        totDist = (pairsFF.empty()) ? totDist : pairsFF.front().getDistance();
+        processRR();
+    } else {
+        processRR();
+        totDist = (pairsRR.empty()) ? totDist : pairsRR.front().getDistance();
+        processFF();
+    }
+    mergeOrMovePairs(pairsFF, pairsRR, pairs);
+}
+
+void SearchStrategy::processCombRF(ReadPair& pair, OccVector& matches1,
+                                   OccVector& matches2, OccVector& matchesRC1,
+                                   OccVector& matchesRC2,
+                                   vector<PairedTextOccs>& pairs,
+                                   int maxFragSize, int minFragSize,
+                                   length_t totDist, length_t minTotDist,
+                                   Counters& counters) {
+    vector<PairedTextOccs> pairs12; // the pairs that are 1-2
+    vector<PairedTextOccs> pairs21; // the pairs that are 2-1
+    auto process12 = [&]() {
+        processComb(pair.getBundle1().getRevComp(), pair.getBundle2().getRead(),
+                    counters, FIRST_IN_PAIR, REVERSE_C_STRAND, SECOND_IN_PAIR,
+                    FORWARD_STRAND, matchesRC1, matches2, pairs12, maxFragSize,
+                    minFragSize, totDist, minTotDist);
+    };
+
+    auto process21 = [&]() {
+        processComb(pair.getBundle2().getRevComp(), pair.getBundle1().getRead(),
+                    counters, SECOND_IN_PAIR, REVERSE_C_STRAND, FIRST_IN_PAIR,
+                    FORWARD_STRAND, matchesRC2, matches1, pairs21, maxFragSize,
+                    minFragSize, totDist, minTotDist);
+    };
+
+    if (any_of(matchesRC1.begin(), matchesRC1.begin() + minTotDist,
+               [](BoolAndVector& bv) { return !bv.second.empty(); }) ||
+        any_of(matches2.begin(), matches2.begin() + minTotDist,
+               [](BoolAndVector& bv) { return !bv.second.empty(); })) {
+        process12();
+        totDist = (pairs12.empty()) ? totDist : pairs12.front().getDistance();
+        process21();
+    } else {
+        process21();
+        totDist = (pairs21.empty()) ? totDist : pairs21.front().getDistance();
+        process12();
+    }
+
+    mergeOrMovePairs(pairs12, pairs21, pairs);
+}
+
+void SearchStrategy::processCombFR(ReadPair& pair, OccVector& matches1,
+                                   OccVector& matches2, OccVector& matchesRC1,
+                                   OccVector& matchesRC2,
+                                   vector<PairedTextOccs>& pairs,
+                                   int maxFragSize, int minFragSize,
+                                   length_t totDist, length_t minTotDist,
+                                   Counters& counters) {
+    vector<PairedTextOccs> pairs12; // the pairs that are 1-2
+    vector<PairedTextOccs> pairs21; // the pairs that are 2-1
+    auto process12 = [&]() {
+        processComb(pair.getBundle1().getRead(), pair.getBundle2().getRevComp(),
+                    counters, FIRST_IN_PAIR, FORWARD_STRAND, SECOND_IN_PAIR,
+                    REVERSE_C_STRAND, matches1, matchesRC2, pairs12,
+                    maxFragSize, minFragSize, totDist, minTotDist);
+    };
+
+    auto process21 = [&]() {
+        processComb(pair.getBundle2().getRead(), pair.getBundle1().getRevComp(),
+                    counters, SECOND_IN_PAIR, FORWARD_STRAND, FIRST_IN_PAIR,
+                    REVERSE_C_STRAND, matches2, matchesRC1, pairs21,
+                    maxFragSize, minFragSize, totDist, minTotDist);
+    };
+
+    if (any_of(matches1.begin(), matches1.begin() + minTotDist,
+               [](BoolAndVector& bv) { return !bv.second.empty(); }) ||
+        any_of(matchesRC2.begin(), matchesRC2.begin() + minTotDist,
+               [](BoolAndVector& bv) { return !bv.second.empty(); })) {
+        process12();
+        totDist = (pairs12.empty()) ? totDist : pairs12.front().getDistance();
+        process21();
+    } else {
+        process21();
+        totDist = (pairs21.empty()) ? totDist : pairs21.front().getDistance();
+        process12();
+    }
+
+    mergeOrMovePairs(pairs12, pairs21, pairs);
+}
+
+void SearchStrategy::addSingleEndedForBest(vector<TextOcc>& matchesSE1,
+                                           vector<TextOcc>& matchesSE2,
+                                           OccVector& fw1, OccVector& rc1,
+                                           OccVector& fw2, OccVector& rc2,
+                                           bool read2done) {
+
+    for (length_t i = 0; i < matchesSE1.size(); i++) {
+        auto occ = std::move(matchesSE1[i]);
+        auto& vector = (occ.getStrand() == FORWARD_STRAND) ? fw1 : rc1;
+        vector[occ.getDistance()].second.emplace_back(std::move(occ));
+    }
+    for (length_t i = 0; i < matchesSE2.size(); i++) {
+        auto occ = std::move(matchesSE2[i]);
+        occ.setPairStatus(SECOND_IN_PAIR); // set flag for  second read
+        auto& vector = (occ.getStrand() == FORWARD_STRAND) ? fw2 : rc2;
+        vector[occ.getDistance()].second.emplace_back(std::move(occ));
+    }
+    for (length_t i = 0; i < fw1.size(); i++) {
+        fw1[i].first = rc1[i].first = true;
+    }
+    for (length_t i = 0; i < fw2.size(); i++) {
+        fw2[i].first = rc2[i].first = read2done;
+    }
+}
+
+vector<PairedTextOccs> SearchStrategy::matchApproxPairedEndBestPlusX(
+    ReadPair& pair, length_t minIdentity, length_t maxFragSize,
+    length_t minFragSize, Counters& counters, vector<TextOcc>& unpairedOcc,
+    length_t x, vector<TextOcc>& matchesSE1, vector<TextOcc>& matchesSE2,
+    bool singleEnd, bool read2done) {
+
+    length_t cutOff1 = getMaxED(minIdentity, pair.getRead1().size());
+    length_t cutOff2 = getMaxED(minIdentity, pair.getRead2().size());
+
+    length_t best = cutOff1 + cutOff2 + 1;
+
+    vector<PairedTextOccs> pairs; // return value
+
+    // create for the read1 and revComp1 a vector of vector of TextOcc
+    // of size cutOff1 + 1 (one index per valid distance),  do the same
+    // for read2 and revComp2
+    OccVector fw1(cutOff1 + 1), rc1(cutOff1 + 1), fw2(cutOff2 + 1),
+        rc2(cutOff2 + 1);
+    if (singleEnd) {
+        addSingleEndedForBest(matchesSE1, matchesSE2, fw1, rc1, fw2, rc2,
+                              read2done);
+    }
+
+#ifndef RUN_LENGTH_COMPRESSION
+    // reset all in-text verification matrices from previous pair
+    index.resetInTextMatrices();
+#endif
+
+    // try to find a pair that matches exactly according to the
+    // orientation
+    (this->*processOriBestPtr)(pair, fw1, fw2, rc1, rc2, pairs, maxFragSize,
+                               minFragSize, 0, 0, counters);
+    bool bestFound = false;
+    if (!pairs.empty()) {
+        best = 0;
+        bestFound = true;
+    }
+
+    length_t minTotDist = 1;
+    length_t maxStratum = (best == 0) ? x : cutOff1 + cutOff2;
+
+    for (length_t k = max(x, (length_t)1); k <= maxStratum;) {
+
+        (this->*processOriBestPtr)(pair, fw1, fw2, rc1, rc2, pairs, maxFragSize,
+                                   minFragSize, k, minTotDist, counters);
+
+        if (!bestFound) {
+            if (!pairs.empty()) {
+                // A best pair has been found
+                best = k;
+                bestFound = true;
+                maxStratum = min(best + x, cutOff1 + cutOff2 + 1);
+                minTotDist = best + 1;
+                if (x == 0) {
+                    break;
+                }
+                k = maxStratum;
+
+            } else {
+                if (k == maxStratum) {
+                    // no best found and at the end of the loop
+                    break;
+                }
+                // increase the stratum
+                length_t step = (k < 6) ? 2 : 4;
+                k = min(maxStratum, k + x + step);
+            }
+        } else {
+            // best was found already, this was best+x so break the loop
+            break;
+        }
+    }
+
+    if (pairs.empty()) {
+        // no pairs found, try discordant pairs
+        pairDiscordantlyBest(fw1, rc1, fw2, rc2, pairs, pair, counters,
+                             unpairedOcc, x);
+    }
+
+    generateSAMPairedEnd(pairs, pair);
+    return pairs;
 }
 
 void SearchStrategy::doRecSearch(const Search& s, vector<Substring>& parts,
@@ -565,12 +1126,13 @@ void SearchStrategy::doRecSearch(const Search& s, vector<Substring>& parts,
         s.setDirectionsInParts(parts);
 
         // can we continue exact matching according to this search?
-        uint partInSearch = 1;
+        uint16_t partInSearch = 1;
         length_t exactLength = parts[first].size();
 
         while (s.getUpperBound(partInSearch) == 0) {
             // extend the exact match
-            index.setDirection(s.getDirection(partInSearch - 1));
+            index.setDirection(s.getDirection(partInSearch),
+                               s.isUnidirectionalBackwards(partInSearch));
             const auto& part = parts[s.getPart(partInSearch)];
 
             startRange =
@@ -585,12 +1147,736 @@ void SearchStrategy::doRecSearch(const Search& s, vector<Substring>& parts,
 
         // Create a match corresponding to the exact match
         FMOcc startMatch = FMOcc(startRange, 0, exactLength);
+
         // Start approximate matching in the index
         (this->*startIdxPtr)(s, startMatch, occ, parts, counters, partInSearch);
     }
 }
+
+// ----------------------------------------------------------------------------
+// PAIRING
+// ----------------------------------------------------------------------------
+
+/**
+ * @brief Find the first occurrence in a sorted vector of TextOcc that is after
+ * a specified position
+ * @param occs The vector of TextOcc
+ * @param position The position to search for
+ * @return An iterator to the first occurrence that is after the specified
+ * position
+ */
+vector<TextOcc>::iterator findFirstOccAfter(vector<TextOcc>& occs,
+                                            length_t position) {
+
+    assert(is_sorted(occs.begin(), occs.end(),
+                     [](const TextOcc& a, const TextOcc& b) {
+                         return a.getIndexBegin() < b.getIndexBegin();
+                     }));
+    return lower_bound(occs.begin(), occs.end(), position,
+                       [](const TextOcc& occ, length_t pos) {
+                           return occ.getIndexBegin() < pos;
+                       });
+}
+
+void SearchStrategy::pairOccurrences(vector<TextOcc>& upstreamOccs,
+                                     vector<TextOcc>& downStreamOccs,
+                                     vector<PairedTextOccs>& pairs,
+                                     length_t maxFragSize, length_t minFragSize,
+                                     length_t maxED, Counters& counters,
+                                     const std::string& uSeq,
+                                     const std::string& dSeq) const {
+    // TODO (maybe): if upStreamOccs.size() >> downStreamOccs.size()
+    // then loop over downStreamOccs and find the upstream matches for
+    // each
+
+    if (upstreamOccs.size() == 0 || downStreamOccs.size() == 0) {
+        return;
+    }
+
+    // loop over all matches of the upstream read
+    for (TextOcc& upStreamOcc : upstreamOccs) {
+        length_t upstreamPos = upStreamOcc.getIndexBegin();
+
+        // find the index of first match of the downstream read that is
+        // after the upstream read
+        auto it = findFirstOccAfter(downStreamOccs, upstreamPos);
+
+        // loop over all matches of downstream read that are after the
+        // upstream read
+        for (; it != downStreamOccs.end(); it++) {
+            // check if the matches are within the fragment size
+            // and have the correct orientation
+
+            length_t fragSize = (it->getIndexEnd()) - upstreamPos;
+
+            if (fragSize <= maxFragSize && fragSize >= minFragSize) {
+                // found a pair
+                // assign sequence if not assigned yet
+
+                if (assignSequenceAndCIGAR(upStreamOcc, counters, maxED,
+                                           uSeq) == NOT_FOUND) {
+                    break; // no sequence could be assigned, break inner loop
+                }
+
+                if (assignSequenceAndCIGAR(*it, counters, maxED, dSeq) ==
+                    NOT_FOUND) {
+                    continue; // no sequence could be assigned
+                }
+
+                if (upStreamOcc.getAssignedSequenceID() !=
+                    it->getAssignedSequenceID()) {
+                    // the assigned sequences are not the same, so no
+                    // pair can be formed (discordant pairs are handled
+                    // later on)
+                    continue;
+                }
+
+                pairs.push_back({upStreamOcc, *it});
+
+            } else if (fragSize > maxFragSize) {
+                // since the matches are sorted, we can stop the
+                // loop
+                break;
+            }
+        }
+    }
+}
+
+vector<PairedTextOccs> SearchStrategy::pairSingleEndedMatchesAll(
+    vector<TextOcc>& matches1, vector<TextOcc>& matches2, length_t maxFragSize,
+    length_t minFragSize, Counters& counters, ReadPair& readPair,
+    length_t maxED, vector<TextOcc>& unpairedOccurrences, bool read2done) {
+
+    vector<PairedTextOccs> pairedMatches; // return value
+
+    // we need to split up matches1 and matches2 in forward and revCompl
+    vector<TextOcc> fw1, rc1, fw2, rc2;
+    // iterate over matches1 and move into correct vector
+    for (auto& match : matches1) {
+        auto& vector = match.isRevCompl() ? rc1 : fw1;
+        vector.emplace_back(std::move(match));
+    }
+    // iterate over matches2 and move into correct vector
+    for (auto& match : matches2) {
+        // set flag for matches2 as second read in pair
+        match.setPairStatus(SECOND_IN_PAIR);
+        auto& vector = match.isRevCompl() ? rc2 : fw2;
+        vector.emplace_back(std::move(match));
+    }
+
+// sort the matches on their begin position (needed for pairing)
+#ifdef DEVELOPER_MODE
+    std::stable_sort(fw1.begin(), fw1.end());
+    std::stable_sort(fw2.begin(), fw2.end());
+    std::stable_sort(rc1.begin(), rc1.end());
+    std::stable_sort(rc2.begin(), rc2.end());
+#else
+    sort(fw1.begin(), fw1.end());
+    sort(fw2.begin(), fw2.end());
+    sort(rc1.begin(), rc1.end());
+    sort(rc2.begin(), rc2.end());
+#endif
+
+#ifndef RUN_LENGTH_COMPRESSION
+    // reset the in-text verification matrices from a previous pair
+    index.resetInTextMatrices();
+#endif
+
+    // create BoolAndVector for each vector with bool set to true
+    BoolAndVector fw1bv = {true, fw1}, rc1bv = {true, rc1},
+                  fw2bv = {read2done, fw2}, rc2bv = {read2done, rc2};
+
+    (this->*processOriAllPtr)(readPair, fw1bv, rc1bv, fw2bv, rc2bv,
+                              pairedMatches, maxFragSize, minFragSize, maxED,
+                              counters);
+
+    if (pairedMatches.empty()) {
+        pairDiscordantly(fw1bv, rc1bv, fw2bv, rc2bv, pairedMatches, readPair,
+                         maxED, counters, unpairedOccurrences);
+    }
+    generateSAMPairedEnd(pairedMatches, readPair);
+    return pairedMatches;
+}
+
+void SearchStrategy::addUnpairedMatches(vector<TextOcc>& allMatches,
+                                        ReadBundle& bundle, PairStatus status,
+                                        length_t maxED, Counters& counters,
+                                        vector<TextOcc>& unpairedOcc) {
+    vector<TextOcc> temp; // a temp vector with the unpaired matches
+
+    // move the elements of forward and revComp to temp if a
+    // sequence can be assigned
+    for (auto& occ : allMatches) {
+
+#ifndef RUN_LENGTH_COMPRESSION
+        if (!occ.hasCigar()) {
+            const auto& seq = bundle.getSequence(occ.getStrand());
+            index.generateCIGAR(occ, counters, seq);
+        }
+#endif
+        const auto& seq = bundle.getSequence(occ.getStrand());
+        if (assignSequence(occ, counters, maxED, seq) != NOT_FOUND) {
+            temp.emplace_back(std::move(occ));
+        }
+    }
+
+    if (temp.empty()) {
+        // probably won't happen but you never know, just create an
+        // unmapped occurrence
+        if (unmappedSAM) {
+            unpairedOcc.emplace_back(
+                TextOcc::createUnmappedSAMOccurrencePE(bundle, status));
+        }
+        return;
+    }
+
+// sort on distance score
+#ifdef DEVELOPER_MODE
+    std::stable_sort(
+#else
+    sort(
+#endif
+        temp.begin(), temp.end(), [](const TextOcc& a, const TextOcc& b) {
+            return a.getDistance() < b.getDistance();
+        });
+
+    // Get best score and number of times it occurs
+    uint32_t best = temp.front().getDistance();
+    // count the number of occurrences with best score
+    auto bestCount =
+        count_if(temp.begin(), temp.end(), [best](const TextOcc& occ) {
+            return occ.getDistance() == best;
+        });
+
+    // generate SAM lines
+    bool firstOcc = true;
+    for (auto& occ : temp) {
+        occ.generateSAMUnpaired(bundle, bestCount, best, firstOcc,
+                                index.getSeqNames());
+        firstOcc = false;
+    }
+
+    // add the temp occurrences to the unpairedOcc vector
+    unpairedOcc.insert(unpairedOcc.end(), temp.begin(), temp.end());
+}
+
+void SearchStrategy::addOneUnmapped(ReadPair& reads, vector<TextOcc>& matches1,
+                                    vector<TextOcc>& matches2,
+                                    vector<PairedTextOccs>& pairs,
+                                    length_t maxED, Counters& counters) {
+    // Define lambda function to create paired occurrences with one
+    // mapped read
+    auto createPairedOccurrences = [&](vector<TextOcc>& occurrences,
+                                       ReadBundle& bundle1, ReadBundle& bundle2,
+                                       bool isFirstMapped,
+                                       vector<PairedTextOccs>& pairs) {
+        const auto& mappedBundle = (isFirstMapped) ? bundle1 : bundle2;
+        for (auto& occurrence : occurrences) {
+            // assign sequence and generate CIGAR string
+            const auto& seq = mappedBundle.getSequence(occurrence.getStrand());
+#ifndef RUN_LENGTH_COMPRESSION
+            if (!occurrence.hasCigar()) {
+                index.generateCIGAR(occurrence, counters, seq);
+            }
+#endif
+            if (assignSequence(occurrence, counters, maxED, seq) == NOT_FOUND) {
+                continue;
+            }
+
+            PairStatus unmappedReadStatus =
+                isFirstMapped ? SECOND_IN_PAIR : FIRST_IN_PAIR;
+
+            TextOcc unMapped = TextOcc::createUnmappedSAMOccurrencePE(
+                isFirstMapped ? bundle2 : bundle1, unmappedReadStatus, true,
+                occurrence.getStrand());
+            PairedTextOccs pair = {occurrence, unMapped, 0};
+            pairs.emplace_back(std::move(pair));
+        }
+    };
+
+    bool firstMapped = matches1.size() > 0;
+    assert(firstMapped == (matches2.size() == 0));
+
+    // report pairs where the mapped one is upstream and
+    // mate is empty (unmapped) downstream
+    if (firstMapped) {
+        createPairedOccurrences(matches1, reads.getBundle1(),
+                                reads.getBundle2(), true, pairs);
+    } else {
+        createPairedOccurrences(matches2, reads.getBundle1(),
+                                reads.getBundle2(), false, pairs);
+    }
+    if (pairs.empty()) {
+        // unlikely but possible that no match with assigned sequence
+        // could be found
+        addBothUnmapped(reads, pairs);
+    }
+}
+
+void SearchStrategy::addDiscPairs(vector<TextOcc>& fw1, vector<TextOcc>& rc1,
+                                  vector<TextOcc>& fw2, vector<TextOcc>& rc2,
+                                  vector<PairedTextOccs>& pairs, length_t maxED,
+                                  Counters& counters, ReadPair& reads,
+                                  vector<TextOcc>& unpairedOcc) {
+    if ((fw1.empty() && rc1.empty()) || (fw2.empty() && rc2.empty())) {
+        // no pairs can be formed
+        return;
+    }
+    auto pairOccs = [&](TextOcc& first, TextOcc& second,
+                        vector<PairedTextOccs>& pairs) {
+        // generate CIGAR strings if necessary
+        const auto& firstSeq =
+            reads.getSequence(first.getStrand(), first.getPairStatus());
+        const auto& secondSeq =
+            reads.getSequence(second.getStrand(), second.getPairStatus());
+#ifndef RUN_LENGTH_COMPRESSION
+        if (!first.hasCigar()) {
+            index.generateCIGAR(first, counters, firstSeq);
+        }
+        if (!second.hasCigar()) {
+            index.generateCIGAR(second, counters, secondSeq);
+        }
+#endif
+        // try to assign a sequence to both occurrences
+        if (assignSequence(first, counters, maxED, firstSeq) != NOT_FOUND &&
+            assignSequence(second, counters, maxED, secondSeq) != NOT_FOUND) {
+
+            // if they are not aligned to the same reference, the
+            // fragment size is 0 to mark that template length does not
+            // make sense here
+            bool sameRef =
+                first.getAssignedSequenceID() == second.getAssignedSequenceID();
+
+            bool firstUpstream = first.getBegin() < second.getBegin();
+            uint32_t fragSize =
+                (sameRef) ? (firstUpstream ? second.getEnd() - first.getBegin()
+                                           : first.getEnd() - second.getBegin())
+                          : 0;
+
+            auto& upstream = firstUpstream ? first : second;
+            auto& downstream = firstUpstream ? second : first;
+
+            // create the discordant paired match
+            PairedTextOccs pair = {upstream, downstream, fragSize};
+            pair.setDiscordant();
+            pairs.emplace_back(std::move(pair));
+        }
+    };
+
+    for (auto& first : fw1) {
+        for (auto& second : fw2) {
+            pairOccs(first, second, pairs);
+        }
+        for (auto& second : rc2) {
+            pairOccs(first, second, pairs);
+        }
+    }
+    for (auto& first : rc1) {
+        for (auto& second : fw2) {
+            pairOccs(first, second, pairs);
+        }
+        for (auto& second : rc2) {
+            pairOccs(first, second, pairs);
+        }
+    }
+}
+
+void SearchStrategy::pairDiscordantly(BoolAndVector& fw1, BoolAndVector& rc1,
+                                      BoolAndVector& fw2, BoolAndVector& rc2,
+                                      vector<PairedTextOccs>& pairs,
+                                      ReadPair& reads, length_t maxED,
+                                      Counters& counters,
+                                      vector<TextOcc>& unpairedOcc) {
+
+    // step 1: since some reads/rev_complements might not have been
+    // matched yet, we need to map them
+
+    auto map = [&](BoolAndVector& vector, const string& seq, PairStatus status,
+                   Strand strand) {
+        if (!vector.first) {
+            vector = {true, mapRead(seq, maxED, counters, status, strand)};
+        }
+    };
+
+    map(fw1, reads.getRead1(), FIRST_IN_PAIR, FORWARD_STRAND);
+    map(rc1, reads.getRevComp1(), FIRST_IN_PAIR, REVERSE_C_STRAND);
+    map(fw2, reads.getRead2(), SECOND_IN_PAIR, FORWARD_STRAND);
+    map(rc2, reads.getRevComp2(), SECOND_IN_PAIR, REVERSE_C_STRAND);
+
+    length_t matchesFirst = fw1.second.size() + rc1.second.size();
+    length_t matchesSecond = fw2.second.size() + rc2.second.size();
+
+    bool firstMapped = matchesFirst != 0;
+    bool secondMapped = matchesSecond != 0;
+    // step 2: pair discordantly if both reads are mapped
+    if (discordantAllowed && firstMapped && secondMapped) {
+
+        if (matchesFirst * matchesSecond > 10000) {
+            logger.logWarning("Too many possible discordant pairs to pair "
+                              "discordantly for reads " +
+                              reads.getBundle1().getSeqID() + " and " +
+                              reads.getBundle2().getSeqID() + ": " +
+                              to_string(matchesFirst * matchesSecond));
+            addUnpairedMatches(fw1.second, rc1.second, fw2.second, rc2.second,
+                               reads, maxED, counters, unpairedOcc);
+
+        } else {
+            addDiscPairs(fw1.second, rc1.second, fw2.second, rc2.second, pairs,
+                         maxED, counters, reads, unpairedOcc);
+            if (!pairs.empty()) {
+                return;
+            }
+        }
+    }
+
+    // step2: no discordant pairs were found or allowed, so we need to
+    // report the temp mappings
+    if (firstMapped && secondMapped) {
+        addUnpairedMatches(fw1.second, rc1.second, fw2.second, rc2.second,
+                           reads, maxED, counters, unpairedOcc);
+    } else if (!firstMapped && !secondMapped) {
+        addBothUnmapped(reads, pairs);
+    } else {
+        addOneUnmapped(reads, fw1.second, rc1.second, fw2.second, rc2.second,
+                       pairs, maxED, counters);
+    }
+}
+
+vector<TextOcc> SearchStrategy::findBestMapping(OccVector& fw, OccVector& rc,
+                                                const ReadBundle& bundle,
+                                                Counters& counters,
+                                                PairStatus status, uint32_t x) {
+    assert(fw.size() == rc.size());
+
+    uint32_t best;
+    bool bestFound =
+        findBestAlignments(bundle, fw, rc, counters, x, best, status);
+
+    if (bestFound) {
+        uint32_t max = fw.size() - 1;
+        return combineOccVectors(fw, rc, best, std::min(best + x, max));
+    }
+    return {};
+}
+
+void SearchStrategy::pairDiscordantlyBest(OccVector& fw1, OccVector& rc1,
+                                          OccVector& fw2, OccVector& rc2,
+                                          vector<PairedTextOccs>& pairs,
+                                          ReadPair& reads, Counters& counters,
+                                          vector<TextOcc>& unpairedOcc,
+                                          length_t x) {
+    assert(fw1.size() == rc1.size());
+    assert(fw2.size() == rc2.size());
+    length_t max1 = fw1.size() - 1;
+    length_t max2 = fw2.size() - 1;
+    if (discordantAllowed) {
+
+        // we need to find the pair with the best total distance score
+        for (length_t i = 0; i < fw1.size() + fw2.size(); i++) {
+            for (length_t e1 = 0; e1 <= min(i, max1); e1++) {
+                length_t e2 = i - e1;
+                if (e2 > max2) {
+                    continue;
+                }
+                // map the reads in both orientations for this stratum
+                mapStratum(fw1, e1, counters, reads.getRead1(), FIRST_IN_PAIR,
+                           FORWARD_STRAND);
+                mapStratum(rc1, e1, counters, reads.getRevComp1(),
+                           FIRST_IN_PAIR, REVERSE_C_STRAND);
+                mapStratum(fw2, e2, counters, reads.getRead2(), SECOND_IN_PAIR,
+                           FORWARD_STRAND);
+                mapStratum(rc2, e2, counters, reads.getRevComp2(),
+                           SECOND_IN_PAIR, REVERSE_C_STRAND);
+                // get all possible discordant pairs for this stratum
+                addDiscPairs(fw1[e1].second, rc1[e1].second, fw2[e2].second,
+                             rc2[e2].second, pairs, i, counters, reads,
+                             unpairedOcc);
+            }
+            if (!pairs.empty()) {
+                // found discordant pairs
+                return;
+            }
+        }
+    }
+    // discordant was not allowed or no discordant pairs were found
+    // we need to add the best mappings for each read as unpaired
+    // step 1: find the best mappings
+    auto best1 = findBestMapping(fw1, rc1, reads.getBundle1(), counters,
+                                 FIRST_IN_PAIR, x);
+    auto best2 = findBestMapping(fw2, rc2, reads.getBundle2(), counters,
+                                 SECOND_IN_PAIR, x);
+    if (best1.empty() && best2.empty()) {
+        // no mappings found, add both reads as unmapped
+        addBothUnmapped(reads, pairs);
+    } else if (best1.empty()) {
+        // only read 1 has no mappings, add read 1 as unmapped
+        addOneUnmapped(reads, best1, best2, pairs, max2, counters);
+    } else if (best2.empty()) {
+        // only read 2 has no mappings, add read 2 as unmapped
+        addOneUnmapped(reads, best1, best2, pairs, max1, counters);
+
+    } else {
+        // step 2: add the best mappings as unpaired
+        addUnpairedMatches(best1, reads.getBundle1(), FIRST_IN_PAIR,
+                           fw1.size() - 1, counters, unpairedOcc);
+        addUnpairedMatches(best2, reads.getBundle2(), SECOND_IN_PAIR,
+                           fw2.size() - 1, counters, unpairedOcc);
+    }
+}
+
+void SearchStrategy::pairOccurrencesForBestMapping(
+    vector<TextOcc>& upstreamOccs, vector<TextOcc>& downStreamOccs,
+    vector<PairedTextOccs>& pairs, length_t maxFragSize, length_t minFragSize,
+    length_t uMax, length_t dMax, Counters& counters,
+    set<length_t>& uTrimmedIds, set<length_t>& dTrimmedIds, const string& uSeq,
+    const string& dSeq) const {
+
+    if (upstreamOccs.size() == 0 || downStreamOccs.size() == 0) {
+        return;
+    }
+
+    // sort the downstream occurrences on their begin postion of the range
+    sort(downStreamOccs.begin(), downStreamOccs.end(),
+         [](const TextOcc& a, const TextOcc& b) {
+             return a.getIndexBegin() < b.getIndexBegin();
+         });
+
+    // loop over all matches of the upstream read
+    for (length_t i = 0; i < upstreamOccs.size(); i++) {
+        auto& upStreamOcc = upstreamOccs[i];
+        length_t upstreamPos = upStreamOcc.getIndexBegin();
+
+        // find the index of first match of the downstream read that is
+        // after the upstream read
+        auto it = findFirstOccAfter(downStreamOccs, upstreamPos);
+
+        // loop over all matches of downstream read that are after the
+        // upstream read
+        for (; it != downStreamOccs.end(); it++) {
+            // check if the matches are within the fragment size
+            // and have the correct orientation
+
+            length_t fragSize = (it->getIndexEnd()) - upstreamPos;
+
+            if (fragSize <= maxFragSize && fragSize >= minFragSize) {
+                // found a pair
+                // assign sequence if not assigned yet
+
+                auto uFound =
+                    assignSequenceAndCIGAR(upStreamOcc, counters, uMax, uSeq);
+                if (uFound != FOUND) {
+                    // no pair with this upStreamOcc will be valid so
+                    // break the loop on downstream to continue to next
+                    if (uFound == FOUND_WITH_TRIMMING) {
+                        uTrimmedIds.insert(i);
+                    }
+                    break;
+                }
+
+                auto dFound = assignSequenceAndCIGAR(*it, counters, dMax, dSeq);
+
+                if (dFound != FOUND) {
+                    // no pair with this downStreamOcc will be valid so
+                    // continue to next downstream occ
+                    if (dFound == FOUND_WITH_TRIMMING) {
+                        dTrimmedIds.insert(it - downStreamOccs.begin());
+                    }
+                    continue;
+                }
+                if (upStreamOcc.getAssignedSequenceID() !=
+                    it->getAssignedSequenceID()) {
+                    // the assigned sequences are not the same, so no
+                    // pair can be formed (discordant pairs are handled
+                    // later on)
+                    continue;
+                }
+
+                pairs.push_back({upStreamOcc, *it});
+
+            } else if (fragSize > maxFragSize) {
+                // since the matches are sorted, we can stop the
+                // loop
+                break;
+            }
+        }
+    }
+}
+// ----------------------------------------------------------------------------
+// POST PROCESSING
+// ----------------------------------------------------------------------------
+
+void SearchStrategy::generateOutputSingleEnd(vector<TextOcc>& occs,
+                                             ReadBundle& bundle,
+                                             Counters& counters,
+                                             length_t cutOff) const {
+
+    if (occs.empty()) {
+        if (unmappedSAM) {
+            occs.emplace_back(createUnmappedRecordSE(bundle));
+        }
+        return;
+    }
+
+    vector<TextOcc> assignedOccs;
+    assignedOccs.reserve(occs.size());
+
+    // for each occurrence find the assigned sequence
+    for (auto& t : occs) {
+        index.setIndexInMode(t.getStrand(), t.getPairStatus());
+        const auto& seq = bundle.getSequence(t.getStrand());
+        length_t seqID;
+        SeqNameFound found =
+            index.findSeqName(t, seqID, counters, cutOff, distanceMetric, seq);
+        if (found != SeqNameFound::NOT_FOUND) {
+            t.setAssignedSequence(found, seqID);
+            assignedOccs.emplace_back(std::move(t));
+        }
+    }
+
+    // keep only the occurrences that have an assigned sequence
+    occs = std::move(assignedOccs);
+
+    if (occs.empty()) {
+        if (unmappedSAM) {
+            occs.emplace_back(createUnmappedRecordSE(bundle));
+        }
+        return;
+    }
+#ifdef DEVELOPER_MODE
+    // sort the occurrences on score
+    // Use stable sort because we expect many elements with same key
+    stable_sort(occs.begin(), occs.end(),
+                [](const TextOcc& a, const TextOcc& b) {
+                    return a.getDistance() < b.getDistance();
+                });
+
+    // find the minimal score
+    uint32_t minScore = occs.front().getDistance();
+
+    uint32_t nHits = 1;
+
+    // count the number of hits with the minimal score
+    // take into account that the occurrences are sorted on score
+    // find the index of the first occurrence with a score higher than
+    // minScore with a binary search
+    auto it = lower_bound(occs.begin(), occs.end(), minScore + 1);
+    nHits = distance(occs.begin(), it);
+
+#else
+    // Find minimal distance
+    auto minElement = std::min_element(
+        occs.begin(), occs.end(), [](const TextOcc& a, const TextOcc& b) {
+            return a.getDistance() < b.getDistance();
+        });
+
+    length_t minScore = minElement->getDistance();
+
+    // Count number of elements with minimal distance
+    length_t nHits =
+        std::count_if(occs.begin(), occs.end(), [&](const TextOcc& elem) {
+            return elem.getDistance() == minScore;
+        });
+
+    // Swap element with minimal distance to primary position
+    if (minElement != occs.begin()) {
+        std::iter_swap(occs.begin(), minElement);
+    }
+#endif
+    (this->*generateOutputSEPtr)(bundle, nHits, minScore, occs, counters);
+}
+
+void SearchStrategy::generateSAMPairedEnd(vector<PairedTextOccs>& pairedMatches,
+                                          ReadPair& readPair) {
+
+    if (pairedMatches.empty()) {
+        return;
+    }
+
+// sort the paired matches on their
+// cumulative distance score
+// This gets expensive if the number of pairs is large/ We can solve
+// this by using a vector of reference_wrappers or pointers, but
+// this will need some refactoring, which might not be worth it
+#ifdef DEVELOPER_MODE
+    // TODO if DAG is used to determine strata we might to sort on some extra
+    // criteria to keep the order stable. For example two pairs with the same
+    // but the first is FR and the second is RF might be found in a different
+    // order. If we want to keep the sort stable we should also sort on the
+    // strand of the first read in the pair
+    std::stable_sort(pairedMatches.begin(), pairedMatches.end(),
+                     [](const PairedTextOccs& a, const PairedTextOccs& b) {
+                         return a.getDistance() < b.getDistance();
+                     });
+
+    uint32_t bestScore = pairedMatches.front().getDistance();
+    // find the number of pairs that have the best score
+    // using a binary search
+    auto it =
+        lower_bound(pairedMatches.begin(), pairedMatches.end(), bestScore + 1);
+    uint32_t nPairs = distance(pairedMatches.begin(), it);
+
+#else
+
+    // Find minimal distance
+    auto minElement =
+        std::min_element(pairedMatches.begin(), pairedMatches.end(),
+                         [](const PairedTextOccs& a, const PairedTextOccs& b) {
+                             return a.getDistance() < b.getDistance();
+                         });
+
+    uint32_t bestScore = minElement->getDistance();
+
+    // Count number of elements with minimal distance
+    length_t nPairs = std::count_if(pairedMatches.begin(), pairedMatches.end(),
+                                    [&](const PairedTextOccs& elem) {
+                                        return elem.getDistance() == bestScore;
+                                    });
+
+    // Swap element with minimal distance to primary position
+    if (minElement != pairedMatches.begin()) {
+        std::iter_swap(pairedMatches.begin(), minElement);
+    }
+
+#endif
+
+    bool primaryAlignment = true;
+    // generate the SAM lines for the paired matches
+    for (auto& match : pairedMatches) {
+
+        // upstream is first in pair
+        bool upFirst = match.getUpStream().isFirstReadInPair();
+
+        // aliases for the up- and downstream read, id, quality and
+        // revCompl
+        ReadBundle& upstreamBundle =
+            upFirst ? readPair.getBundle1() : readPair.getBundle2();
+        ReadBundle& downstreamBundle =
+            upFirst ? readPair.getBundle2() : readPair.getBundle1();
+
+        // only generate SAM if the second read has a valid alignment. If the
+        // second alignment is unmapped then SAM has already been generated.
+
+        // generate SAM for upstream
+        if (match.getUpStream().isValid()) {
+            match.getUpStream().generateSAMPairedEnd(
+                upstreamBundle, nPairs, bestScore, match.getDownStream(),
+                match.getFragSize(), match.isDiscordant(), primaryAlignment,
+                index.getSeqNames());
+        }
+
+        // generate SAM for downstream
+        if (match.getDownStream().isValid()) {
+            match.getDownStream().generateSAMPairedEnd(
+                downstreamBundle, nPairs, bestScore, match.getUpStream(),
+                match.getFragSize(), match.isDiscordant(), primaryAlignment,
+                index.getSeqNames());
+        }
+        primaryAlignment = false;
+    }
+}
+
 // ============================================================================
-// CLASS CUSTOMSEARCHSTRATEGY
+// CLASS CUSTOM SEARCH STRATEGY
 // ============================================================================
 
 // ----------------------------------------------------------------------------
@@ -614,10 +1900,11 @@ void CustomSearchStrategy::getSearchSchemeFromFolder(string pathToFolder,
         ifs.close();
     }
 
-    // get the info per distance score (scores between 1 and 4 are looked
-    // at)
+    // get the info per distance score (scores between 1 and MAX_K are
+    // looked at)
     for (int i = 1; i <= MAX_K; i++) {
-        string name = pathToFolder + to_string(i) + "/searches.txt";
+        string name =
+            pathToFolder + to_string(i) + PATH_SEPARATOR + "searches.txt";
         ifstream stream_searches(name);
         if (!stream_searches) {
             // this score is not supported
@@ -639,28 +1926,29 @@ void CustomSearchStrategy::getSearchSchemeFromFolder(string pathToFolder,
 
     // get static positions (if they exist)
     for (int i = 1; i <= MAX_K; i++) {
-        ifstream stream_static(pathToFolder + to_string(i) +
-                               "/static_partitioning.txt");
+        ifstream stream_static(pathToFolder + to_string(i) + PATH_SEPARATOR +
+                               "static_partitioning.txt");
 
         if (stream_static) {
             // a file with static partitioning positions exists
             getline(stream_static, line);
-            vector<string> postionsAsString = {};
+            vector<string> positionsAsString = {};
             stringstream ss(line);
             string token;
             while (ss >> token) {
-                postionsAsString.push_back(token);
+                positionsAsString.push_back(token);
             }
 
-            if (postionsAsString.size() != calculateNumParts(i) - 1) {
+            if (positionsAsString.size() != calculateNumParts(i) - 1) {
                 throw runtime_error(
                     "Not enough static positions provided in " + pathToFolder +
-                    to_string(i) + "/static_partitioning.txt\nExpected: " +
+                    to_string(i) + PATH_SEPARATOR +
+                    "static_partitioning.txt\nExpected: " +
                     to_string(calculateNumParts(i) - 1) + " parts\nProvided: " +
-                    to_string(postionsAsString.size()) + " parts");
+                    to_string(positionsAsString.size()) + " parts");
             }
 
-            for (auto str : postionsAsString) {
+            for (auto str : positionsAsString) {
                 staticPositions[i - 1].push_back(stod(str));
             }
 
@@ -675,8 +1963,8 @@ void CustomSearchStrategy::getSearchSchemeFromFolder(string pathToFolder,
 
     // get dynamic seeds and weights (if file exists)
     for (int i = 1; i <= MAX_K; i++) {
-        ifstream stream_dynamic(pathToFolder + to_string(i) +
-                                "/dynamic_partitioning.txt");
+        ifstream stream_dynamic(pathToFolder + to_string(i) + PATH_SEPARATOR +
+                                "dynamic_partitioning.txt");
 
         if (stream_dynamic) {
             // a file with dynamic partitioning positions exists
@@ -691,7 +1979,8 @@ void CustomSearchStrategy::getSearchSchemeFromFolder(string pathToFolder,
             if (seedsAsString.size() != calculateNumParts(i) - 2) {
                 throw runtime_error(
                     "Not enough seeding positions provided in " + pathToFolder +
-                    to_string(i) + "/dynamic_partitioning.txt\nExpected: " +
+                    to_string(i) + PATH_SEPARATOR +
+                    "dynamic_partitioning.txt\nExpected: " +
                     to_string(calculateNumParts(i) - 1) + " seeds\nProvided: " +
                     to_string(seedsAsString.size()) + " seeds");
             }
@@ -776,7 +2065,8 @@ void CustomSearchStrategy::sanityCheckStaticPartitioning(
     const int& maxScore) const {
     const auto& positions = staticPositions[maxScore - 1];
 
-    // no length zero + increasing + all smaller than 1 and greater than 0
+    // no length zero + increasing + all smaller than 1 and greater than
+    // 0
     for (unsigned int i = 0; i < positions.size(); i++) {
         if (positions[i] <= 0 || positions[i] >= 1) {
             throw runtime_error("One of the provided static positions for " +
@@ -795,7 +2085,8 @@ void CustomSearchStrategy::sanityCheckDynamicPartitioning(
 
     const auto& seeds = seedingPositions[maxScore - 1];
 
-    // no length zero + increasing + all smaller than 1 and greater than 0
+    // no length zero + increasing + all smaller than 1 and greater than
+    // 0
     for (unsigned int i = 0; i < seeds.size(); i++) {
         if (seeds[i] <= 0 || seeds[i] >= 1) {
             throw runtime_error("One of the provided static positions for " +
@@ -812,8 +2103,8 @@ void CustomSearchStrategy::sanityCheckDynamicPartitioning(
 
 void CustomSearchStrategy::sanityCheck(bool verbose) const {
 
-    // check if for each supported edit distance all error distributions  are
-    // covered
+    // check if for each supported edit distance all error distributions
+    // are covered
 
     for (int K = 1; K <= MAX_K; K++) {
 
@@ -826,9 +2117,14 @@ void CustomSearchStrategy::sanityCheck(bool verbose) const {
         // check if all searches have same number of parts
         if (any_of(scheme.begin(), scheme.end(),
                    [P](const Search& s) { return s.getNumParts() != P; })) {
-            throw runtime_error("Not all searches for distance " +
+            logger.logError("Not all searches for distance " + to_string(K) +
+                            " have the same number of "
+                            "parts");
+            throw runtime_error("Not all searches for "
+                                "distance " +
                                 to_string(K) +
-                                " have the same number of parts");
+                                " have the same "
+                                "number of parts");
         }
 
         // check if zero based

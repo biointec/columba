@@ -1,6 +1,6 @@
 /******************************************************************************
- *  Columba 1.2: Approximate Pattern Matching using Search Schemes            *
- *  Copyright (C) 2020-2023 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Columba: Approximate Pattern Matching using Search Schemes                *
+ *  Copyright (C) 2020-2024 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -20,18 +20,19 @@
 #ifndef BWTREPR_H
 #define BWTREPR_H
 
-#include <cstdlib>
+#include "../alphabet.h"
+#include "../bitvec.h"
 #include <vector>
-
-#include "alphabet.h"
-#include "bitvec.h"
 
 // ============================================================================
 // CLASS BWT REPRESENTATION (supports occ(c,k) and cumOcc(c,k) in O(1) time)
 // ============================================================================
 
-template <size_t S> // S is the size of the alphabet (including '$')
-class BWTRepr {     // e.g. S = 5 for DNA (A,C,G,T + $)
+/**
+ * BWT representation class to support occ(c,k) and cumOcc(c,k) in O(1) time
+ */
+template <size_t S>       // S is the size of the alphabet (including '$')
+class BWTRepresentation { // e.g. S = 5 for DNA (A,C,G,T + $)
 
   private:
     // The '$' character (cIdx == 0) is not encoded in the bitvector.
@@ -44,7 +45,7 @@ class BWTRepr {     // e.g. S = 5 for DNA (A,C,G,T + $)
     /**
      * Default constructor
      */
-    BWTRepr() {
+    BWTRepresentation() {
     }
 
     /**
@@ -52,7 +53,7 @@ class BWTRepr {     // e.g. S = 5 for DNA (A,C,G,T + $)
      * @param sigma Alphabet
      * @param BWT Burrows-Wheeler transformation
      */
-    BWTRepr(const Alphabet<S>& sigma, const std::string& BWT)
+    BWTRepresentation(const Alphabet<S>& sigma, const std::string& BWT)
         : bv(BWT.size() + 1), dollarPos(BWT.size()) {
         // The $-character (cIdx == 0) is not encoded in the bitvector.
         // Hence, use index cIdx-1 in the bitvector.
@@ -110,7 +111,7 @@ class BWTRepr {     // e.g. S = 5 for DNA (A,C,G,T + $)
      * @param filename File name
      */
     void write(const std::string& filename) {
-        std::ofstream ofs(filename);
+        std::ofstream ofs(filename, std::ios::binary);
         if (!ofs)
             throw std::runtime_error("Cannot open file: " + filename);
 
@@ -123,7 +124,7 @@ class BWTRepr {     // e.g. S = 5 for DNA (A,C,G,T + $)
      * @param filename File name
      */
     bool read(const std::string& filename) {
-        std::ifstream ifs(filename);
+        std::ifstream ifs(filename, std::ios::binary);
         if (!ifs)
             return false;
 
@@ -131,6 +132,10 @@ class BWTRepr {     // e.g. S = 5 for DNA (A,C,G,T + $)
         bv.read(ifs);
 
         return true;
+    }
+
+    bool operator==(const BWTRepresentation& other) const {
+        return (dollarPos == other.dollarPos) && (bv == other.bv);
     }
 };
 

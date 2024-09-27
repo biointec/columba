@@ -1,5 +1,5 @@
 /******************************************************************************
- *   Copyright (C) 2014 - 2023 Jan Fostier (jan.fostier@ugent.be)             *
+ *   Copyright (C) 2014 - 2021 Jan Fostier (jan.fostier@ugent.be)             *
  *   This file is part of Detox                                               *
  *                                                                            *
  *   This program is free software; you can redistribute it and/or modify     *
@@ -19,15 +19,12 @@
 #ifndef UTIL_H
 #define UTIL_H
 
-#include <chrono>
-#include <cmath>
-#include <ctime>
-#include <fstream>
-#include <map>
-#include <mutex>
-#include <string>
-#include <vector>
-
+#include <algorithm> // for max, abs
+#include <chrono>    // for system_clock, time_point
+#include <ctime>     // for size_t
+#include <fstream>   // for ifstream, ios
+#include <mutex>     // for mutex
+#include <string>    // for string
 // ============================================================================
 // DEFINITIONS
 // ============================================================================
@@ -125,7 +122,7 @@ class Util {
 
     /**
      * Stop the chronometer and return a human readable string
-     * @return A human readable string containg the elapsed time
+     * @return A human readable string containing the elapsed time
      */
     static std::string stopChronoStr() {
         return humanTime(stopChrono());

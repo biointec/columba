@@ -1,5 +1,5 @@
 /******************************************************************************
- *   Copyright (C) 2014 - 2023 Jan Fostier (jan.fostier@ugent.be)             *
+ *   Copyright (C) 2014 - 2021 Jan Fostier (jan.fostier@ugent.be)             *
  *   This file is part of Detox                                               *
  *                                                                            *
  *   This program is free software; you can redistribute it and/or modify     *
@@ -19,9 +19,12 @@
 #ifndef NUCLEOTIDE_H
 #define NUCLEOTIDE_H
 
-#include <algorithm>
-#include <cstdint>
-#include <string>
+#include <algorithm> // for find, reverse, transform
+#include <ctype.h>   // for toupper
+#include <iterator>  // for end, begin
+#include <stddef.h>  // for size_t
+#include <stdint.h>  // for uint8_t, uint64_t
+#include <string>    // for string, basic_string
 
 // ============================================================================
 // DEFINITIONS
@@ -33,6 +36,9 @@ typedef uint64_t NucleotideID;
 // NUCLEOTIDE CLASS
 // ============================================================================
 
+/**
+ * Nucleotide class to convert ASCII values to two bit encoding and vice versa
+ */
 class Nucleotide {
 
   private:
@@ -139,7 +145,7 @@ class Nucleotide {
 
     /**
      * Convert a nucleotide into its reverse complement
-     * @param n ASCII encoding of 'A', 'C', 'G' and 'T'
+     * @param c ASCII encoding of 'A', 'C', 'G' and 'T'
      * @return ASCII encoding of the reverse complement
      */
     static char getComplement(char c) {
@@ -171,6 +177,25 @@ class Nucleotide {
     static void complement(std::string& str) {
         for (size_t i = 0; i < str.size(); i++)
             str[i] = getComplement(str[i]);
+    }
+
+    /**
+     * Complement each nucleotide in an stl string, but leave N's untouched
+     *
+     * @param str The string to be complemented (input/output)
+     */
+    static void complementWithN(std::string& str) {
+        static const char charsToComplement[4] = {'A', 'C', 'G', 'T'};
+
+        for (size_t i = 0; i < str.size(); i++) {
+
+            // check if str[i] is in charsToComplement
+            if (std::find(std::begin(charsToComplement),
+                          std::end(charsToComplement),
+                          str[i]) != std::end(charsToComplement)) {
+                str[i] = getComplement(str[i]);
+            }
+        }
     }
 
     /**
@@ -214,6 +239,42 @@ class Nucleotide {
         reverse(RC);
         complement(RC);
         return RC;
+    }
+
+    /**
+     * Get reverse complement of an stl string, but leave N's untouched
+     * @param str The string to be reverse complemented
+     * @return The reverse complement of a string
+     */
+    static std::string getRevComplWithN(const std::string& str) {
+        std::string RC = str;
+        reverse(RC);
+        complementWithN(RC);
+        return RC;
+    }
+
+    static bool containsNonACGT(const std::string& str) {
+        for (char c : str) {
+            // Check if the character is not one of A, C, G, or T
+            if (!isACGT(c)) {
+                return true; // Found a non-ACGT character
+            }
+        }
+        return false; // All characters are A, C, G, or T
+    }
+
+    static bool isACGT(char c) {
+        return c == 'A' || c == 'C' || c == 'G' || c == 'T';
+    }
+
+    static void uppercaseInPlace(std::string& s) {
+        std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+    }
+
+    static std::string uppercase(const std::string& s) {
+        std::string result = s;
+        uppercaseInPlace(result);
+        return result;
     }
 };
 

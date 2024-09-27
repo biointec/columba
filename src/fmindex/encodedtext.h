@@ -1,6 +1,6 @@
 /******************************************************************************
- *  Columba 1.2: Approximate Pattern Matching using Search Schemes            *
- *  Copyright (C) 2020-2023 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Columba: Approximate Pattern Matching using Search Schemes                *
+ *  Copyright (C) 2020-2024 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -20,15 +20,15 @@
 #ifndef ENCODEDTEXT_H
 #define ENCODEDTEXT_H
 
-#include "alphabet.h"
+#include "../alphabet.h"
 
 #include <array>
 #include <bitset>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
-#include <stdint.h>
 #include <vector>
 
 /**
@@ -41,14 +41,24 @@ class EncodedText {
 
   private:
     // the number of bits per character
-    const static uint64_t B = ceil(log2(S));
+#if !defined(__clang__)
+    static // clang complains about static const based on S
+#endif
+        const uint64_t B = ceil(log2(S));
     // bitmask where the first B bits are 1, and other bits are 0
-    const static uint64_t bitmask = (-1ull) ^ (-1ull >> B);
+#if !defined(__clang__)
+    static // see comment around field B
+#endif
+        const uint64_t bitmask = (-1ull) ^ (-1ull >> B);
 
-    // 64-bit word where the bit at index i indicates wheter a symbol starting
+    // 64-bit word where the bit at index i indicates whether a symbol starting
     // at index i overflows into the next word
-    const static uint64_t hasOverflowBits =
-        ~(-1ull << (B - 1)); // the bit at index i indicates whether a symbol
+#if !defined(__clang__)
+    static // see comment around field B
+#endif
+        const uint64_t hasOverflowBits =
+            ~(-1ull << (B -
+                        1)); // the bit at index i indicates whether a symbol
                              // starting at index i overflows into the next word
     // masks for overflow (either all 0's or all 1's)
     const static std::array<uint64_t, 2> overflowMasks;
@@ -65,7 +75,15 @@ class EncodedText {
      * all 0's if the symbol starting at index does not overflow into the next
      * word
      */
-    static uint64_t hasOverflow(uint64_t index) {
+#if !defined(__clang__)
+    static // see comment around field B
+#endif
+        uint64_t
+        hasOverflow(uint64_t index)
+#if defined(__clang__)
+            const // if this function is not static, make it const
+#endif
+    {
         assert(index < 64);
         // A) get the value at the correct bit
         uint64_t maskIndex =
@@ -144,7 +162,7 @@ class EncodedText {
     }
 
     // ----------------------------------------------------------------------------
-    // DECODING: convert symbolindex to character
+    // DECODING: convert symbol index to character
     // ----------------------------------------------------------------------------
 
     /**
@@ -152,11 +170,10 @@ class EncodedText {
      * @param sigma the alphabet
      * @param index the index in the text
      * @returns a char which contains the character at index index in the
-     * orignal text according to the passed alphabet
+     * original text according to the passed alphabet
      */
     char decodeLetter(const Alphabet<S>& sigma, const uint64_t index) const {
-        uint64_t cIdex = getEncodedLetter(index);
-        return sigma.i2c(cIdex);
+        return sigma.i2c(getEncodedLetter(index));
     }
 
     /**
@@ -175,6 +192,27 @@ class EncodedText {
         return text;
     }
 
+    std::string getDecodedSubstring(const Alphabet<S>& sigma, size_t start,
+                                    size_t length) const {
+        // Ensure that the start and length are within the bounds of the text
+        assert(start < tSize);
+        assert(start + length <= tSize);
+
+        // Create a string of the appropriate size
+        std::string substring(length, '\0');
+
+        // Use a pointer to directly access the string's data and avoid boundary
+        // checks
+        char* data = &substring[0];
+
+        // Use a single loop to decode the substring
+        for (size_t i = 0; i < length; ++i) {
+            data[i] = decodeLetter(sigma, start + i);
+        }
+
+        return substring;
+    }
+
     // ----------------------------------------------------------------------------
     // ACCESS OPERATIONS
     // ----------------------------------------------------------------------------
@@ -187,7 +225,7 @@ class EncodedText {
     }
 
     /**
-     * Operator overloading, gets the characterindex (according to the used
+     * Operator overloading, gets the characterIndex (according to the used
      * alphabet) of the character that was present at index index in the
      * original text
      * @param index the index to find the character of in the original text
@@ -217,7 +255,7 @@ class EncodedText {
     }
 
     /**
-     * Gets the characterindex (according to the used
+     * Gets the characterIndex (according to the used
      * alphabet) of the character that was present at index index in the
      * original text
      * @param index the index to find the character of in the original text
@@ -235,7 +273,7 @@ class EncodedText {
      * @param filename File name
      */
     void write(const std::string& filename) {
-        std::ofstream ofs(filename);
+        std::ofstream ofs(filename, std::ios::binary);
         if (!ofs)
             throw std::runtime_error("Cannot open file: " + filename);
 
@@ -251,7 +289,7 @@ class EncodedText {
      * @param filename File name
      */
     bool read(const std::string& filename) {
-        std::ifstream ifs(filename);
+        std::ifstream ifs(filename, std::ios::binary);
         if (!ifs)
             return false;
         try {

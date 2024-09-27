@@ -1,5 +1,5 @@
 /******************************************************************************
- *   Copyright (C) 2014 - 2023 Jan Fostier (jan.fostier@ugent.be)             *
+ *   Copyright (C) 2014 - 2021 Jan Fostier (jan.fostier@ugent.be)             *
  *   This file is part of Detox                                               *
  *                                                                            *
  *   This program is free software; you can redistribute it and/or modify     *
@@ -284,7 +284,7 @@ template <size_t numBytes> class TKmer {
 
     /**
      * Write a kmer to file
-     * @param ofs Openen output file stream
+     * @param ofs Opened output file stream
      */
     void write(std::ofstream& ofs) const {
         ofs.write((char*)buf, kMSB + 1);
@@ -292,7 +292,7 @@ template <size_t numBytes> class TKmer {
 
     /**
      * Write a kmer to file
-     * @param ofs Openen output file stream
+     * @param ofs Opened output file stream
      */
     void writeBytes() const {
         for (int i = 0; i < numBytes; i++)

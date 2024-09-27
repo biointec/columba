@@ -1,6 +1,6 @@
 /******************************************************************************
- *  Columba 1.2: Approximate Pattern Matching using Search Schemes            *
- *  Copyright (C) 2020-2023 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Columba: Approximate Pattern Matching using Search Schemes                *
+ *  Copyright (C) 2020-2024 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -20,10 +20,12 @@
 #ifndef ALPHABET_H
 #define ALPHABET_H
 
+#include "definitions.h"
+
 #include <array>
 #include <cassert>
-#include <cstdint>
-#include <cstdlib>
+#include <cstddef> // for size_t
+#include <string>
 #include <vector>
 
 #define NUM_CHAR 256
@@ -31,8 +33,10 @@
 // ============================================================================
 // CLASS ALPHABET (convert ASCII value <-> character index)
 // ============================================================================
-#include "wordlength.h"
 
+/**
+ * Alphabet class to convert ASCII values to character indices and vice versa
+ */
 template <size_t S> // S is the size of the alphabet (including '$')
 class Alphabet {    // e.g. S = 5 for DNA (A,C,G,T + $)
 

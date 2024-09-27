@@ -1,5 +1,5 @@
 /******************************************************************************
- *   Copyright (C) 2014 - 2023 Jan Fostier (jan.fostier@ugent.be)             *
+ *   Copyright (C) 2014 - 2021 Jan Fostier (jan.fostier@ugent.be)             *
  *   This file is part of Detox                                               *
  *                                                                            *
  *   This program is free software; you can redistribute it and/or modify     *
@@ -17,6 +17,7 @@
  ******************************************************************************/
 
 #include "nucleotide.h"
+#include <iosfwd> // for std
 
 using namespace std;
 
