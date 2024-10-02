@@ -124,13 +124,13 @@ You can use more than one FASTA file, but the identifiers must be unique over al
 To build the index use this command from the directory where you built Columba (normally this is the build/ directory):
 
 ```bash
-./columba-build -r <reference_base_name> -f <list_of_FASTA_files>
+./columba_build -r <reference_base_name> -f <list_of_FASTA_files>
 ```
 
 or 
 
 ```bash
-./columba-build -r <reference_base_name> -F <file_with_paths>
+./columba_build -r <reference_base_name> -F <file_with_paths>
 ```
 
 where `<list_of_FASTA_files>` is a space separated list of FASTA input files, `<reference_base_name>` is the basename of the index files to write and `<file_with_paths>` is a text file where each line is a path to a FASTA input file.`
