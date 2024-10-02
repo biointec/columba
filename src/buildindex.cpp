@@ -157,6 +157,9 @@ void concatenateAndTransform(const std::string& fastaFile,
     positions.reserve(expectedNumber + positions.size());
     seqNames.reserve(expectedNumber + seqNames.size());
 
+    // A hash table of sequence names for O(1) lookup
+    std::unordered_set<string> seqNamesLookup;
+
     firstSeqIDPerFile.push_back(seqNames.size());
 
     std::string sequence;
@@ -188,15 +191,16 @@ void concatenateAndTransform(const std::string& fastaFile,
             std::string name = description.substr(0, description.find(' '));
 
             // Check if the sequence name is already present
-            if (std::find(seqNames.begin(), seqNames.end(), name) !=
-                seqNames.end()) {
+            if (seqNamesLookup.count(name) > 0) {
                 throw std::runtime_error("Error: Sequence name " + name +
                                          " in file " + fastaFile +
                                          " is not unique!");
             }
 
             seqNames.emplace_back(name); // Store sequence name
+            seqNamesLookup.insert(name);
             sequenceName = true;
+
         } else {
             // Append to the current sequence
             sequence += line;
