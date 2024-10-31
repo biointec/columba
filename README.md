@@ -380,11 +380,11 @@ Note that this slows down the runtime.
 For advanced users who want to experiment with Columba's functionality some other options are available.
 Note that the default settings have been carefully selected to bring the best performance.
 
-You can find more info about these settings, as well as on the use of custom search schemes [here](./further-info/advanced_options/README.md).
+You can find more info about these settings, as well as on the use of custom search schemes [here](./further_info/advanced_options/README.md).
 
 ## Result reproduction
 
-To reproduce the results presented in our papers please refer to [these instructions](./further-info/result_reproduction/README.md).
+To reproduce the results presented in our papers please refer to [these instructions](./further_info/result_reproduction/README.md).
 
 ## Citation
 
