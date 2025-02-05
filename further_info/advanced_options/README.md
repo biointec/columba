@@ -38,7 +38,7 @@ If the length of your reads divided by the maximum number of errors +1 is nearly
 Columba can handle any valid search scheme.
 The following section details how to point Columba to your search scheme.
 
-In the [search_schemes](./search_schemes/) folder, several example search schemes are already present.
+In the [search_schemes](../../search_schemes/) folder, several example search schemes are already present.
 
 To make a custom search scheme you need to create a folder containing at least a file called `name.txt`, which contains the name of your search scheme on the first line.
 For every maximum edit/hamming distance a subfolder should be present, which contains at least the file `searches.txt`.
