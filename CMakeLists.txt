@@ -14,6 +14,12 @@ endif()
 # Option to enable run-length compression (default: OFF)
 option(RUN_LENGTH_COMPRESSION "Enable run-length compression" OFF)
 
+# Option to enable move structures for the phi operations (default: OFF)
+option(PHI_MOVE "Enable phi move structures" OFF)
+if(PHI_MOVE AND NOT RUN_LENGTH_COMPRESSION)
+    message(WARNING "PHI_MOVE is not supported with Vanilla (non-RLC) mode and will be ignored.")
+endif()
+
 # Option to enable developer mode (default: OFF)
 option(DEVELOPER_MODE "Enable developer mode" OFF)
 if(DEVELOPER_MODE)
@@ -32,6 +38,13 @@ if(RUN_LENGTH_COMPRESSION)
     set(THIRTY_TWO_DEFAULT OFF)
     add_definitions(-DRUN_LENGTH_COMPRESSION)
     message(STATUS "Run-length compression enabled: using the bidirectional move structure (b-move).")
+
+    if(PHI_MOVE)
+        add_definitions(-DPHI_MOVE)
+        message(STATUS "Phi move structures enabled.")
+    else()
+        message(STATUS "Phi move structures disabled.")
+    endif()
 else()
     set(THIRTY_TWO_DEFAULT ON)
     message(STATUS "Run-length compression disabled: using the bidirectional FM-index.")
@@ -79,6 +92,17 @@ endif()
 add_library(AuxiliaryClasses ${SOURCE_FILES})
 
 # ---- Update Git Submodules ----
+find_package(Git QUIET)
+message(STATUS "Checking and updating submodules...")
+execute_process(
+    COMMAND ${GIT_EXECUTABLE} submodule update --init --recursive
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    RESULT_VARIABLE GIT_SUBMOD_RESULT
+)
+
+if(NOT GIT_SUBMOD_RESULT EQUAL "0")
+    message(FATAL_ERROR "Failed to initialize git submodules. Please run 'git submodule update --init --recursive' manually.")
+endif()
 
 # Update the Big-BWT submodule
 
@@ -88,30 +112,53 @@ if(RUN_LENGTH_COMPRESSION)
 
     set(BIG_BWT_USABLE TRUE)
 
+
     # Find Python 3.8 or greater
-    find_package(Python 3.8 REQUIRED COMPONENTS Interpreter)
+    find_package(Python3 3.8 COMPONENTS Interpreter)
 
-    if(NOT Python_FOUND)
-        message(WARNING "Python 3.8 or greater is required for prefix-free parsing, but not found.")
-        set(BIG_BWT_USABLE FALSE)
+    if (Python3_FOUND)
+
+	message(STATUS "Python executable detected by CMake: ${Python3_EXECUTABLE}")
+ 
+	# Check Python version
+    	execute_process(
+        	COMMAND ${Python3_EXECUTABLE} -c "import sys; print(f'{sys.version_info[0]} {sys.version_info[1]}')"
+        	OUTPUT_VARIABLE PYTHON_VERSION
+        	OUTPUT_STRIP_TRAILING_WHITESPACE
+    	)
+
+    	# Split the major and minor version
+    	string(REPLACE " " ";" PYTHON_VERSION_LIST "${PYTHON_VERSION}")
+    	list(GET PYTHON_VERSION_LIST 0 PYTHON_MAJOR_VERSION)
+    	list(GET PYTHON_VERSION_LIST 1 PYTHON_MINOR_VERSION)
+
+    	# Check if the Python version is >= 3.8
+    	if (PYTHON_MAJOR_VERSION GREATER 3 OR (PYTHON_MAJOR_VERSION EQUAL 3 AND PYTHON_MINOR_VERSION GREATER_EQUAL 8))
+        	message(STATUS "Found Python: ${Python3_EXECUTABLE} (Version ${PYTHON_MAJOR_VERSION}.${PYTHON_MINOR_VERSION})")
+
+        	# Check if psutil is installed
+        	execute_process(
+            		COMMAND ${Python3_EXECUTABLE} -c "import psutil"
+            		RESULT_VARIABLE PSUTIL_INSTALLED
+            		ERROR_QUIET
+            		OUTPUT_QUIET
+        	)
+
+        	if (NOT PSUTIL_INSTALLED EQUAL "0")
+            		message(WARNING "Python package 'psutil' is required for prefix-free parsing, but not installed. Please install it using pip (pip install psutil) if you want to use prefix-free parsing.")
+            		set(BIG_BWT_USABLE FALSE)
+        	else()
+            		message(STATUS "Python 3.8 or greater and psutil are installed.")
+            		set(BIG_BWT_USABLE TRUE)
+        	endif()
+
+    	else()
+        	message(WARNING "Found Python version ${PYTHON_MAJOR_VERSION}.${PYTHON_MINOR_VERSION}, but Python 3.8 or greater is required for prefix-free parsing.")
+        	set(BIG_BWT_USABLE FALSE)
+    	endif()
     else()
-        message(STATUS "Found Python: ${Python_EXECUTABLE}")
-
-        # Check if psutil is installed
-        execute_process(
-            COMMAND ${Python_EXECUTABLE} -c "import psutil"
-            RESULT_VARIABLE PSUTIL_INSTALLED
-            ERROR_QUIET
-            OUTPUT_QUIET
-        )
-
-        if(NOT PSUTIL_INSTALLED EQUAL "0")
-            message(WARNING "Python package 'psutil' is required for prefix-free parsing, but not installed. Please install it using pip (pip install psutil) if you want to use prefix-free parsing.")
-            set(BIG_BWT_USABLE FALSE)
-        else()
-            message(STATUS "Python 3.8 or greater and psutil are installed.")
-            set(BIG_BWT_USABLE TRUE)
-        endif()
+	    message(WARNING "Python not found, but is required for prefix-free parsing")
+	    set(BIG_BWT_USABLE FALSE)
     endif()
 
 
@@ -119,7 +166,7 @@ if(RUN_LENGTH_COMPRESSION)
     if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
         if(BIG_BWT_USABLE)
             message(STATUS "Updating Big-BWT submodule")
-            execute_process(COMMAND ${GIT_EXECUTABLE} submodule update --init external/Big-BWT
+            execute_process(COMMAND ${GIT_EXECUTABLE} submodule update --init -q external/Big-BWT
                             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
                             RESULT_VARIABLE GIT_SUBMOD_RESULT)
             if(NOT GIT_SUBMOD_RESULT EQUAL "0")
@@ -136,8 +183,10 @@ endif()
 add_executable(columba src/parallel.cpp src/fastq.cpp src/seqfile.cpp src/util.cpp)
 target_link_libraries(columba AuxiliaryClasses)
 
+
+
 if(RUN_LENGTH_COMPRESSION)
-    add_executable(columba_build src/logger.cpp src/buildindex.cpp src/bmove/moverepr.cpp src/parameters/buildparameters.cpp)
+    add_executable(columba_build src/logger.cpp src/buildindex.cpp src/bmove/moverepr.cpp src/parameters/buildparameters.cpp src/seqfile.cpp src/util.cpp)
     if(BIG_BWT_USABLE)
         add_definitions(-DBIG_BWT_USABLE)
         # Build the Big-BWT submodule if compression is enabled
@@ -157,28 +206,78 @@ if(RUN_LENGTH_COMPRESSION)
         )
     
 else()
-    add_executable(columba_build src/buildindex.cpp src/logger.cpp src/parameters/buildparameters.cpp )
+    add_executable(columba_build src/buildindex.cpp src/logger.cpp src/parameters/buildparameters.cpp src/seqfile.cpp )
 endif()
 
 # ---- External Dependencies ----
+
+# overwrite the message function to suppress messages if MESSAGE_QUIET is set
+function(message)
+    if (NOT MESSAGE_QUIET)
+        _message(${ARGN})
+    endif()
+endfunction()
+set(MESSAGE_QUIET OFF)
+
+set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1 CACHE INTERNAL "Suppress developer warnings")
+set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
 
 # FetchContent module for including external projects
 include(FetchContent)
 
 # libsais library (added to columba_build)
 
-# Set specific build options for libsais
-message(STATUS "Fetching libsais library")
-set(LIBSAIS_USE_OPENMP OFF CACHE BOOL "Disable OpenMP support in libsais")
-set(LIBSAIS_BUILD_SHARED_LIB OFF CACHE BOOL "Build libsais as a static library")
+if(THIRTY_TWO)
+    # Set specific build options for libsais
+    message(STATUS "Fetching libsais library")
+    set(LIBSAIS_USE_OPENMP OFF CACHE BOOL "Disable OpenMP support in libsais")
+    set(LIBSAIS_BUILD_SHARED_LIB OFF CACHE BOOL "Build libsais as a static library")
 
-FetchContent_Declare(
-  libsais
-  GIT_REPOSITORY https://github.com/IlyaGrebnov/libsais.git
-  GIT_TAG v2.8.3
-)
-FetchContent_MakeAvailable(libsais)
-target_link_libraries(columba_build libsais)
+    FetchContent_Declare(
+    libsais
+    GIT_REPOSITORY https://github.com/IlyaGrebnov/libsais.git
+    GIT_TAG v2.8.5
+    )
+    FetchContent_MakeAvailable(libsais)
+    target_link_libraries(columba_build libsais)
+else()
+    find_package(Git QUIET)
+    # update git submodule libdivsufsort
+    message(STATUS "Updating libdivsufsort submodule")
+    execute_process(COMMAND ${GIT_EXECUTABLE} submodule update --init  external/libdivsufsort
+                    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                    RESULT_VARIABLE GIT_SUBMOD_RESULT)
+    if(NOT GIT_SUBMOD_RESULT EQUAL "0")
+        message(FATAL_ERROR "git submodule update --init failed with ${GIT_SUBMOD_RESULT}, please checkout submodules")
+    endif()
+
+
+    set(BUILD_DIVSUFSORT64 ON CACHE BOOL "Build divsufsort64")
+    set(BUILD_EXAMPLES OFF CACHE BOOL "Build examples")
+   
+
+    
+    set(MESSAGE_QUIET ON)
+    add_subdirectory(external/libdivsufsort)
+    set(MESSAGE_QUIET OFF)
+
+     # If needed, add dependencies to ensure libdivsufsort is built first
+    add_dependencies(columba_build divsufsort64)
+
+
+    # Link against the libdivsufsort library
+    target_link_libraries(columba_build  divsufsort64)
+
+
+    # Specify include directories for the headers that are generated during build
+    # Set the include path to the appropriate build directory where the headers are located
+    target_include_directories(columba_build PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/external/libdivsufsort/include
+    )
+
+   
+
+endif()
 
 # parallel-hashmap library
 message(STATUS "Fetching parallel-hashmap library")
@@ -216,7 +315,22 @@ FetchContent_MakeAvailable(fmtlib)
 target_link_libraries(AuxiliaryClasses fmt::fmt)
 target_link_libraries(columba  fmt::fmt)
 if(RUN_LENGTH_COMPRESSION)
-	target_link_libraries(columba_build fmt::fmt)
+target_link_libraries(columba_build fmt::fmt)
+endif()
+
+
+# Enable IWYU (include-what-you-use) if desired
+option(ENABLE_IWYU "Enable IWYU" OFF)
+if(ENABLE_IWYU)
+    find_program(IWYU_EXECUTABLE NAMES include-what-you-use iwyu)
+    if(IWYU_EXECUTABLE)
+        message(STATUS "Found IWYU: ${IWYU_EXECUTABLE}")
+        set_property(TARGET AuxiliaryClasses PROPERTY CXX_INCLUDE_WHAT_YOU_USE ${IWYU_EXECUTABLE})
+        set_property(TARGET columba PROPERTY CXX_INCLUDE_WHAT_YOU_USE ${IWYU_EXECUTABLE})
+        set_property(TARGET columba_build PROPERTY CXX_INCLUDE_WHAT_YOU_USE ${IWYU_EXECUTABLE})
+    else()
+        message(FATAL_ERROR "IWYU not found. Please install IWYU or disable ENABLE_IWYU.")
+    endif()
 endif()
 
 # ---- Build Configuration ----
@@ -237,6 +351,7 @@ if(ZLIB_FOUND)
     add_definitions(-DHAVE_ZLIB)
     include_directories(${ZLIB_INCLUDE_DIR})
     target_link_libraries(columba ${ZLIB_LIBRARY})
+    target_link_libraries(columba_build ${ZLIB_LIBRARY})
 endif()
 
 # Link Threads package
@@ -247,7 +362,7 @@ target_link_libraries(columba Threads::Threads)
 if(RUN_LENGTH_COMPRESSION)
   # Set the path to your custom FindSDSL.cmake module
     set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
-    find_package(SDSL REQUIRED)
+    find_package(SDSL)
 
     if(SDSL_FOUND)
         message(STATUS "Found SDSL library at ${SDSL_LIBRARY}")
@@ -270,5 +385,4 @@ endif()
 
 # Install targets to the bin directory
 install(TARGETS columba columba_build  DESTINATION bin)
-
 

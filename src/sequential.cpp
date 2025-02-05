@@ -343,5 +343,5 @@ int main(int argc, char* argv[]) {
             params.getMaxOrIdentity(), params.base, params.command);
 
     logger.logInfo("Bye...!");
-    return 1;
+    return 0;
 }

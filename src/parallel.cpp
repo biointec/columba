@@ -73,7 +73,7 @@ void processChunk(vector<ReadBundle>& input, OutputChunk& output,
         std::vector<TextOcc> matches;
         strategy->matchApprox(readBundle, maxEDOrIdentity,
                               output.getMutableCounters(), matches);
-        output.addSingleEndRecord(matches);
+        output.addSingleEndRecord(std::move(matches));
     }
 }
 
@@ -104,8 +104,11 @@ void threadEntrySingleEnd(Reader& myReader, OutputWriter& myWriter,
         myWriter.commitChunk(output);
 
         auto end = chrono::high_resolution_clock::now();
-        chrono::duration<double> elapsed = end - start;
-        myReader.addProcessingTime(elapsed.count());
+        auto elapsed =
+            std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+
+        // Record processing time
+        myReader.addProcessingTime(elapsed);
     }
 
     myWriter.sendTermination(chunkID);
@@ -138,6 +141,7 @@ void processChunkPairedEnd(vector<ReadBundle>& input, OutputChunk& output,
     // from the input vector. We can do this by iterating over the input
     // vector with a step size of 2.
     assert(input.size() % 2 == 0);
+    output.reserve(input.size() / 2);
 
     for (length_t i = 0; i < input.size(); i += 2) {
         ReadPair readPair(input[i], input[i + 1]);
@@ -147,7 +151,8 @@ void processChunkPairedEnd(vector<ReadBundle>& input, OutputChunk& output,
             readPair, maxEDOrIdentity, maxFragSize, minFragSize,
             output.getMutableCounters(), unpairedOccs);
 
-        output.addPairedEndRecord(pairedMatches, unpairedOccs);
+        output.addPairedEndRecord(std::move(pairedMatches),
+                                  std::move(unpairedOccs));
     }
 }
 
@@ -183,8 +188,11 @@ void threadEntryPairedEnd(Reader& myReader, OutputWriter& myWriter,
         myWriter.commitChunk(output);
         output.clear();
         auto end = chrono::high_resolution_clock::now();
-        chrono::duration<double> elapsed = end - start;
-        myReader.addProcessingTime(elapsed.count());
+        auto elapsed =
+            std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+
+        // Record processing time
+        myReader.addProcessingTime(elapsed);
     }
 
     myWriter.sendTermination(chunkID);
@@ -222,6 +230,14 @@ bool hasUnambiguousMatch(const std::vector<TextOcc>& matches) {
     return matches.size() == 1 && matches.front().isValid();
 }
 
+/**
+ * Check if there is only one match in the first file for which the best
+ * distance score is found. If this is the case, swap this match with the first
+ * match in the vector.
+ * @param matches The vector of matches
+ * @param strategy The underlying search strategy to find if the match is in the
+ * first file or not
+ */
 bool hasUnambiguousMatchInFirstFile(
     std::vector<TextOcc>& matches,
     const std::unique_ptr<SearchStrategy>& strategy) {
@@ -287,7 +303,7 @@ void processChunkSingleEndForPairInferring(
         }
 
         // add the matches to the output record
-        output.output.addSingleEndRecord(matches);
+        output.output.addSingleEndRecord(std::move(matches));
 
         // Keep the info of the paired reads together
         if (first) {
@@ -392,11 +408,10 @@ float stddev(std::vector<length_t>& data, float mean) {
  * @param orientations The vector of orientations
  */
 void inferPairedEndParameters(Parameters& params, vector<length_t>& fragSizes,
-                              vector<Orientation>& orientations) {
+                              vector<Orientation>& orientations,
+                              float& meanInsertSize, float& stddevInsertSize) {
     // calculate the mean and standard deviation of the fragment sizes
     // but remove outliers via median absolute deviation
-    float meanInsertSize, stddevInsertSize;
-
     if (fragSizes.empty()) {
         logger.logWarning("No pairs mapped unambiguously. "
                           "Using default values!");
@@ -523,18 +538,18 @@ class InferParametersQueue {
     void unambiguousPairsIncrement() {
         lock_guard<mutex> lock(unambiguousPairsMutex);
         unambiguousPairs++;
+        log();
         if (unambiguousPairs >= PE_NUMBER_PAIRS_FOR_INFERENCE) {
             lock_guard<mutex> lockStop(stopMutex);
             stop = true;
         }
-        log();
     }
 
     /**
      * Add processing time to the reader, such that the input chunk size can
      * change dynamically
      */
-    void addProcessingTime(double time) {
+    void addProcessingTime(std::chrono::microseconds time) {
         myReader.addProcessingTime(time);
     }
 
@@ -557,8 +572,9 @@ class InferParametersQueue {
             return false;
         }
         lock_guard<mutex> lockReadsGiven(readsGivenMutex);
-        readsGiven += input.size();
         log();
+        readsGiven += input.size();
+
         if (readsGiven >= PE_MAX_READS_FOR_INFERENCE) {
             lock_guard<mutex> lockStop(stopMutex);
             stop = true;
@@ -605,11 +621,16 @@ class InferParametersQueue {
      * size) and set it in the Parameters object. Should be called after all
      * worker threads have called addFragmentsAndOrientations.
      * @param params The Parameters object
+     * @param meanInsertSize The mean insert size (output parameter)
+     * @param stddevInsertSize The standard deviation of the insert size (output
+     * parameter)
      *
      */
-    void inferParameters(Parameters& params) {
+    void inferParameters(Parameters& params, float& meanInsertSize,
+                         float& stddevInsertSize) {
         lock_guard<mutex> lock(fragSizesAndOrientationsMutex);
-        inferPairedEndParameters(params, fragSizes, orientations);
+        inferPairedEndParameters(params, fragSizes, orientations,
+                                 meanInsertSize, stddevInsertSize);
     }
 
     /**
@@ -681,8 +702,12 @@ class InferParametersWorker {
                 input, processedChunk, strategy, maxEDOrIdentity, identity);
 
             auto end = chrono::high_resolution_clock::now();
-            chrono::duration<double> elapsed = end - start;
-            queue.addProcessingTime(elapsed.count());
+            auto elapsed =
+                std::chrono::duration_cast<std::chrono::microseconds>(end -
+                                                                      start);
+
+            // Record processing time
+            queue.addProcessingTime(elapsed);
 
             // iterate over the output records and add the fragment sizes if
             // unique pair
@@ -778,14 +803,14 @@ void threadEntryPairedEndAfterInferring(
             auto read2done = inferChunkCurrent.boolsRead2Done[i / 2];
 
             std::vector<TextOcc> unpairedOccs;
-            std::vector<PairedTextOccs> pairedMatches = {};
+            std::vector<PairedTextOccs> pairedMatches = strategy->pairSingleEnd(
+                readPair, *matches1, *matches2, maxFragSize, minFragSize,
+                maxEDOrIdentity, unpairedOccs, output.getMutableCounters(),
+                read2done);
 
-            strategy->pairSingleEnd(readPair, *matches1, *matches2, maxFragSize,
-                                    minFragSize, maxEDOrIdentity, unpairedOccs,
-                                    output.getMutableCounters(), read2done);
-
-            // Add the paired matches and counters to the output chunk
-            output.addPairedEndRecord(pairedMatches, unpairedOccs);
+            // Add the paired matches and unpaired to the output chunk
+            output.addPairedEndRecord(std::move(pairedMatches),
+                                      std::move(unpairedOccs));
         }
         // send chunk to writer
         myWriter.commitChunk(output);
@@ -800,9 +825,37 @@ void threadEntryPairedEndAfterInferring(
  * @brief Logs paired-end parameters.
  *
  * @param params Parameters object containing necessary parameters.
+
  */
 void logPairedEndParameters(const Parameters& params) {
     std::stringstream ss;
+    ss << "Command-line paired-end parameters:\n";
+    ss << "\tMax fragment size: " << params.maxInsertSize << "\n";
+    ss << "\tMin fragment size: " << params.minInsertSize << "\n";
+    ss << "\tOrientation: "
+       << ((params.orientation == FF)
+               ? "FF"
+               : ((params.orientation == FR) ? "FR" : "RF"));
+    logger.logInfo(ss.str());
+}
+
+/**
+ * @brief Logs paired-end parameters.
+ *
+ * @param params Parameters object containing necessary parameters.
+ * @param meanInsertSize Mean detected insert size.
+ * @param stddevInsertSize Standard deviation of mean detected insert size.
+ */
+void logInferredPairedEndParameters(const Parameters& params,
+                                    float meanInsertSize,
+                                    float stddevInsertSize) {
+    std::stringstream ss;
+    ss << "Inferred paired-end parameters:\n";
+    ss << "\tDected Mean fragment size: " << meanInsertSize << "\n";
+    ss << "\tStandard deviation of detected fragment size: " << stddevInsertSize
+       << "\n";
+    ss << "\tAllowing " << PE_STD_DEV_CONSIDERED
+       << " standard deviations from the mean\n";
     ss << "\tMax fragment size: " << params.maxInsertSize << "\n";
     ss << "\tMin fragment size: " << params.minInsertSize << "\n";
     ss << "\tOrientation: "
@@ -852,7 +905,9 @@ void inferParametersAndStartWorkers(Reader& myReader, OutputWriter& myWriter,
              [](InferParametersWorker& w) { w.join(); });
 
     // Infer the parameters
-    queue.inferParameters(params);
+    float meanInsertSize = 0;
+    float stddevInsertSize = 0;
+    queue.inferParameters(params, meanInsertSize, stddevInsertSize);
 
     // set strategy correct again and with inferred orientation
     strategy->setGenerateSAMLines(true);
@@ -869,7 +924,7 @@ void inferParametersAndStartWorkers(Reader& myReader, OutputWriter& myWriter,
     }
 
     // report paired-end parameters
-    logPairedEndParameters(params);
+    logInferredPairedEndParameters(params, meanInsertSize, stddevInsertSize);
 
     // wait for worker threads to finish
     for_each(afterInferringWorkers.begin(), afterInferringWorkers.end(),
@@ -893,6 +948,7 @@ void logAlignmentParameters(const Parameters& params,
     ss << "Aligning with " << strategy->getName() << " strategy\n";
     ss << "\tMapping mode: " << strategy->getMappingModeString() << "\n";
     if (strategy->getMappingModeString() == "BEST") {
+        ss << "\tStrata after best: " << params.strataAfterBest << "\n";
         ss << "\tMin identity: " << params.minIdentity << "\n";
     } else {
         ss << "\tMax distance: " << params.maxDistance << "\n";
@@ -1060,7 +1116,7 @@ std::unique_ptr<OutputWriter> createOutputWriter(const Parameters& params) {
         auto writer = std::make_unique<OutputWriter>(
             params.outputFile, params.base + ".headerSN.bin", params.command,
             params.sMode, params.reorder);
-        writer->start(params.nThreads * 500, params.nThreads);
+        writer->start(max<int>(5, (params.nThreads * 3) / 2), params.nThreads);
         return writer;
     } catch (const std::exception& e) {
         logger.logError("Problem with writing to the output file: " +
@@ -1219,13 +1275,13 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-    std::unique_ptr<Reader> readerPtr = createReader(params);
-    if (!readerPtr) {
+    std::unique_ptr<OutputWriter> writerPtr = createOutputWriter(params);
+    if (!writerPtr) {
         return EXIT_FAILURE;
     }
 
-    std::unique_ptr<OutputWriter> writerPtr = createOutputWriter(params);
-    if (!writerPtr) {
+    std::unique_ptr<Reader> readerPtr = createReader(params);
+    if (!readerPtr) {
         return EXIT_FAILURE;
     }
 

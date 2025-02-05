@@ -44,7 +44,7 @@ void Logger::setLogFile(const string& filename) {
 
 void Logger::logWithTimestamp(const string& level, const string& message,
                               bool stderrBool) {
-    lock_guard<std::mutex> lock(mutex);
+
     auto now = chrono::steady_clock::now();
     auto elapsed = now - startTime;
 
@@ -69,6 +69,7 @@ void Logger::logWithTimestamp(const string& level, const string& message,
     timestamp << setfill('0') << setw(2) << seconds << "." << setfill('0')
               << setw(3) << milliseconds;
 
+    lock_guard<std::mutex> lock(mutex);
     (stderrBool ? std::cerr : *outputStream)
         << "[" << timestamp.str() << "] " << level << "\t" << message
         << std::endl;

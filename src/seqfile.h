@@ -26,7 +26,18 @@
 
 #ifdef HAVE_ZLIB
 #include "zlib.h" // for gzeof, gzgets, gzputc, gzungetc, gzwrite, gzgetc
-#endif
+#ifdef _WIN32
+#include <io.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#define stat _stat64 // Use _stat64 for large files on Windows
+#else
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#endif // _WIN32
+
+#endif // HAVE_ZLIB
 
 // ============================================================================
 // ENUM TYPES
@@ -47,6 +58,7 @@ typedef enum {
 
 std::ostream& operator<<(std::ostream& out, const FileType& fileType);
 
+std::pair<FileType, std::string> getFileType(const std::string& fn);
 // ============================================================================
 // READFILE HANDLER
 // ============================================================================
@@ -63,7 +75,7 @@ class ReadFileHandler {
     /**
      * Virtual destructor for your convenience
      */
-    virtual ~ReadFileHandler() {};
+    virtual ~ReadFileHandler(){};
 
     /**
      * Open a file with a given filename
@@ -118,6 +130,13 @@ class ReadFileHandler {
      * Reset the input file
      */
     virtual void reset() = 0;
+
+    /**
+     * Estimate the size of an ASCII file
+     * @param filename File to estimate
+     * @return Estimated size
+     */
+    virtual size_t estimateASCIISize(const std::string& filename) const = 0;
 };
 
 // ============================================================================
@@ -218,6 +237,38 @@ class RegularReadFileHandler : public ReadFileHandler {
      * Reset the input file
      */
     void reset();
+
+    /**
+     * Estimate the size of an ASCII file
+     * @param filename File to estimate
+     * @return Estimated size
+     */
+    size_t estimateASCIISize(const std::string& filename) const {
+        std::ifstream file(
+            filename,
+            std::ios::binary |
+                std::ios::ate); // Open in binary mode, move to the end
+        if (!file.is_open()) {
+            throw std::runtime_error("Error: Could not open file " +
+                                     filename); // Throw an error if
+                                                // the file couldn't be
+                                                // opened
+            return 0; // Return 0 if the file couldn't be opened
+        }
+
+        std::streampos fileSize = file.tellg(); // Get file size
+
+        if (fileSize == -1) {
+            throw std::runtime_error("Error: Could not open file " +
+                                     filename); // Throw an error if
+                                                // the file couldn't be
+                                                // opened
+            return 0;
+        }
+
+        return static_cast<size_t>(
+            fileSize); // Cast to size_t and return the result
+    }
 };
 
 // ============================================================================
@@ -321,6 +372,32 @@ class GZipReadFileHandler : public ReadFileHandler {
      * Reset the input file
      */
     void reset();
+
+    /**
+     * Estimate the size of an ASCII file
+     * @param filename File to estimate
+     * @return Estimated size
+     */
+    size_t estimateASCIISize(const std::string& filename) const {
+        struct stat st;
+        if (stat(filename.c_str(), &st) != 0) {
+            // If we can't get the file size, return 0 as an error
+            return 0;
+        }
+
+        // Get compressed file size (in bytes)
+        size_t compressedSize = st.st_size;
+
+        // Optimistic compression ratio for safety
+        double compressionRatio = 5.0;
+
+        // Estimate uncompressed size (in bytes, each byte corresponds to an
+        // ASCII character)
+        size_t estimatedUncompressedSize =
+            static_cast<size_t>(compressedSize * compressionRatio);
+
+        return estimatedUncompressedSize;
+    }
 };
 
 #endif
@@ -426,6 +503,10 @@ class SeqFile {
 
     std::string getFileName() const {
         return filename;
+    }
+
+    size_t estimateASCIISize() {
+        return rfHandler->estimateASCIISize(filename);
     }
 };
 

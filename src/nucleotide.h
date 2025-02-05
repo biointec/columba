@@ -96,6 +96,7 @@ class Nucleotide {
     /**
      * Pack n (max 32) nucleotides of a string into a 64 bit uint
      * @param str Input string (at least of size 32)
+     * @param n Number of nucleotides
      * @returns packed 32 bits encoding (byte)
      */
     static uint64_t pack32(const char* str, size_t n = 32) {

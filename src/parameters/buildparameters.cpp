@@ -1,6 +1,8 @@
 #include "buildparameters.h"
 #include "../logger.h"
+#include <array>
 #include <fstream>
+#include <string>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -38,6 +40,13 @@ void BuildParameters::removeFastaExtension(std::string& baseFN) {
             baseFN = baseFN.substr(0, baseFN.size() - ext.size());
             break;
         }
+
+        std::string gzExt = ext + ".gz";
+        if (baseFN.size() >= gzExt.size() &&
+            std::equal(gzExt.rbegin(), gzExt.rend(), baseFN.rbegin())) {
+            baseFN = baseFN.substr(0, baseFN.size() - gzExt.size());
+            break;
+        }
     }
 }
 
@@ -52,11 +61,19 @@ bool BuildParameters::validFastaExtension(std::string& fastaFile) {
     // Check if the extension of the fasta file is valid
 
     size_t lastDot = fastaFile.find_last_of('.');
-
     std::string fastaExtension =
-        (lastDot == std::string::npos)
-            ? ""
-            : fastaFile.substr(fastaFile.find_last_of('.'));
+        (lastDot == std::string::npos) ? "" : fastaFile.substr(lastDot);
+
+#ifdef HAVE_ZLIB
+    if (fastaExtension == ".gz") {
+        // find the extension of the file before the .gz
+        size_t secondToLastDot = fastaFile.find_last_of('.', lastDot - 1);
+        fastaExtension =
+            (secondToLastDot == std::string::npos)
+                ? ""
+                : fastaFile.substr(secondToLastDot, lastDot - secondToLastDot);
+    }
+#endif
 
     if (!fastaExtension.empty()) {
         for (const auto& ext : allowedExtensionsFasta) {
@@ -68,6 +85,16 @@ bool BuildParameters::validFastaExtension(std::string& fastaFile) {
 
     // file has no extension, check if fastaFile  + ext exists
     for (const auto& ext : allowedExtensionsFasta) {
+#ifdef HAVE_ZLIB
+        // Check if .gz variation exists
+        std::ifstream ifsGz(fastaFile + ext + ".gz");
+        if (ifsGz) {
+            logger.logInfo("Detected fasta extension: " + ext + ".gz for " +
+                           fastaFile);
+            fastaFile += ext + ".gz";
+            return true;
+        }
+#endif
         std::ifstream ifs(fastaFile + ext);
         if (ifs) {
             logger.logInfo("Detected fasta extension: " + ext + " for " +
@@ -391,9 +418,15 @@ BuildParameters BuildParameters::parse(int argc, char** argv) {
 
     logger.logInfo("Index base filename: " + params.baseFN);
 
-    // check if the directory of the base filename exists
-    std::string baseDir =
-        params.baseFN.substr(0, params.baseFN.find_last_of('/'));
+    // check if the base filename is in a directory that exists
+    std::string baseDir;
+    std::size_t lastSlashPos =
+        params.baseFN.find_last_of("/\\"); // Check for both '/' and '\'
+
+    if (lastSlashPos != std::string::npos) {
+        baseDir = params.baseFN.substr(0, lastSlashPos);
+    }
+
     if (!baseDir.empty()) {
         if (!directoryExists(baseDir)) {
             logger.logError(

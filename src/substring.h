@@ -45,19 +45,11 @@ class Substring {
     AccessorFunc accessor;
 
     /**
-     * Accessor if the direction is forward
-     * @param i the index of the character to get
-     */
-    char forwardAccessor(length_t i) const {
-        return (*text)[startIndex + i];
-    }
-
-    /**
      * Accessor if the direction is backward
      * @param i the index of the character to get
      */
-    char reverseAccessor(length_t i) const {
-        return (*text)[endIndex - i - 1];
+    inline char reverseAccessor(length_t i) const {
+        return *(text->data() + endIndex - i - 1);
     }
 
   public:
@@ -165,6 +157,14 @@ class Substring {
     }
 
     /**
+     * Accessor if the direction is forward
+     * @param i the index of the character to get
+     */
+    inline char forwardAccessor(length_t i) const {
+        return *(text->data() + startIndex + i);
+    }
+
+    /**
      * Get the direction of this substring
      */
     Direction getDirection() const {
@@ -172,7 +172,9 @@ class Substring {
     }
 
     /**
-     * Get the character at index i of this substring
+     * Get the character at index i of this substring. Only use this if it is
+     * unsure if the direction will be backwards of forwards. If direction is
+     * known, directly use accessors.
      * @param i the index to get the character from
      * @returns the character at index i
      */
@@ -278,7 +280,6 @@ class Substring {
         return false;
     }
 
-
     /**
      * @brief Checks if this substring equals a given string
      * @param s the string to compare to
@@ -293,7 +294,12 @@ class Substring {
                 return false;
             }
         }
-        return true;}
+        return true;
+    }
+
+    const std::string& getText() const {
+        return *text;
+    }
 };
 
 #endif

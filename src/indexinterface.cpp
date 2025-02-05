@@ -69,7 +69,7 @@ thread_local PairStatus IndexInterface::pairStatus = FIRST_IN_PAIR;
 // ----------------------------------------------------------------------------
 
 void IndexInterface::readMetaAndCounts(const string& baseFile, bool verbose) {
-
+    logger.logDeveloper("Reading meta and counts");
     // Open the meta file
     ifstream ifs(baseFile + ".meta");
     if (ifs) {
@@ -285,6 +285,13 @@ bool IndexInterface::readArray(const string& filename,
 }
 
 void IndexInterface::populateTable(bool verbose) {
+    if (wordSize == 0) {
+        // table only needs to store full range for empty string
+        Kmer::setWordSize(0);
+        Kmer kmer("");
+        table.insert(make_pair(kmer, getCompleteRange()));
+        return;
+    }
     if (verbose) {
         stringstream ss;
         ss << "Populating FM-range table with " << wordSize << "-mers...";
@@ -394,15 +401,15 @@ void IndexInterface::recApproxMatchEdit(
     setDirection(dir, s.isUnidirectionalBackwards(idx));
 
     // calculate necessary increase for first column of bandMatrix
-    vector<uint16_t> initED;
+    vector<uint32_t> initED;
     if (initEds.empty()) {
-        initED = vector<uint16_t>(1, startMatch.getDistance());
+        initED = vector<uint32_t>(1, startMatch.getDistance());
     } else {
         uint16_t prevED =
             (dSwitch ? *min_element(initEds.begin(), initEds.end())
                      : initEds[0]);
-        uint16_t increase = startMatch.getDistance() - prevED;
-        initED = vector<uint16_t>(initEds.size());
+        uint32_t increase = startMatch.getDistance() - prevED;
+        initED = vector<uint32_t>(initEds.size());
         for (size_t i = 0; i < initED.size(); i++) {
             initED[i] = initEds[i] + increase;
         }
@@ -625,7 +632,7 @@ void IndexInterface::extendFMPos(const SARangePair& parentRanges,
                                  vector<FMPosExt>& stack, Counters& counters,
                                  length_t row) const {
     // iterate over the entire alphabet
-    for (length_t i = 1; i < sigma.size(); i++) {
+    for (length_t i = 1; i < sigma.size(); ++i) {
 
         SARangePair pairForNewChar;
 
@@ -1134,7 +1141,7 @@ vector<TextOcc> IndexInterface::getUniqueTextOccurrences(
             false;
 #endif
 
-        std::string CIGARstring = "*";
+        std::string CIGARstring;
         auto depth = f.getDepth(), distance = f.getDistance();
         length_t shift = f.getShift();
 

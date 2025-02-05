@@ -150,8 +150,11 @@ class Option {
      * invalid configuration.
      * @return the message to print when the option is ignored
      */
-    std::string ignoreMessage() const {
-        return "Ignoring -" + shortOpt + "/--" + longOpt + " option";
+    std::string ignoreMessage(const std::string& arg = "") const {
+        std::string extra = "";
+        if (arg.size() > 0)
+            extra = " with argument \"" + arg + "\"";
+        return "Ignoring -" + shortOpt + "/--" + longOpt + " option" + extra;
     }
 
     /**
@@ -294,11 +297,14 @@ struct ParametersInterface {
     virtual ~ParametersInterface() = default;
     static void printHeader(); ///< Print the header of the program help
     static void printFooter() {
-        std::cout << "Report bugs to " <<
+        std::cout << "Report bugs to "
+                  <<
 #ifdef RUN_LENGTH_COMPRESSION
-            "lore.depuydt" <<
+            "lore.depuydt"
+                  <<
 #else
-            "luca.renders" <<
+            "luca.renders"
+                  <<
 #endif
             "@ugent.be" << std::endl;
     }

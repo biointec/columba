@@ -75,7 +75,7 @@ void BitParallelED<WordType>::setSequence(const Substring& X) {
 
 template <typename WordType>
 void BitParallelED<WordType>::initializeMatrix(
-    uint16_t maxED, const std::vector<uint16_t>& initED) {
+    uint32_t maxED, const std::vector<uint32_t>& initED) {
     // make sure maxED is within supported range
     assert(maxED <= MATRIX_MAX_ED);
     assert(sequenceSet());
@@ -108,7 +108,8 @@ void BitParallelED<WordType>::initializeMatrix(
     bv[0].HN = ~bv[0].HP;
 
     // correct top row if initED has been specified
-    for (uint16_t i = 1; i < std::min<uint16_t>(initED.size(), LEFT + 1); i++) {
+    const size_t n = std::min<size_t>(initED.size(), LEFT + 1);
+    for (uint32_t i = 1; i < n; ++i) {
         if (initED[i] < initED[i - 1]) {
             bv[0].HP ^= WordType(1) << (LEFT - i); // set HP to 1
             bv[0].HN ^= WordType(1) << (LEFT - i); // set HN to 0
@@ -122,39 +123,27 @@ void BitParallelED<WordType>::initializeMatrix(
 }
 
 template <typename WordType>
-void BitParallelED<WordType>::printMatrix(uint16_t maxRow) const {
-    for (uint16_t i = 0; i < std::min<uint16_t>(maxRow + 1, m); i++) {
+void BitParallelED<WordType>::printMatrix(uint32_t maxRow) const {
+    for (uint32_t i = 0; i < std::min<uint32_t>(maxRow + 1, m); i++) {
 
-        uint16_t firstCol = getFirstColumn(i);
-        uint16_t lastCol = getLastColumn(i);
+        uint32_t firstCol = getFirstColumn(i);
+        uint32_t lastCol = getLastColumn(i);
         std::stringstream s;
         s << (i < 10 ? "0" : "") << std::to_string(i);
         s << " [" << getFirstColumn(i) << "," << getLastColumn(i) << "]\t";
-        for (uint16_t j = 0; j < firstCol; j++)
+        for (uint32_t j = 0; j < firstCol; j++)
             s << "  ";
-        for (uint16_t j = firstCol; j <= lastCol; j++)
+        for (uint32_t j = firstCol; j <= lastCol; j++)
             s << operator()(i, j) << " ";
         s << "\tRAC:" << -(int)Wv + (int)i << "/"
           << std::log2(bv[i].RAC) - DIAG_R0;
         s << (onlyVerticalGapsLeft(i) ? " - true" : " - false");
-        uint16_t minScore, minJ;
+        uint32_t minScore, minJ;
         findMinimumAtRow(i, minJ, minScore);
         s << "  Min: " << minScore << "@" << minJ;
         s << " FC: " << (inFinalColumn(i) ? " true" : " false");
         logger.logDeveloper(s);
     }
-}
-template <> int BitParallelED<uint64_t>::popcount(uint64_t x) {
-    return __builtin_popcountll(x);
-}
-template <> int BitParallelED<UInt128>::popcount(UInt128 x) {
-#if HAS_UINT128_T
-    uint64_t high = x >> 64; // Extract the high 64 bits
-    uint64_t low = x; // Implicitly cast to uint64_t, so extract the low 64 bits
-    return __builtin_popcountll(high) + __builtin_popcountll(low);
-#else
-    return x.popcount();
-#endif // HAS_UINT128_T
 }
 
 template class BitParallelED<uint64_t>;

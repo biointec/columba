@@ -27,9 +27,9 @@
 // DEFINITIONS OF CONSTANTS
 // ============================================================================
 
-#define VERSION_NUMBER_COLUMBA 2     // The version number of Columba
-#define SUB_VERSION_NUMBER_COLUMBA 0 // The sub version number of Columba
-#define COLUMBA_BUILD_INDEX_TAG 1   // the tag for building the index
+#define VERSION_NUMBER_COLUMBA 1     // The version number of Columba
+#define SUB_VERSION_NUMBER_COLUMBA 3 // The sub version number of Columba
+#define COLUMBA_BUILD_INDEX_TAG 21   // the tag for building the index
 #ifndef RUN_LENGTH_COMPRESSION
 #define COLUMBA_FLAVOUR "VANILLA" // the flavour of Columba (vanilla)
 #define DEFAULT_SEED_LENGTH 0     // The default seed length for the FM-index

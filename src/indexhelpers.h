@@ -127,11 +127,6 @@ class Range {
     friend std::ostream& operator<<(std::ostream& os, const Range& r);
 };
 
-/**
- * Operator overloading. Outputs the range as [begin, end) to the output stream
- * @param output The output stream.
- * @param r The range to print.
- */
 std::ostream& operator<<(std::ostream& output, const Range& r);
 
 #ifdef RUN_LENGTH_COMPRESSION
@@ -419,7 +414,7 @@ class TextOcc {
      * @param seqNames the vector with all sequence names
      */
     std::string asXA(const std::vector<std::string>& seqNames) const {
-        std::string sign = (isRevCompl()) ? "-" : "+";
+        char sign = (isRevCompl()) ? '-' : '+';
         return fmt::format("{},{}{},{},{};", seqNames[assignedSequenceID], sign,
                            range.getBegin() + 1, // SAM is 1-based
                            stringCIGAR, distance);
@@ -1379,7 +1374,7 @@ class FMOcc {
      * equal
      * @returns true if this is equal to rhs
      */
-    bool operator==(const FMOcc& rhs) {
+    bool operator==(const FMOcc& rhs) const {
         return getRanges() == rhs.getRanges() &&
                distance == rhs.getDistance() && getDepth() == rhs.getDepth() &&
                getShift() == rhs.getShift() && isRevCompl() == rhs.isRevCompl();

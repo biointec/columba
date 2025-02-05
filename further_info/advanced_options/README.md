@@ -4,6 +4,7 @@ This README provides detailed instructions for advanced users who want to custom
 It explains how to adjust key parameters such as sparseness factors, k-mer sizes, and in-text verification settings.
 The guide also covers how to create and integrate custom search schemes, including file structure requirements, validation steps, and static and dynamic partitioning strategies.
 Additionally, it explains how to manage dynamic selection using multiple search schemes, with examples of folder structures and configurations for optimal use of Columba’s search capabilities.
+Finally, this guide introduces the optional $\phi$ move tables, a performance optimization available for the RLC flavor, explaining when and how to enable them for improved alignment performance.
 
 ## Adjusting Parameters
 
@@ -14,20 +15,22 @@ If you have chosen a particularly large sparseness factor, then it might be a go
 If the length of your reads divided by the maximum number of errors +1 is nearly 10 it is a good idea to use a smaller value for the `-K` flag.
 
 ```console
-  -s, --sa-sparseness     INT   Sparseness factor to use. Should be an integer in 2^[0, 8]. Default
-                                is 4. The suffix array with this sparseness factor must have been
-                                constructed. (only in Vanilla)
-  -i, --in-text           INT   In-text verification switch point. Should be a positive integer.
-                                Default is 5. (only in Vanilla)
-  -K, --kmer-size         INT   The size of k-mers in the hash table (used as seeds during
-                                partitioning). Default is 10.
-  -S, --search-scheme     STR   Search scheme to use. Options are: kuch1, kuch2, kianfar, pigeon,
-                                01*0, custom, naive, multiple, minU, columba. Default is columba.
-  -c, --custom            STR   Path to custom search scheme (overrides default search scheme).
-  -d, --dynamic-selection STR   Path to custom search scheme with dynamic selection (overrides
-                                default search scheme).
-  -p, --partitioning      STR   Partitioning strategy to use. Options are: uniform, static, dynamic.
-                                Default is dynamic.
+  -p, --partitioning          STR   Partitioning strategy to use. Options are: uniform, static,
+                                    dynamic. Default is dynamic.
+  -K, --kmer-size             INT   The size of k-mers in the hash table (used as seeds during
+                                    partitioning). Default is 10.
+  -S, --search-scheme         STR   Search scheme to use. Options are: kuch1, kuch2, kianfar,
+                                    pigeon, 01*0, custom, naive, multiple, minU, columba. Default is
+                                    columba.
+  -c, --custom                STR   Path to custom search scheme (overrides default search scheme).
+  -nD, --no-dynamic-selection       Do not use dynamic selection with custom search scheme.
+  -d, --dynamic-selection     STR   Path to custom search scheme with dynamic selection (overrides
+                                    default search scheme).
+  -i, --in-text               INT   In-text verification switch point. Should be a positive integer.
+                                    Default is 5.
+  -s, --sa-sparseness         INT   Sparseness factor to use. Should be an integer in 2^[0, 8].
+                                    Default is 4. The suffix array with this sparseness factor must
+                                    have been constructed.
 ```
 
 ## Custom search schemes
@@ -40,18 +43,20 @@ In the [search_schemes](./search_schemes/) folder, several example search scheme
 To make a custom search scheme you need to create a folder containing at least a file called `name.txt`, which contains the name of your search scheme on the first line.
 For every maximum edit/hamming distance a subfolder should be present, which contains at least the file `searches.txt`.
 In this file, the searches of your scheme are written line by line.
-Each line contains three space-separated arrays: pi, L and U.
+Each line contains three space-separated arrays: $\pi$, L and U.
 Each array is written between curly braces {} and the values are comma-separated.
 
 ---
 `Note`
 
-The pi array should be zero-based! The connectivity property should always be satisfied.
+The $\pi$ array should be zero-based! The connectivity property should always be satisfied.
 The L and U arrays cannot decrease.
 All error distributions should be covered!
-To check if your search scheme is valid you can use a Python script provided [in this directory](./validitychecker/).
+To check if your search scheme is valid you can use a Python script provided [in this directory](../../validitychecker/).
 
 ---
+
+By default dynamic selection between the provided custom search scheme and its symmetric variant (reverse mapping the $\pi$-arrays) is performed. You can turn this off by using the `-nD` flag.
 
 ### Static Partitioning
 
@@ -123,3 +128,30 @@ The folder structure then should look like this:
 ### More examples
 
 You can find more examples in [this directory](../../search_schemes/multiple_opt/).
+
+## PHIMOVE Compiler Option (for RLC Flavor Only)
+
+The `PHIMOVE` compiler option enables the use of $\phi$ move tables, a performance optimization for the RLC flavor. These move tables are similar to the LF move tables, which are always used in RLC. While $\phi$ move tables require slightly more memory, they can improve alignment performance, particularly when many occurrences are expected to be found.  
+
+This option is **only applicable for the RLC flavor**.  
+
+By default, `PHIMOVE` is **disabled**. If you would like to enable it for the RLC flavor, simply add the `PHIMOVE` flag as shown below:  
+
+```bash
+bash build_script.sh RLC 64 PHIMOVE
+```  
+
+or  
+
+```bash
+bash build_script.sh RLC 32 PHIMOVE
+```  
+
+Alternatively, you can enable $\phi$ move tables when compiling the code directly by adding the `-DPHI_MOVE=ON` flag to CMake:  
+
+```bash
+cmake -DRUN_LENGTH_COMPRESSION=ON -DPHI_MOVE=ON ..
+```  
+
+If you try to use the `PHIMOVE` flag with the Vanilla flavor, it will be ignored with a warning because $\phi$ move tables are exclusively designed for the RLC flavor.
+

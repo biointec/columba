@@ -33,48 +33,8 @@
 #include <ratio>                    // for ratio
 #include <stdexcept>                // for runtime_error
 #include <tuple>                    // for tie, tuple
-#include <unordered_map>            // for unordered_map
 
 using namespace std;
-
-// ============================================================================
-// AUXILIARY ROUTINE
-// ============================================================================
-
-pair<FileType, string> getFileType(const string& fn) {
-    // Map of extensions to file types
-    static const unordered_map<string, FileType> extensionMap = {
-        {".fa", FileType::FASTA},          {".fna", FileType::FASTA},
-        {".fasta", FileType::FASTA},       {".fa.gz", FileType::FASTA_GZ},
-        {".fna.gz", FileType::FASTA_GZ},   {".fasta.gz", FileType::FASTA_GZ},
-        {".fq", FileType::FASTQ},          {".fastq", FileType::FASTQ},
-        {".fnq", FileType::FASTQ},         {".fq.gz", FileType::FASTQ_GZ},
-        {".fastq.gz", FileType::FASTQ_GZ}, {".fnq.gz", FileType::FASTQ_GZ}};
-
-    // Convert the filename to lowercase
-    string lowerFn = fn;
-    transform(lowerFn.begin(), lowerFn.end(), lowerFn.begin(), ::tolower);
-
-    for (unordered_map<string, FileType>::const_iterator it =
-             extensionMap.begin();
-         it != extensionMap.end(); ++it) {
-        const auto& extension = it->first;
-        const auto& type = it->second;
-
-        // Check if the filename ends with the current extension
-        if (lowerFn.size() >= extension.size() &&
-            lowerFn.compare(lowerFn.size() - extension.size(), extension.size(),
-                            extension) == 0) {
-            // Extract the basename by removing the extension
-            string basename = fn.substr(0, fn.size() - extension.size());
-            return make_pair(type, basename);
-        }
-    }
-
-    // If no matching extension is found, return UNKNOWN file type with the
-    // original filename
-    return make_pair(FileType::UNKNOWN_FT, fn);
-}
 
 // ============================================================================
 // FASTQ RECORD
@@ -299,8 +259,8 @@ void Reader::readerThread() {
     if (pairedEnd)
         file2.open(filename2);
 
-    // recheck the chunksize every 10 blocks
-    const size_t checkPoint = 10;
+    // recheck the chunksize every 8 blocks to start
+    size_t checkPoint = 8;
     size_t blockCounter = 0;
 
     while (file1.good()) {
@@ -329,46 +289,52 @@ void Reader::readerThread() {
         // C) push the record block onto the worker queue
         unique_lock<mutex> workLock(workMutex);
         workBlocks.push_back(std::move(block));
-
-        // notify workers that more work is available
+        workLock.unlock();
         workReady.notify_all();
 
         // D) check if recalculation of target chunk size is necessary
         blockCounter++;
-        if (blockCounter >= checkPoint && !processingTimes.empty()) {
-            // activate mutex
-            unique_lock<mutex> processingLock(processMutex);
-            // Calculate average processing time with lambda
+        if (blockCounter >= checkPoint) {
+            // Acquire the processing time mutex
+            unique_lock<mutex> processLock(processMutex);
 
-            double averageProcessingTime =
-                accumulate(processingTimes.begin(), processingTimes.end(),
-                           0.0) /
-                processingTimes.size();
+            if (!processingTimes.empty()) {
+                std::chrono::microseconds averageProcessingTime =
+                    accumulate(processingTimes.begin(), processingTimes.end(),
+                               std::chrono::microseconds(0)) /
+                    processingTimes.size();
 
-            // check if the value should change
-            bool change = false;
-            auto prevSize = targetChunkSize;
-            if (averageProcessingTime < lowEndProcessingTime ||
-                averageProcessingTime > highEndProcessingTime) {
-                // Calculate the desired targetChunkSize
-                targetChunkSize *= (midProcessingTime / averageProcessingTime);
-                targetChunkSize = std::max(targetChunkSize,
-                                           static_cast<size_t>(1)); // clip to 1
+                // Determine if we need to adjust based on processing times
+                bool change = false;
+                auto prevSize = targetChunkSize;
 
-                // Ensure targetChunkSize is a multiple of 64
-                targetChunkSize = ((targetChunkSize + 63) / 64) * 64;
-                targetBlockSize = targetChunkSize * numberOfWorkerThreads;
+                if (averageProcessingTime < lowEndProcessingTime ||
+                    averageProcessingTime > highEndProcessingTime) {
+                    int multFactor =
+                        (midProcessingTime / averageProcessingTime);
+                    targetChunkSize *= multFactor;
+                    targetChunkSize = (targetChunkSize / 64) * 64;
+                    targetChunkSize =
+                        max(targetChunkSize, 1ul); // Ensure it's at least 1
+                    targetBlockSize = targetChunkSize * numberOfWorkerThreads;
+                    change = targetChunkSize != prevSize;
+                }
 
-                change = targetChunkSize != prevSize;
+                // Adjust checkpoint size based on processing times
+                if (change) {
+                    checkPoint = 8; // Reset checkpoint if there was a change
+                    logger.logDeveloper(
+                        "New target chunk size based on processing time: " +
+                        to_string(targetChunkSize));
+                } else if (checkPoint < 1024) {
+                    checkPoint *= 2; // Increase checkpoint size
+                    logger.logDeveloper("Check point increased to: " +
+                                        to_string(checkPoint));
+                }
             }
 
-            processingTimes.clear();
-            processingLock.unlock();
-            if (change) {
-                logger.logDeveloper("New target chunk size: " +
-                                    to_string(targetChunkSize));
-            }
-            blockCounter = 0;
+            processingTimes.clear(); // Clear processing times
+            blockCounter = 0;        // Reset block counter after processing
         }
     }
 
@@ -379,8 +345,8 @@ void Reader::readerThread() {
     // send a termination message to the workers
     unique_lock<mutex> workLock(workMutex);
     workBlocks.push_back(ReadBlock()); // empty block == termination
-    workLock.unlock();
     workReady.notify_all();
+    workLock.unlock();
 
     logger.logDeveloper("Reader thread finished");
 }
@@ -408,8 +374,8 @@ bool Reader::getNextChunk(vector<ReadBundle>& chunk, size_t& chunkID) {
 
         unique_lock<mutex> inputLock(inputMutex);
         inputBlocks.push_back(std::move(tmp));
-        inputLock.unlock();
         inputReady.notify_one();
+        inputLock.unlock();
     }
 
     assert(!chunk.empty());
@@ -420,6 +386,7 @@ void Reader::startReaderThread(size_t targetChunkSize, size_t numWorkThreads) {
     this->targetChunkSize = targetChunkSize;
     this->numberOfWorkerThreads = numWorkThreads;
     this->targetBlockSize = targetChunkSize * numWorkThreads;
+
     chunkID = 0;
 
     // initialize (empty) blocks on the input stack
@@ -506,9 +473,13 @@ void OutputWriter::commitChunk(OutputChunk& chunk) {
     // move chunk into map
     outputChunks[chunkID] = std::move(chunk);
 
+    bool wasEmpty = outputChunks.size() == 1;
+    bool wasNext = chunkID == nextChunkID;
+
+    outputLock.unlock();
+
     // signal the output thread if necessary
-    if ((!reorder && outputChunks.size() == 1) || chunkID == nextChunkID) {
-        outputLock.unlock();
+    if ((!reorder && wasEmpty) || wasNext) {
         outputReady.notify_one();
     }
 }
@@ -597,8 +568,8 @@ void OutputWriter::writerThread() {
             chunk = std::move(outputChunks.begin()->second);
             outputChunks.erase(outputChunks.begin());
             nextChunkID++; // not necessary if !reorder but does not matter
-            outputLock.unlock();
             outputSpace.notify_all();
+            outputLock.unlock();
         }
 
         // check for termination message
@@ -629,7 +600,7 @@ void OutputWriter::writerThread() {
 
                 // write the occurrences  to file
                 for (const auto& match : *record.outputOcc) {
-                    writeSeq.writeLine(match.getOutputLine() + "\n");
+                    writeSeq.writeLine(match.getOutputLine());
                 }
 
             } else {
@@ -663,17 +634,16 @@ void OutputWriter::writerThread() {
                 // write the pairs to file
                 bool firstWrite = true;
                 for (const auto& pair : *pairedOccs) {
-                    writeSeq.writeLine(pair.getUpStream().getOutputLine() +
-                                       "\n");
+                    writeSeq.writeLine(pair.getUpStream().getOutputLine());
                     if (!mappedHalf || firstWrite) {
                         writeSeq.writeLine(
-                            pair.getDownStream().getOutputLine() + "\n");
+                            pair.getDownStream().getOutputLine());
                     }
                     firstWrite = false;
                 }
                 // then write unpaired occurrences to file
                 for (const auto& match : *unpairedOccs) {
-                    writeSeq.writeLine(match.getOutputLine() + "\n");
+                    writeSeq.writeLine(match.getOutputLine());
                 }
             }
 
@@ -701,8 +671,8 @@ void OutputWriter::sendTermination(size_t chunkID) {
     terminationMessagesSent++;
 
     // signal the output thread if necessary
-    if (chunkID == nextChunkID) {
-        outputLock.unlock();
+    if (!reorder || chunkID == nextChunkID) {
+
         outputReady.notify_one();
     }
 

@@ -10,14 +10,15 @@ Finally, [contact information](#contact) and [license details](#license-and-depe
 ## Key features and benefits
 
 - Columba is a **lossless** read-mapper, meaning that **all** occurrences up to the provided distance or **all-best** occurrences with the minimum identity are found. Both the edit distance and the hamming distance are supported.
+- Columba comes in two flavors: Vanilla and RLC. Vanilla is based on the bidirectional FM Index and is faster. RLC is based on the b-move structure and is optimized for memory usage by run-length-compressing the index.
+- Columba is **fast**, outperforming other lossless aligners, thanks to all kinds of algorithmic tricks like an interleaved bit-vector representation and redundancy avoidance for the edit distance metric.
+- Columba outputs to either SAM format or a custom read hit summary if the position in the genome is not relevant.Gzipped variations are supported.
+- Columba Vanilla is supported on both Unix and Windows systems!
+- Multi-threading and paired-end alignment are supported out of the box.
 - Columba can handle any valid search scheme, so if new search schemes are discovered no update is needed. See [custom search schemes](./further_info/advanced_options/README.md#custom-search-schemes) below.
 - Columba supports a dynamic selection of search schemes, where the search scheme best suited for the current read and reference text is chosen, resulting in faster runtimes!
 - Columba supports dynamic partitioning of the read, boosting the performance!
-- Columba comes in two flavors: Vanilla and RLC. Vanilla is based on the bidirectional FM Index and is faster. RLC is based on the b-move structure and is optimized for memory usage by run-length-compressing the index.
 - Columba Vanilla comes with tunable in-text verification, which improves runtimes significantly. More info [here](#advanced-options).
-- Columba is **fast**, outperforming other lossless aligners, thanks to all kinds of algorithmic tricks like an interleaved bit-vector representation and redundancy avoidance for the edit distance metric.
-- Columba outputs to either SAM format or a custom read hit summary (or a gzipped variation) if the position in the genome is not relevant.
-- Columba Vanilla is supported on both Unix and Windows systems!
 
 ## Choosing the Right Columba Flavor
 
@@ -25,8 +26,8 @@ When selecting the appropriate Columba flavor for your needs, consider the follo
 
 - **Operating System Compatibility**: If you are using a Windows system, Columba Vanilla is your only option.
 - **Memory and Reference Text Considerations**:
-  - *Columba Vanilla* loads the entire reference text (or combined reference texts) and the full FM Index into memory. It offers superior speed, making it ideal if memory usage is not a concern or if your reference text is not too large. Loading the reference text allows for the calculation of CIGAR strings.
-  - *Columba RLC*, however, employs a run-length compressed index and does not require loading the reference text into memory. This makes it a better choice for handling large pan-genomes or when memory is limited but it comes with slower execution time and no calculation of CIGAR strings.
+  - _Columba Vanilla_ loads the entire reference text (or combined reference texts) and the full FM Index into memory. It offers superior speed, making it ideal if memory usage is not a concern or if your reference text is not too large. Loading the reference text allows for the calculation of CIGAR strings.
+  - _Columba RLC_, however, employs a run-length compressed index and does not require loading the reference text into memory. This makes it a better choice for handling large pan-genomes or when memory is limited but it comes with slower execution time and no calculation of CIGAR strings.
 - **Accuracy**: Columba RLC does not perform in-text verification, which may lead to an overestimation of the edit distance at the edge of certain reference sequences in rare cases.
 
 ## Installation
@@ -43,11 +44,14 @@ It is recommended that you also install CMake and Ninja via MSYS2.
 
 **Note for Windows users:** Do not use the mingw64 compiler as long as [this bug](https://github.com/msys2/MINGW-packages/issues/2519) related to thread_local variables is not fixed. Using this compiler will result in a segmentation fault when the processing threads are destroyed.
 
+To make use of gzipped files, ensure that you have the [`zlib` library](https://zlib.net/) installed.
+
 #### Extra Prerequisite RLC
 
-Columba RLC needs the [SDSL library](https://github.com/simongog/sdsl-lite).
+Columba RLC needs the [SDSL-lite library](https://github.com/simongog/sdsl-lite).
 You can follow their install instructions to install it on your system.
-If you have installed SDSL to a non-standard location, you can point CMake to the installation location by adding `-DSDSL_INCLUDE_DIR=<path-to-sdsl>/` and `-DSDSL_LIBRARY=<path-to-sdsl-lib>` to the CMake command.
+
+**WARNING** SDSL-lite installs a version of google test that might be incompatible (see [issue](https://github.com/simongog/sdsl-lite/issues/458)). You can safely delete the google test files added by SDSL in the lib/ (libgtest.a and libgtest_main.a) and include/ (gtest/) directories.
 
 ### Installing Columba Vanilla
 
@@ -58,35 +62,56 @@ The installation is now simple. First, clone Columba from the GitHub address and
     git checkout columba-2.0-beta
 ```
 
-From this directory, run the following commands to install Columba:
+From this directory, run the following commands to install Columba Vanilla:
+
+For Unix-like systems (Linux, macOS):
+
+```bash
+bash build_script.sh Vanilla
+```
+
+This will install the executables in `build_Vanilla`.
+
+For Windows:
 
 ```bash
 mkdir build
 cd build
 cmake ..
-```
-
-For Unix-like systems (Linux, macOS):
-
-```bash
-make
-```
-
-For Windows:
-
-```bash
 ninja
+```
+
+Users of Unix-like systems can also opt to use `cmake` and `make` commands like:
+
+```bash
+mkdir build
+cd build
+cmake ..
+make
 ```
 
 ### Installing Columba RLC
 
-The installation for Columba RLC is completely analogous to Columba Vanilla ([provided SDSL is already installed](#extra-prerequisite-rlc)). The only difference is that you must add `-DRUN_LENGTH_COMPRESSION=ON`to the CMake command.
+The installation for Columba RLC is completely analogous to Columba Vanilla ([provided SDSL is already installed](#extra-prerequisite-rlc)).
+
+For Unix-like systems.
+
+```bash
+bash build_script.sh RLC
+```
+
+For users that work directly with CMake, the only difference is that you must add `-DRUN_LENGTH_COMPRESSION=ON` to the CMake command.
+However, currently Columba RLC is not compatible with Windows as it requires SDSL.
+
+If you have installed SDSL to a non-standard location, you can point CMake to the installation location by adding `-DSDSL_INCLUDE_DIR=<path-to-sdsl>/` and `-DSDSL_LIBRARY=<path-to-sdsl-lib>` to the CMake command.
+
+Currently, the build script does allow you to set the SDSL CMake installation directory.
 
 ### Installing Both Flavors
 
 We provide a script that installs both flavors to two separate directories.
-To do this, you must first clone the repository, as detailed above, and then, from the top directory in the repository run `bash buildbothversions.sh`.
-This will install columba and columba_build in directories build_vanilla and build_rlc.
+To do this, you must first clone the repository, as detailed above, and then, from the top directory in the repository run `bash build_both_flavors_default.sh`.
+This will install columba and columba_build in directories build_Vanilla and build_RLC.
 
 ### Compiler options
 
@@ -95,18 +120,22 @@ This will install columba and columba_build in directories build_vanilla and bui
 By default, Columba Vanilla uses 32-bit integers for the suffix array and positions in the text.
 However, if your reference genome (or concatenation of genomes) is longer than 4.29 billion characters this will no longer fit.
 In that case, you need to let the compiler know that you want 64-bit integers.
-You can do this by changing your CMake command.
+You can do this by using:
 
 ```bash
-mkdir build
-cd build
-cmake -DTHIRTY_TWO=OFF ..
+bash build_script.sh Vanilla 64
 ```
+For users who work directly with CMake by adding `-DTHIRTY_TWO=OFF`to the `cmake` command.
 
-Followed by `make` or `ninja`.
 
 Columba RLC uses 64-bit integers by default.
-You can turn this off by adding `-DTHIRTY_TWO=ON`to the CMake command.
+Similarly, you can opt to use 32-bit integers by using:
+
+```bash
+bash build_script.sh RLC 32
+```
+
+For users who work directly with CMake, you can do this by adding `-DTHIRTY_TWO=ON`to the CMake command.
 
 ---
 
@@ -119,7 +148,7 @@ If your input data has other characters they will be replaced by a random charac
 
 ### Building the index
 
-To build the bidirectional FM-index from your reference genome (or collection of genomes), you need FASTA files, where each sequence has a unique identifier.
+To build the bidirectional FM-index from your reference genome (or collection of genomes), you need FASTA files (or gzipped (.gz) variations thereof), where each sequence has a unique identifier.
 You can use more than one FASTA file, but the identifiers must be unique over all files.
 To build the index use this command from the directory where you built Columba (normally this is the build/ directory):
 
@@ -127,14 +156,13 @@ To build the index use this command from the directory where you built Columba (
 ./columba_build -r <reference_base_name> -f <list_of_FASTA_files>
 ```
 
-or 
+or
 
 ```bash
 ./columba_build -r <reference_base_name> -F <file_with_paths>
 ```
 
-where `<list_of_FASTA_files>` is a space separated list of FASTA input files, `<reference_base_name>` is the basename of the index files to write and `<file_with_paths>` is a text file where each line is a path to a FASTA input file.
-Note that you can also combine the `-f` and `-F` flags.
+where `<list_of_FASTA_files>` is a space separated list of FASTA input files, `<reference_base_name>` is the basename of the index files to write and `<file_with_paths>` is a text file where each line is a path to a FASTA input file.`Note that you can also combine the`-f`and`-F` flags.
 
 **Warning** All paths cannot contain any spaces!
 
@@ -157,6 +185,7 @@ Consider rebuilding your index.
 By default in Columba Vanilla, the suffix array is sampled with a sparseness factor of 4.
 This has proven to be a good mix between memory and runtime requirements.
 However, in Columba Vanilla you can choose which sparseness factor you would like to use (as long as it is a power of two), by adding `-s <factor>`to the build command.
+Note that choosing a smaller sparseness factor can speed up Columba, but it will also increase the memory footprint.
 
 You can also use `-a` instead of `-s` to create all sampled versions with sparseness factors 1 to 128.
 If you choose to use another sparseness factor, you should pass it to the aligner with the `-s` flag.
@@ -180,10 +209,9 @@ or
 bash columba_build_pfp.sh -r <reference_base_name> -F <file_with_paths> [-w <ws>] [-p <mod>]
 ```
 
-
 from your build folder.
 
-- `-w <ws>`: (Optional) Window size for Big-BWT. If this option is **unset**, Big-BWT will use its **default window size**.  
+- `-w <ws>`: (Optional) Window size for Big-BWT. If this option is **unset**, Big-BWT will use its **default window size**.
 - `-p <mod>`: (Optional) Mod value for Big-BWT. If this option is **unset**, Big-BWT will use its **default mod value**.
 
 **Note**:  
@@ -211,7 +239,7 @@ Later the options for the aligner are explored.
 
 Columba can align reads in a FASTA (`.FASTA`, `.fasta`, `.fa`, `.fna`) or FASTQ (`.fq`, `.fastq`) format (or .gz variations thereof).
 A minimal working example to align your reads is shown below, where `reference_base_name` is the reference base name used while constructing the index, and `read_file`is the path to a file with the reads you want to align.
- 
+
 ```bash
 ./columba <options> -r <reference_base_name> -f <read_file>
 ```
@@ -246,6 +274,9 @@ The default mode is `best`.
 In this mode, all alignments with the best score (edit or hamming distance) are reported for which the minimum identity between the read and the reference sequence is at least some value.
 By default, this value is 95%.
 You can set this value by using the `-I` flag.
+Additionally, you can use the `-x` option to set how many strata after the best score must be explored.
+In that case, all occurrences with a score `<= b + x`, where `b` is the score of the best alignment, will be reported.
+By default the value of `x` is `0`.
 
 The other mode is `all` which can be set by adding `-a all` or `--align-mode all` as an option.
 In this mode, all alignments up to some edit distance are reported.
@@ -260,6 +291,8 @@ Below you can find a summary of the relevant parameters for alignment mode:
   -a, --align-mode        STR   Alignment mode to use. Options are: all, best. Default is best.
   -I, --minIdentity       INT   The minimum identity for alignments in BEST mode. Default is 95.
   -e, --max-distance      STR   The maximum allowed distance (for ALL mode). Default is 0.
+  -x, --strata-after-best INT   The number of strata above the best stratum to explore in BEST mode.
+                                Default is 0.
 ```
 
 ##### Distance Metric
@@ -297,7 +330,7 @@ The options for paired-end alignment are listed below:
                                     will use paired-end alignment.
     -nI, --no-inferring              Do not infer paired-end parameters. Do not infer the paired end
                                     parameters. By default the parameters are inferred. If this option
-                                    is set the values provided by -O (default FR), -X (default 500) and 
+                                    is set the values provided by -O (default FR), -X (default 500) and
                                     -N (default 0) are used.
     -O, --orientation       STR     Orientation of the paired end reads. Options are: fr, rf, ff.
                                     Default is fr.
@@ -329,7 +362,7 @@ This option can slightly improve Columba's runtime.
 In Columba Vanilla, each SAM record has a CIGAR string.
 The calculation of this string takes some time.
 If you are not interested in the CIGAR string you can suppress its calculation using the `-nC` (`--no-cigar`)flag.
-Columba RLC does not output CIGAR strings and instead places an asterisk (*) in the corresponding column.
+Columba RLC does not output CIGAR strings and instead places an asterisk (\*) in the corresponding column.
 
 ##### Read Hit Summary (RHS) format
 
@@ -366,7 +399,7 @@ Note that this slows down the runtime.
   -nU, --no-unmapped             Do not output unmapped reads.
   -nC, --no-CIGAR                Do not output CIGAR strings for SAM format. (only in Vanilla)
   -XA, --XA-tag                  Output secondary alignments in XA tag for SAM format.
-  -o, --output-file       STR   Path to the output file. Should be .sam or .rhs. 
+  -o, --output-file       STR   Path to the output file. Should be .sam or .rhs.
                                 Default is ColumbaOutput.sam.
   -l, --log-file          STR   Path to the log file. Default is stdout.
   -R, --reorder                 Guarantees that output SAM or RHS records are printed in the order
@@ -380,11 +413,11 @@ Note that this slows down the runtime.
 For advanced users who want to experiment with Columba's functionality some other options are available.
 Note that the default settings have been carefully selected to bring the best performance.
 
-You can find more info about these settings, as well as on the use of custom search schemes [here](./further_info/advanced_options/README.md).
+You can find more info about these settings, as well as on the use of custom search schemes [here](further-info/advanced_options/README.md).
 
 ## Result reproduction
 
-To reproduce the results presented in our papers please refer to [these instructions](./further_info/result_reproduction/README.md).
+To reproduce the results presented in our papers please refer to [these instructions](./result_reproduction/README.md).
 
 ## Citation
 
@@ -410,5 +443,6 @@ Questions and suggestions can be directed to:
 
 See the license file for information about Columba's license.
 Columba makes use of the [{fmt} library](https://github.com/fmtlib/fmt) and falls under the exception of its license.
-Columba also makes use of the [libsais](https://github.com/IlyaGrebnov/libsais) and [parallel-hashmap](https://github.com/greg7mdp/parallel-hashmap) libraries. Both fall under Apache-2.0 license, which is included in the repository.
+Columba also makes use of the [libsais](https://github.com/IlyaGrebnov/libsais), [divsufsort](https://github.com/y-256/libdivsufsort) and [parallel-hashmap](https://github.com/greg7mdp/parallel-hashmap) libraries. Libsais and parallel-hashmap fall under [Apache-2.0 license](./licenses_dependencies/Apache-2.0_LICENSE), which is included in the repository.
+Divsufsort falls under MIT license and [its license](./licenses_dependencies/divsufsort_MIT_LICENSE) is also included in the repository.
 Columba RLC with prefix-free parsing makes use of [Big-BWT](https://gitlab.com/manzai/Big-BWT).

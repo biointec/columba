@@ -181,22 +181,22 @@ class IndexInterface {
      * of the tree is fully examined until the backtracking condition is
      * met) using the edit distance metric. This function uses all
      * optimizations for eliminating redundancy in the edit distance metric
-     * @param search, the search to follow
-     * @param startMatch, the approximate match found for all previous
+     * @param search the search to follow
+     * @param startMatch the approximate match found for all previous
      * partitions of the search
-     * @param occ, a data structure with matches of the complete search, if
+     * @param occ a data structure with matches of the complete search, if
      * such a match is found it will be added to this data structure
-     * @param parts, the parts of the pattern
+     * @param parts the parts of the pattern
      * @param counters the performance counters
-     * @param idx, the index of the partition to match, defaults to 1 as an
+     * @param idx the index of the partition to match, defaults to 1 as an
      * exact search for the zeroth partition is assumed
-     * @param descPrevDir, the descendants of the previous direction,
+     * @param descPrevDir the descendants of the previous direction,
      * defaults to empty vector
-     * @param initPrevDir, the initialization eds of the previous direction,
+     * @param initPrevDir the initialization eds of the previous direction,
      * defaults to empty vector
-     * @param descNotPrevDir, the descendants of the other direction,
+     * @param descNotPrevDir the descendants of the other direction,
      * defaults to empty vector
-     * @param initNotPrevDir, the initialization eds of the other direction,
+     * @param initNotPrevDir the initialization eds of the other direction,
      * defaults to empty vector
      */
     void recApproxMatchEdit(
@@ -270,7 +270,7 @@ class IndexInterface {
      * that is added in the front.
      * @param rangesOfP the ranges of pattern P, only the backwards range is
      * used
-     * @param childRanges the ranges corresponding to string cP, this
+     * @param rangesOfChild the ranges corresponding to string cP, this
      * will be set during execution. The getRangeSARev() function will return a
      * dummy!
      * @returns true if the range is not empty, false otherwise
@@ -330,7 +330,7 @@ class IndexInterface {
      * @param descOtherD The known descendants in the other direction.
      * @param initOtherD Edit distance values of known descendants in the other
      * direction.
-     * @param remDescThe remaining descendants on the current branch,
+     * @param remDesc The remaining descendants on the current branch,
      * that are already created but aren't checked yet and might need to be
      * checked for the next part.
      */
@@ -371,7 +371,6 @@ class IndexInterface {
      * edit distance metric. WARNING: This function makes use of the
      * inTextMatrix pointer. Before calling this function make sure the pointer
      * has been set correctly (using the setIndexInMode function).
-     * @param sPos The start positions to be verified.
      * @param startPos the start position of the in-text occurrence to verify
      * @param endPos the end position of the in-text occurrence to verify
      * @param maxED the maximal allowed edit distance
@@ -396,6 +395,7 @@ class IndexInterface {
      * @param occ Data structure with all occurrences, both in FM Index and in
      * text. If in-text verification leads to valid text occurrences, these will
      * be added to occ
+     * @param counters The performance counters.
      */
     virtual void inTextVerificationHamming(const FMPosExt& node,
                                            const Search& s,
@@ -460,10 +460,10 @@ class IndexInterface {
      * @param pairStatus The status of the current read in its pair. [default =
      * FIRST_IN_PAIR]
      */
-    void setIndexInModeSubRoutine(Strand reverseComplement,
-                                  PairStatus firstRead = FIRST_IN_PAIR) {
-        strand = reverseComplement;
-        pairStatus = firstRead;
+    void setIndexInModeSubRoutine(Strand strand,
+                                  PairStatus pairStatus = FIRST_IN_PAIR) {
+        this->strand = strand;
+        this->pairStatus = pairStatus;
     }
 
   public:
@@ -483,6 +483,7 @@ class IndexInterface {
     IndexInterface(const std::string& baseFile, bool verbose = true,
                    length_t wordSize = 10)
         : baseFile(baseFile), wordSize(wordSize) {
+        readMetaAndCounts(baseFile, verbose);
     }
 
     /**
@@ -547,7 +548,8 @@ class IndexInterface {
      * found it returns empty ranges.
      */
     SARangePair lookUpInKmerTable(const Substring& p) const {
-        auto it = table.find(Kmer(p.tostring()));
+
+        auto it = table.find(Kmer(p.getText(), p.begin()));
         return (it == table.end() || p.containsN()) ? SARangePair()
                                                     : it->second;
     }
@@ -717,8 +719,8 @@ class IndexInterface {
      * @param pairStatus The status of the current read in its pair. [default =
      * FIRST_IN_PAIR]
      */
-    virtual void setIndexInMode(Strand reverseComplement,
-                                PairStatus firstRead = FIRST_IN_PAIR) = 0;
+    virtual void setIndexInMode(Strand strand,
+                                PairStatus pairStatus = FIRST_IN_PAIR) = 0;
 
     /**
      * Matches a search recursively with a depth first approach (each branch
@@ -821,7 +823,7 @@ class IndexInterface {
     /**
      * @brief Get the text positions corresponding to a suffix array range
      *
-     * @param range The range in the suffix array
+     * @param ranges The ranges in the suffix array
      * @param positions The vector to which the text positions will be added
      */
     virtual void

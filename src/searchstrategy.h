@@ -135,6 +135,8 @@ class SearchStrategy {
         index;        // reference to the index of the text that is searched
     std::string name; // the name of the particular search strategy
     DistanceMetric distanceMetric; // which distance metric to use
+
+    uint32_t x = 0; // the value of x for best+X mode (0 by default)
   private:
     // helper type for best-matching in paired end alignment. The bool
     // indicates whether the distance (= index in OccVector) has been
@@ -715,7 +717,8 @@ class SearchStrategy {
                                     const length_t minIdentity,
                                     Counters& counters,
                                     std::vector<TextOcc>& result) {
-        return matchApproxBestPlusX(readBundle, 0, counters, minIdentity,
+
+        return matchApproxBestPlusX(readBundle, x, counters, minIdentity,
                                     result);
     }
 
@@ -1121,7 +1124,7 @@ class SearchStrategy {
                              std::vector<TextOcc>& unpairedOcc) {
         return matchApproxPairedEndBestPlusX(pair, minIdentity, maxFragSize,
                                              minFragSize, counters, unpairedOcc,
-                                             0);
+                                             x);
     }
 
     // ----------------------------------------------------------------------------
@@ -1376,9 +1379,10 @@ class SearchStrategy {
 
     /**
      * Helper function for pairDiscordantlyBest. Maps the
-     * stratum if it has not been mapped yet.
+     * stratum if it has not been mapped yet. The function only maps the current
+     * stratum.
      * @param v the vector with occurrences and a boolean flag indicating if the
-     * stratum has been mapped
+     * stratum has been mapped.
      * @param maxD the maximal distance of this stratum
      * @param counters the performance counters
      * @param seq the sequence to map
@@ -1388,6 +1392,7 @@ class SearchStrategy {
     void mapStratum(OccVector& v, length_t maxD, Counters& counters,
                     const std::string& seq, PairStatus status, Strand strand) {
         if (!v[maxD].first) {
+
             v[maxD] = {true,
                        mapRead(seq, maxD, counters, status, strand, maxD)};
         }
@@ -1789,6 +1794,12 @@ class SearchStrategy {
         return mode;
     }
 
+    /**
+     * Check whether this occurrence is in the reference text that originates
+     * from the first FASTA file
+     * @param occ the occurrence to check
+     * @returns true if the occurrence is in the first file
+     */
     inline bool isInFirstFile(const TextOcc& occ) const {
         return index.isInFirstFile(occ);
     }
@@ -1861,6 +1872,14 @@ class SearchStrategy {
             generateOutputSEPtr = &SearchStrategy::generateSE_RHS;
             createUnmappedSEPtr = &TextOcc::createUnmappedRHSOccurrenceSE;
         }
+    }
+
+    /**
+     * Set the value of x for best+x mapping
+     * @param strataAfterBest the number of strata to search after the best
+     */
+    void setStrataAfterBest(uint32_t strataAfterBest) {
+        this->x = strataAfterBest;
     }
 
     /**

@@ -45,7 +45,7 @@ thread_local BitParallelED128* FMIndex::inTextMatrix128;
 thread_local vector<BitParallelED64> FMIndex::inTextMatrices(4);
 thread_local BitParallelED64* FMIndex::inTextMatrix;
 
-thread_local vector<uint16_t> FMIndex::zerosBuffer(0, 2 * MAX_K + 1);
+thread_local vector<uint32_t> FMIndex::zerosBuffer(0, 2 * MAX_K + 1);
 
 // ----------------------------------------------------------------------------
 // ROUTINES FOR ACCESSING DATA STRUCTURE
@@ -80,6 +80,7 @@ void FMIndex::getTextPositionsFromSARange(
 
 void FMIndex::fromFiles(const string& baseFile, bool verbose) {
 
+
     string textFile = baseFile + ".txt.bin";
     if (verbose) {
 
@@ -99,7 +100,7 @@ void FMIndex::fromFiles(const string& baseFile, bool verbose) {
 
     inFile.close();
 
-    readMetaAndCounts(baseFile, verbose);
+   
 
     // read FMIndex specific files
     stringstream ss;
@@ -396,7 +397,8 @@ void FMIndex::inTextVerificationHamming(
 
         for (length_t i = 0; i < ref.size(); i++) {
             // update the score
-            score = score + (ref[i] != pattern[i]);
+            score =
+                score + (ref.forwardAccessor(i) != pattern.forwardAccessor(i));
             if (score > maxEDFull) {
                 // in text verification failed
                 break;

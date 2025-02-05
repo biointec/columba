@@ -74,7 +74,7 @@ void TextOcc::generateSAMSingleEnd(const string& seqID, const string& printSeq,
     // Format the output line
     outputLine =
         fmt::format("{}\t{}\t{}\t{}\t{}\t{}\t*\t0\t0\t{}\t{}\tAS:i:{}\tNM:i:{}"
-                    "\tPG:Z:Columba",
+                    "\tPG:Z:Columba\n",
                     seqID,                        // read name
                     flags,                        // sam flags
                     seqNames[assignedSequenceID], // reference sequence name
@@ -96,16 +96,18 @@ void TextOcc::generateSAMSingleEndXA(const string& seqID,
 
     generateSAMSingleEnd(seqID, printSeq, printQual, nHits, distance, true,
                          seqNames);
+    // remove \n from end of the line
+    outputLine.pop_back();
     // add the X0 X1 and XA tag
     length_t x0 = nHits - 1; // number of co-optimal hits (nHits includes this)
     length_t x1 = otherMatches.size() - x0; // number of suboptimal hits
 
     // append the sam line
-    outputLine += "\tX0:i:" + fmt::to_string(x0) +
-                  "\tX1:i:" + fmt::to_string(x1) + "\tXA:Z:";
+    outputLine += fmt::format("\tX0:i:{}\tX1:i:{}\tXA:Z:", x0, x1);
     for (const auto& m : otherMatches) {
         outputLine += m.asXA(seqNames);
     }
+    outputLine += "\n";
 }
 
 void TextOcc::generateSAMPairedEnd(ReadBundle& bundle, uint32_t nPairs,
@@ -140,7 +142,7 @@ void TextOcc::generateSAMPairedEnd(ReadBundle& bundle, uint32_t nPairs,
 
     outputLine = fmt::format(
         "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}{}\t{}\t{}\tAS:i:{}\tNM:i:"
-        "{}\tPG:Z:Columba",
+        "{}\tPG:Z:Columba\n",
         bundle.getSeqID(), // read name
         flags,             // SAM flags
         assignedSeq,       // reference sequence name
@@ -171,7 +173,7 @@ TextOcc TextOcc::createUnmappedSAMOccurrenceSE(const ReadBundle& bundle) {
 
     // Construct the SAM line directly
     t.outputLine =
-        fmt::format("{}\t4\t*\t0\t0\t*\t*\t0\t0\t{}\t{}\tPG:Z:Columba",
+        fmt::format("{}\t4\t*\t0\t0\t*\t*\t0\t0\t{}\t{}\tPG:Z:Columba\n",
                     bundle.getSeqID(), // Read name
                     bundle.getRead(),  // Read sequence
                     bundle.getQual()   // Read quality
@@ -192,7 +194,7 @@ TextOcc TextOcc::createUnmappedSAMOccurrencePE(const ReadBundle& bundle,
     uint16_t flags = 1;                                 // paired flag
     flags |= 4;                                         // unmapped flag
     flags |= (mateMapped ? 0 : 8);                      // mate unmapped flag
-    flags |= (mateStrand == REVERSE_C_STRAND ? 16 : 0); // mate rev comp flag
+    flags |= (mateStrand == REVERSE_C_STRAND ? 32 : 0); // mate rev comp flag
     flags |= (pairStatus == FIRST_IN_PAIR ? 64 : 128);  // first in pair flag
 
     t.outputLine.clear();
@@ -200,7 +202,7 @@ TextOcc TextOcc::createUnmappedSAMOccurrencePE(const ReadBundle& bundle,
                          bundle.getRead().length() + bundle.getQual().length() +
                          100); // 100 is a rough estimate for the fixed parts
     t.outputLine =
-        fmt::format("{}\t{}\t*\t0\t0\t*\t*\t0\t0\t{}\t{}\tPG:Z:Columba",
+        fmt::format("{}\t{}\t*\t0\t0\t*\t*\t0\t0\t{}\t{}\tPG:Z:Columba\n",
                     bundle.getSeqID(),     // read name
                     fmt::to_string(flags), // flags (unmapped)
                     bundle.getRead(),      // read sequence
@@ -242,7 +244,7 @@ void TextOcc::generateSAMUnpaired(ReadBundle& bundle, uint32_t nHits,
                        150); // 150 is a rough estimate for the fixed parts
     outputLine =
         fmt::format("{}\t{}\t{}\t{}\t{}\t{}\t*\t0\t0\t{}\t{}\tAS:i:{}\tNM:i:{}"
-                    "\tPG:Z:Columba",
+                    "\tPG:Z:Columba\n",
                     bundle.getSeqID(),            // read name
                     flags,                        // flags
                     seqNames[assignedSequenceID], // reference sequence name
@@ -499,15 +501,15 @@ void InTextVerificationTask<WordType>::doTask(Counters& counters,
         length_t refBegin = ref.begin();
 
         length_t i;
-        length_t size = ref.size();
+        const length_t size = ref.size();
 
         if (!matrix->inFinalColumn(size)) {
             // no possible match
             continue;
         }
 
-        for (i = 0; i < size; i++) {
-            if (!matrix->computeRow(i + 1, ref[i])) {
+        for (i = 0; i < size; ++i) {
+            if (!matrix->computeRow(i + 1, ref.forwardAccessor(i))) {
                 break;
             }
         }
@@ -515,7 +517,6 @@ void InTextVerificationTask<WordType>::doTask(Counters& counters,
         // did we break before a possible match?
         if (i <= size - matrix->getSizeOfFinalColumn()) {
             counters.inc(Counters::ABORTED_IN_TEXT_VERIF);
-
             continue;
         }
 
@@ -536,6 +537,7 @@ void InTextVerificationTask<WordType>::doTask(Counters& counters,
             std::string cigar;
             matrix->traceBack(ref, refEnd, bestBegin, bestScore, cigar);
             counters.inc(Counters::CIGARS_IN_TEXT_VERIFICATION);
+
             if (noCIGAR) {
                 cigar = "";
             }

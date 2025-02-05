@@ -73,7 +73,7 @@ class FMIndex : public IndexInterface {
         inTextMatrix128; // pointer to the current inTextMatrix for many
                          // errors/start positions
 
-    thread_local static std::vector<uint16_t> zerosBuffer;
+    thread_local static std::vector<uint32_t> zerosBuffer;
 
     bool noCIGAR = false; // do not calculate the CIGAR string
 
@@ -282,7 +282,7 @@ class FMIndex : public IndexInterface {
     initializeAndSelectInTextMatrix(length_t nZeros, length_t maxED,
                                     const Substring& pattern) const {
 
-             bool matrix64 = use64Matrix(nZeros, maxED);
+        bool matrix64 = use64Matrix(nZeros, maxED);
 
         IBitParallelED* matrix;
         if (matrix64)

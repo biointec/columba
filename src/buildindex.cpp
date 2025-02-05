@@ -21,8 +21,8 @@
 #include "alphabet.h"    // for Alphabet
 #include "bitvec.h"      // for Bitvec, Bitref
 #include "definitions.h" // for length_t, COLUMBA_BUILD_INDEX_TAG, COLUMBA_...
-#include "libsais64.h"   // for libsais64
 #include "logger.h"      // for Logger, logger
+#include "util.h"        // for fileExists..
 
 #include <algorithm>  // for max, transform, equal, max_element, min_ele...
 #include <array>      // for array
@@ -37,6 +37,18 @@
 #include <string>     // for string
 #include <vector>     // for vector
 
+#ifdef THIRTY_TWO
+#include "libsais.h" // for libsais
+#include "libsais64.h"
+#else
+#include "divsufsort64.h"
+#endif
+
+#ifdef HAVE_ZLIB
+#include "seqfile.h"
+#include <zlib.h> // for gzFile, gzopen, gzclose, gzread, gzwrite
+#endif
+
 #ifndef RUN_LENGTH_COMPRESSION
 #include "fmindex/bwtrepr.h"     // for BWTRepresentation
 #include "fmindex/encodedtext.h" // for EncodedText
@@ -45,8 +57,7 @@
 #ifdef BIG_BWT_USABLE
 #include "../external/Big-BWT/utils.h" // for SABYTES
 #endif
-#include "bmove/moverepr.h"     // for MoveRepr
-#include "bmove/moverow.h"      // for MoveRow
+#include "bmove/moverepr.h"     // for MoveLFRepr
 #include "bmove/plcp.h"         // for PLCP
 #include "bmove/sparsebitvec.h" // for SparseB...
 
@@ -105,6 +116,46 @@ char replaceNonACGTWithSeed(char original, std::minstd_rand& gen,
     return original;
 }
 
+bool isGzipped(FileType fileType, const string& filename) {
+    if (fileType == FileType::FASTA_GZ) {
+#ifndef HAVE_ZLIB
+        // If the file is gzipped but zlib support is not available, throw an
+        // error
+        throw runtime_error("Error: " + fastaFile +
+                            " is a gzipped FASTA file, but Columba was not "
+                            "compiled with zlib support.");
+#else
+        // return true if the file is gzipped and zlib support is
+        // available
+        return true;
+#endif
+    }
+    return false;
+}
+
+SeqFile openFastaFile(const string& fastaFile) {
+    // Determine the file type of the provided FASTA file
+    FileType fileType;
+    tie(fileType, ignore) = getFileType(fastaFile);
+
+    // Validate that the file is either a FASTA or gzipped FASTA file
+    if (fileType != FileType::FASTA && fileType != FileType::FASTA_GZ) {
+        throw runtime_error("Error: " + fastaFile +
+                            " is not a valid FASTA file.");
+    }
+
+    // Validate that the FASTA file exists
+    if (!Util::fileExists(fastaFile)) {
+        throw runtime_error("Error: " + fastaFile + " does not exist.");
+    }
+
+    // Create a SeqFile object and open the FASTA file
+    SeqFile file(isGzipped(fileType, fastaFile));
+    file.open(fastaFile);
+
+    return file;
+}
+
 /**
  * @brief Concatenates and transforms the sequences from a FASTA file.
  *
@@ -131,45 +182,38 @@ void concatenateAndTransform(const std::string& fastaFile,
                              std::function<char(char, size_t&)> replaceFunc,
                              length_t expectedNumber = 12000) {
 
-    logger.logInfo("Reading FASTA file " + fastaFile);
+    SeqFile file = openFastaFile(fastaFile);
 
-    // Open input file and get its size
-    std::ifstream inputFile(fastaFile, std::ios::ate);
+    // Reserve memory for the concatenation string based on estimated file size
+    concatenation.reserve(
+        static_cast<size_t>(file.estimateASCIISize() + concatenation.size()));
 
-    if (!inputFile.is_open()) {
-        throw std::runtime_error("Error opening file: " + fastaFile);
-    }
-
-    std::streamsize fileSize = inputFile.tellg();
-    inputFile.seekg(0, std::ios::beg);
-
-    // Reserve memory for the concatenation string based on file size
-    concatenation.reserve(static_cast<size_t>(fileSize + concatenation.size()));
-
-    // Temporary variables for processing
-    std::string line;
-    length_t startPosition = concatenation.size();
-
-    // Index for seed
-    size_t seedIndex = 0;
-
-    // Reserve memory for positions and seqNames vectors
+    // Reserve memory for positions and seqNames vectors to avoid reallocations
     positions.reserve(expectedNumber + positions.size());
     seqNames.reserve(expectedNumber + seqNames.size());
 
-    // A hash table of sequence names for O(1) lookup
-    std::unordered_set<string> seqNamesLookup;
-
+    // Record the index of the first sequence ID in the file
     firstSeqIDPerFile.push_back(seqNames.size());
 
-    std::string sequence;
-    bool sequenceName = false;
+    // Temporary variables for processing sequence data
+    std::string sequence;      // To hold the current sequence
+    bool sequenceName = false; // Flag to indicate if a seq name was present
+    std::string line;          // To hold each line read from the file
+    length_t startPosition = concatenation.size(); // start position in concat.
+    size_t seedIndex = 0; // Index for seed to replace non-ACGT characters
 
-    while (std::getline(inputFile, line)) {
-        if (line.empty())
+    while (file.good()) {
+        file.getLine(line);
+
+        if (line.empty() || (line.size() == 1 && line[0] == '\n'))
             continue; // Skip empty lines
 
+        // pop back the new line character
+        if (line.back() == '\n')
+            line.pop_back();
+
         if (line[0] == '>') { // Sequence name line
+
             // Process the previous sequence
             if (!sequence.empty()) {
                 // Process the previous sequence
@@ -191,16 +235,15 @@ void concatenateAndTransform(const std::string& fastaFile,
             std::string name = description.substr(0, description.find(' '));
 
             // Check if the sequence name is already present
-            if (seqNamesLookup.count(name) > 0) {
+            if (std::find(seqNames.begin(), seqNames.end(), name) !=
+                seqNames.end()) {
                 throw std::runtime_error("Error: Sequence name " + name +
                                          " in file " + fastaFile +
                                          " is not unique!");
             }
 
             seqNames.emplace_back(name); // Store sequence name
-            seqNamesLookup.insert(name);
             sequenceName = true;
-
         } else {
             // Append to the current sequence
             sequence += line;
@@ -219,7 +262,7 @@ void concatenateAndTransform(const std::string& fastaFile,
     }
 
     // Close input file
-    inputFile.close();
+    file.close();
 }
 
 /**
@@ -345,17 +388,21 @@ void writePositionsAndSequenceNames(const string& baseFN,
 /**
  * @brief Check if the text size is within the limits of the length_t type.
  * @param tSize The size of the text.
+ * @param checkBothLimits Check both the lower and upper limits. Default is
+ * true. If false, only the upper limit is checked.
  * @throws runtime_error if the text size is too large.
  */
-void checkTextSize(const size_t tSize) {
+void checkTextSize(const size_t tSize, bool checkBothLimits = true) {
     if (tSize > std::numeric_limits<length_t>::max()) {
         throw std::runtime_error(
-            "The size of the text ()" + std::to_string(tSize) +
+            "The size of the reference (" + std::to_string(tSize) +
             ") is too large. Maximum size for the current "
             "compiler option is: " +
-            std::to_string(std::numeric_limits<length_t>::max()));
+            std::to_string(std::numeric_limits<length_t>::max()) +
+            "\nPlease recompile Columba with a larger word size.");
     }
-    if ((sizeof(length_t) * 8 == 64) &&
+
+    if (checkBothLimits && (sizeof(length_t) * 8 == 64) &&
         (tSize <= std::numeric_limits<uint32_t>::max())) {
         logger.logWarning(
             "Program was compiled with 64-bit words, but the text size (" +
@@ -407,6 +454,13 @@ void createAlphabet(const string& T, const vector<length_t>& charCounts,
     logger.logInfo("Text has " + std::to_string(nUniqueChar) +
                    " unique characters");
 
+    if (T.size() == 1) {
+        logger.logError(
+            "Reference text is empty except for sentinel character. Please "
+            "provide a valid reference with the -f or -F flag.");
+        exit(EXIT_FAILURE);
+    }
+
     if (nUniqueChar > ALPHABET) {
         logger.logError("FATAL: the number of unique characters in the "
                         "text exceeds the alphabet size. Please recompile "
@@ -423,32 +477,81 @@ void createAlphabet(const string& T, const vector<length_t>& charCounts,
     sigma = Alphabet<ALPHABET>(charCounts);
 }
 
+#ifdef THIRTY_TWO
+void createSuffixArrayLibsais(const string& T, vector<uint32_t>& SA) {
+    logger.logInfo("Generating the suffix array using libsais...");
+
+    // Convert std::string to const uint8_t*
+    const uint8_t* tPtr = reinterpret_cast<const uint8_t*>(T.c_str());
+
+    if (T.size() > INT32_MAX) {
+        // We need libsais64 to handle this
+        // create a temporary vector to store the 64-bit suffix array
+        SA.clear();
+        vector<int64_t> SA64(T.size());
+        logger.logDeveloper("Calling libsais64");
+        int64_t result = libsais64(tPtr, SA64.data(),
+                                   static_cast<int64_t>(T.size()), 0, nullptr);
+        if (result != 0) {
+            throw runtime_error("libsais64 failed with error code " +
+                                to_string(result));
+        }
+        SA.reserve(T.size());
+        // convert the 64-bit suffix array to 32-bit
+        for (size_t i = 0; i < T.size(); i++) {
+            SA.emplace_back(static_cast<uint32_t>(SA64[i]));
+        }
+    } else {
+        // Resize SA to the size of the input string to hold the suffix array
+        SA.resize(T.size());
+        logger.logDeveloper("Calling libsais");
+        int32_t result = libsais(tPtr, reinterpret_cast<int32_t*>(SA.data()),
+                                 static_cast<int32_t>(T.size()), 0, nullptr);
+
+        if (result != 0) {
+            throw runtime_error("libsais failed with error code " +
+                                to_string(result));
+        }
+    }
+
+    logger.logDeveloper("Libsais successful");
+}
+#else
+void createSuffixArrayDivsufsort64(const string& T, vector<uint64_t>& SA) {
+    logger.logInfo("Generating the suffix array using divsufsort...");
+
+    // Resize SA to the size of the input string to hold the suffix array
+    SA.resize(T.size());
+
+    // Convert std::string to const uint8_t*
+    const sauchar_t* tPtr = reinterpret_cast<const sauchar_t*>(T.c_str());
+
+    logger.logDeveloper("Calling divsufsort64");
+    saint_t result = divsufsort64(tPtr, reinterpret_cast<int64_t*>(SA.data()),
+                                  static_cast<int64_t>(T.size()));
+
+    if (result != 0) {
+        throw std::runtime_error("divsufsort failed with error code " +
+                                 std::to_string(result));
+    }
+
+    logger.logDeveloper("Divsufsort successful");
+}
+
+#endif
+
 /**
  * @brief Create the suffix array using the libsais library.
  * @param T The text.
  * @param SA The suffix array. (output)
  */
 void createSuffixArray(const string& T, vector<length_t>& SA) {
-    logger.logInfo("Generating the suffix array using libsais...");
+#ifdef THIRTY_TWO
+    createSuffixArrayLibsais(T, SA);
+#else
+    createSuffixArrayDivsufsort64(T, SA);
 
-    // create the suffix array with libsais
-    // Convert std::string to const uint8_t*
-    const uint8_t* tPtr = reinterpret_cast<const uint8_t*>(T.c_str());
-
-    // Length of the input string
-    int64_t n = static_cast<int64_t>(T.size());
-
-    // Suffix array, size should be n (or n+fs if you want extra space, but 0 is
-    // enough for most cases)
-    std::vector<int64_t> suffixArray64(n, 0);
-    // Call the libsais64 function
-    int64_t result = libsais64(tPtr, suffixArray64.data(), n, 0, nullptr);
-    if (result != 0) {
-        throw runtime_error("libsais64 failed with error code " +
-                            to_string(result));
-    }
-    // cast int64_t to length_t
-    SA = vector<length_t>(suffixArray64.begin(), suffixArray64.end());
+#endif
 
     logger.logInfo("Suffix array generated successfully!");
 }
@@ -547,6 +650,7 @@ void preprocessFastaFiles(const std::vector<std::string>& fastaFiles,
         logger.logInfo("Preprocessing FASTA file " + fastaFile);
         concatenateAndTransform(fastaFile, T, positions, seqNames,
                                 firstSeqIDPerFile, replaceFunc);
+        checkTextSize(T.size(), false);
     }
     // add the end of the text
     positions.emplace_back(T.size());
@@ -634,14 +738,20 @@ void createSAWithSanityCheck(vector<length_t>& SA, const string& T) {
  * @param revSA The suffix array of the reversed text. (output)
  * @param T The text.
  */
-void createRevSAWithSanityCheck(vector<length_t>& revSA, const string& T) {
+void createRevSAWithSanityCheck(vector<length_t>& revSA, string& T) {
 
-    std::string revT = T;
-    std::reverse(revT.begin(), revT.end());
+    if (T.size() < (2ull << 32)) {
+        std::string revT = T;
+        std::reverse(revT.begin(), revT.end());
 
-    // create the suffix array of the reverse text
-    createSuffixArray(revT, revSA);
-    revT.clear();
+        // create the suffix array of the reverse text
+        createSuffixArray(revT, revSA);
+        revT.clear();
+    } else {
+        std::reverse(T.begin(), T.end());
+        createSuffixArray(T, revSA);
+        std::reverse(T.begin(), T.end());
+    }
 
     // perform a sanity check on the suffix array
     sanityCheck(T, revSA);
@@ -671,7 +781,7 @@ void createSuffixArrayAndBWT(const string& T, vector<length_t>& SA,
  * @returns The run index of the given position.
  */
 length_t getRunIndex(const length_t position, const length_t size,
-                     const vector<MoveRow>& rows) {
+                     const MoveLFReprBP& rows) {
     length_t rightBoundary = size - 1;
     length_t leftBoundary = 0;
     // Iteratively make the possible range smaller by binary search, until only
@@ -682,16 +792,16 @@ length_t getRunIndex(const length_t position, const length_t size,
 
         // Eliminate half of the possible range by comparing the value to the
         // test value.
-        if (rows[testIndex].inputStartPos <= position) {
+        if (rows.getInputStartPos(testIndex) <= position) {
             leftBoundary = testIndex;
         } else {
             rightBoundary = testIndex - 1;
         }
     }
 
-    assert(position >= rows[leftBoundary].inputStartPos);
+    assert(position >= rows.getInputStartPos(leftBoundary));
     assert(leftBoundary == size - 1 ||
-           position < rows[leftBoundary + 1].inputStartPos);
+           position < rows.getInputStartPos(leftBoundary + 1));
 
     return leftBoundary;
 }
@@ -706,35 +816,27 @@ length_t getRunIndex(const length_t position, const length_t size,
  * @param bwtSize The BWT size.
  */
 void fillRows(const map<length_t, pair<uint8_t, length_t>>& tIn,
-              vector<MoveRow>& rows, const length_t size,
-              const length_t bwtSize) {
-    rows.resize(size + 1);
+              MoveLFReprBP& rows, const length_t size, const length_t bwtSize) {
+    rows.initialize(tIn.size(), bwtSize);
 
-    map<length_t, pair<uint8_t, length_t>>::const_iterator tInIt = tIn.begin();
     length_t i = 0;
-    while (tInIt != tIn.end()) {
-        length_t inputStart = tInIt->first;
-        uint8_t c = tInIt->second.first;
-        length_t outputStart = tInIt->second.second;
-
-        rows[i] = MoveRow(c, inputStart, outputStart, 0);
-
+    for (auto it = tIn.begin(); it != tIn.end(); ++it) {
+        rows.setRowValues(i, it->second.first, it->first, it->second.second, 0);
+        assert(rows.getRunHead(i) == it->second.first);
+        assert(rows.getInputStartPos(i) == it->first);
+        assert(rows.getOutputStartPos(i) == it->second.second);
         i++;
-        tInIt++;
     }
 
-    tInIt = tIn.begin();
     i = 0;
-    while (tInIt != tIn.end()) {
-        length_t outputRunIndex = getRunIndex(tInIt->second.second, size, rows);
-
-        rows[i].outputStartRun = outputRunIndex;
-
+    for (auto it = tIn.begin(); it != tIn.end(); ++it) {
+        length_t outputRunIndex = getRunIndex(it->second.second, size, rows);
+        rows.setOutputStartRun(i, outputRunIndex);
+        assert(rows.getOutputStartRun(i) == outputRunIndex);
         i++;
-        tInIt++;
     }
 
-    rows[size] = MoveRow(0, bwtSize, bwtSize, size);
+    rows.setRowValues(size, 0, bwtSize, bwtSize, size);
 }
 
 /**
@@ -769,10 +871,12 @@ length_t createAndWriteMove(const string& baseFN, const string& BWT,
     // fill tIn, tOut
     vector<length_t> charsVisited(S, 0);
     length_t prevC = S;
-    length_t zeroCharPos;
+    length_t zeroCharPos = bwtSize;
     for (length_t i = 0; i < bwtSize; i++) {
 
-        length_t c = sigma.c2i(BWT[i]);
+        char _c = BWT[i];
+        length_t c = sigma.c2i(_c);
+        assert(c < S);
         if (c == 0) {
             zeroCharPos = i;
         }
@@ -791,27 +895,13 @@ length_t createAndWriteMove(const string& baseFN, const string& BWT,
     logger.logInfo("There are " + to_string(size) + " runs.");
 
     // Fill dPair and dIndex
-    vector<MoveRow> rows;
+    MoveLFReprBP rows;
+    rows.setZeroCharPos(zeroCharPos);
     fillRows(tIn, rows, size, BWT.size());
 
-    // Write Move structures to files
-    string fileName = baseFN;
-    fileName += ".move";
-    ofstream ofs(fileName, ios::binary);
-
-    // Write bwtSize, amount of input-output intervals and the alphabet size to
-    // the output stream.
-    ofs.write((char*)&bwtSize, sizeof(bwtSize));
-    ofs.write((char*)&size, sizeof(size));
-    ofs.write((char*)&zeroCharPos, sizeof(zeroCharPos));
-
-    // Write rows to the output stream.
-    for (length_t i = 0; i < size + 1; i++) {
-        rows[i].serialize(ofs);
-    }
-
-    ofs.close();
-    logger.logInfo("Wrote file " + fileName);
+    string moveFileName = baseFN + ".LFBP";
+    rows.write(moveFileName);
+    logger.logInfo("\tWrote file " + moveFileName);
 
     return size;
 }
@@ -831,54 +921,105 @@ void writeIntVectorBinary(const std::string& filename,
 }
 
 /**
- * Builds samplesFirst and samplesLast.
- * @param samplesFirst Vector to fill. First sa samples of each input interval.
- * @param samplesLast Vector to fill. Last sa samples of each input interval.
+ * Builds samplesFirst and samplesLast from the suffix array (SA) and BWT.
+ * Fills samplesFirst and samplesLast at character changes in BWT for length_t.
+ *
+ * @param samplesFirst The samplesFirst array to fill.
+ * @param samplesLast The samplesLast array to fill.
  * @param SA The suffix array.
- * @param BWT The burrows-wheeler transform in string format (uncompressed).
+ * @param BWT The Burrows-Wheeler transform.
  */
 void buildSamples(vector<length_t>& samplesFirst, vector<length_t>& samplesLast,
                   const vector<length_t>& SA, const string& BWT) {
 
-    samplesFirst.push_back(SA[0] > 0 ? SA[0] - 1 : BWT.size() - 1);
+    samplesFirst.emplace_back(SA[0]);
     for (size_t pos = 0; pos < BWT.size() - 1; pos++) {
         if (BWT[pos] != BWT[pos + 1]) {
-            samplesLast.push_back(SA[pos] > 0 ? SA[pos] - 1 : BWT.size() - 1);
-            samplesFirst.push_back(SA[pos + 1] > 0 ? SA[pos + 1] - 1
-                                                   : BWT.size() - 1);
+            samplesLast.emplace_back(SA[pos]);
+            samplesFirst.emplace_back(SA[pos + 1]);
         }
     }
-    samplesLast.push_back(SA[BWT.size() - 1] > 0 ? SA[BWT.size() - 1] - 1
-                                                 : BWT.size() - 1);
+    samplesLast.emplace_back(SA[BWT.size() - 1]);
+}
+
+/**
+ * Initiates the build for the MovePhi structure.
+ *
+ * @param tIn The tIn map.
+ * @param tOut The tOut map.
+ * @param SamplesFirst The samplesFirst array.
+ * @param SamplesLast The samplesLast array.
+ */
+void startBuildForPhiMove(map<length_t, length_t>& tIn,
+                          map<length_t, length_t>& tOut,
+                          vector<length_t>& samplesFirst,
+                          vector<length_t>& samplesLast) {
+
+    tIn[samplesFirst.front()] = samplesLast.back();
+    tOut[samplesLast.back()] = samplesFirst.front();
+    // Remove the front of the samplesFirst array
+    samplesFirst.erase(samplesFirst.begin());
+    // Remove the back of the samplesLast array
+    samplesLast.pop_back();
+    while (!samplesFirst.empty()) {
+        tIn[samplesFirst.back()] = samplesLast.back();
+        tOut[samplesLast.back()] = samplesFirst.back();
+        samplesFirst.pop_back();
+        samplesLast.pop_back();
+    }
 }
 
 /**
  * Generate predecessor structures
- * @param samplesFirst samplesFirst array
- * @param samplesLast samplesLast array
+ * @param movePhi MovePhi array
+ * @param movePhiInv MovePhiInv array
  * @param [out] predFirst predecessor bitvector of the samplesFirst array
  * @param [out] predLast predecessor bitvector of the samplesLast array
  * @param textLength length of the text
- * @param verbose print verbose output to stdout
  */
-void generatePredecessors(const vector<length_t>& samplesFirst,
-                          const vector<length_t>& samplesLast,
+void generatePredecessors(const vector<length_t>& movePhi,
+                          const vector<length_t>& movePhiInv,
                           SparseBitvec& predFirst, SparseBitvec& predLast,
                           const length_t textLength) {
 
-    vector<bool> predFirstBV(textLength, false);
-    vector<bool> predLastBV(textLength, false);
+    vector<bool> predFirstBV(textLength + 1, false);
+#ifndef PHI_MOVE
+    vector<bool> predLastBV(textLength + 1, false);
+#endif // PHI_MOVE
 
-    for (length_t SApos : samplesFirst) {
-        predFirstBV[SApos] = true;
+    for (const length_t& row : movePhi) {
+        predFirstBV[row > 0 ? row - 1 : textLength - 1] = true;
     }
 
-    for (length_t SApos : samplesLast) {
-        predLastBV[SApos] = true;
+#ifndef PHI_MOVE
+    for (const length_t& row : movePhiInv) {
+        predLastBV[row > 0 ? row - 1 : textLength - 1] = true;
     }
+#endif // PHI_MOVE
 
     predFirst = SparseBitvec(predFirstBV);
+#ifndef PHI_MOVE
     predLast = SparseBitvec(predLastBV);
+#endif // PHI_MOVE
+}
+
+/**
+ * Generate predecessor structures
+ * @param movePhi MovePhi array
+ * @param [out] predFirst predecessor bitvector of the samplesFirst array
+ * @param textLength length of the text
+ */
+void generatePredecessors(const MovePhiReprBP& move, SparseBitvec& pred,
+                          const length_t textLength) {
+
+    vector<bool> predFirstBV(textLength + 1, false);
+
+    for (length_t i = 0; i < move.size(); i++) {
+        predFirstBV[move.getInputStartPos(i) > 0 ? move.getInputStartPos(i) - 1
+                                                 : textLength - 1] = true;
+    }
+
+    pred = SparseBitvec(predFirstBV);
 }
 
 /**
@@ -893,24 +1034,563 @@ void generatePredecessors(const vector<length_t>& samplesFirst,
 void generatePredToRun(const vector<length_t>& samplesFirst,
                        const vector<length_t>& samplesLast,
                        vector<length_t>& firstToRun,
-                       vector<length_t>& lastToRun) {
+                       vector<length_t>& lastToRun, length_t textLength) {
 
     firstToRun.resize(samplesFirst.size());
     iota(firstToRun.begin(), firstToRun.end(), 0);
     sort(firstToRun.begin(), firstToRun.end(),
-         [&samplesFirst](length_t a, length_t b) {
-             return samplesFirst[a] < samplesFirst[b];
+         [&samplesFirst, &textLength](length_t a, length_t b) {
+             return (samplesFirst[a] > 0 ? samplesFirst[a] - 1
+                                         : textLength - 1) <
+                    (samplesFirst[b] > 0 ? samplesFirst[b] - 1
+                                         : textLength - 1);
          });
 
     lastToRun.resize(samplesLast.size());
     iota(lastToRun.begin(), lastToRun.end(), 0);
     sort(lastToRun.begin(), lastToRun.end(),
-         [&samplesLast](length_t a, length_t b) {
-             return samplesLast[a] < samplesLast[b];
+         [&samplesLast, &textLength](length_t a, length_t b) {
+             return (samplesLast[a] > 0 ? samplesLast[a] - 1 : textLength - 1) <
+                    (samplesLast[b] > 0 ? samplesLast[b] - 1 : textLength - 1);
          });
 }
 
-void createIndex(const string& T, const BuildParameters& params,
+/**
+ * @brief Fill tUnbalanced with unbalanced intervals
+ *
+ * @param tUnbalanced The map to fill with unbalanced intervals
+ * @param tIn The input intervals
+ * @param tOut The output intervals
+ * @param maxOverlap The maximum overlap allowed
+ */
+void fillTUnbalanced(map<length_t, length_t>& tUnbalanced,
+                     const map<length_t, length_t>& tIn,
+                     const map<length_t, length_t>& tOut, length_t maxOverlap) {
+    auto tInIt = tIn.begin();
+    auto tOutIt = tOut.begin();
+
+    while (tOutIt != tOut.end()) {
+        length_t overlapCount = 0;
+        length_t outStart = tOutIt->first;
+        length_t outEnd = (std::next(tOutIt) != tOut.end())
+                              ? std::next(tOutIt)->first
+                              : numeric_limits<length_t>::max();
+
+        // Skip input intervals that are before the current output interval
+        while (tInIt != tIn.end() && tInIt->first < outStart) {
+            ++tInIt;
+        }
+
+        // Determine if there is overlap or if the interval just started
+        if (tInIt == tIn.end() || outStart < tInIt->first) {
+            overlapCount = 1;
+        }
+
+        // Count overlapping input intervals
+        while (tInIt != tIn.end() && tInIt->first < outEnd &&
+               overlapCount < maxOverlap) {
+            ++overlapCount;
+            ++tInIt;
+        }
+
+        // Mark as unbalanced if overlap exceeds maxOverlap
+        if (overlapCount >= maxOverlap) {
+            tUnbalanced[tOutIt->second] = outStart;
+        }
+
+        ++tOutIt;
+    }
+}
+
+/**
+ * @brief Balance the intervals
+ *
+ * @param tUnbalanced The unbalanced intervals
+ * @param rows The phi move array (output)
+ * @param tIn The input intervals
+ * @param tOut The output intervals
+ * @param maxOverlap The maximum overlap allowed
+ * @param textLength The length of the text
+ */
+void balanceIntervals(map<length_t, length_t>& tUnbalanced, MovePhiReprBP& rows,
+                      map<length_t, length_t> tIn, map<length_t, length_t> tOut,
+                      length_t maxOverlap, length_t textLength) {
+    while (!tUnbalanced.empty()) {
+        // Get the first unbalanced interval
+        auto unbalancedIt = tUnbalanced.begin();
+        length_t outStart = unbalancedIt->second;
+        length_t inputStart = unbalancedIt->first;
+
+        // Compute the interval difference for splitting
+        auto nextInputIt = tIn.upper_bound(outStart);
+        ++nextInputIt; // Todolore: this is only correct for maxOverlap = 4
+        length_t intervalDiff = nextInputIt->first - outStart;
+
+        // Insert the new intervals
+        tIn.emplace(inputStart + intervalDiff, outStart + intervalDiff);
+        tOut.emplace(outStart + intervalDiff, inputStart + intervalDiff);
+
+        // Remove the balanced interval from unbalanced
+        tUnbalanced.erase(inputStart);
+
+        // Check overlapping intervals for rebalancing
+        length_t outputsToCheck[] = {
+            tOut.lower_bound(inputStart + intervalDiff) != tOut.begin()
+                ? std::prev(tOut.lower_bound(inputStart + intervalDiff))->first
+                : numeric_limits<length_t>::max(),
+            outStart, outStart + intervalDiff};
+
+        for (length_t outputStart : outputsToCheck) {
+            auto endIt = tOut.upper_bound(outputStart);
+            length_t endInterval = (endIt != tOut.end())
+                                       ? endIt->first
+                                       : numeric_limits<length_t>::max();
+
+            // Count overlapping input intervals
+            length_t overlapCount = 1;
+            auto overlapInputIt = tIn.upper_bound(outputStart);
+            while (overlapInputIt != tIn.end() &&
+                   overlapInputIt->first < endInterval &&
+                   overlapCount <= maxOverlap) {
+                ++overlapCount;
+                ++overlapInputIt;
+            }
+
+            // Rebalance if needed
+            if (overlapCount > maxOverlap) {
+                tUnbalanced[tOut[outputStart]] = outputStart;
+            }
+        }
+    }
+
+    rows.initialize(tIn.size(), textLength);
+    length_t i = 0;
+    for (auto it = tIn.begin(); it != tIn.end(); ++it) {
+        rows.setRowValues(i, it->first, it->second, 0);
+        assert(rows.getInputStartPos(i) == it->first);
+        assert(rows.getOutputStartPos(i) == it->second);
+        i++;
+    }
+    length_t size = tIn.size();
+    rows.setRowValues(i, textLength, textLength, size);
+}
+
+void createUnbalancedMoveTable(MovePhiReprBP& rows,
+                               const map<length_t, length_t>& tIn,
+                               length_t textLength) {
+
+    rows.initialize(tIn.size(), textLength);
+    length_t i = 0;
+    for (auto it = tIn.begin(); it != tIn.end(); ++it) {
+        rows.setRowValues(i, it->first, it->second, 0);
+        assert(rows.getInputStartPos(i) == it->first);
+        assert(rows.getOutputStartPos(i) == it->second);
+        i++;
+    }
+    length_t size = tIn.size();
+    rows.setRowValues(i, textLength, textLength, size);
+}
+
+/**
+ * Generate the mapping from start indices in both output intervals (phi and phi
+ * inverse) to their corresponding run indices
+ *
+ * @param move Move structure
+ * @param pred predecessor bitvector of the start samples
+ * @param textLength length of the text
+ */
+void generatePhiRunMapping(MovePhiReprBP& move, const SparseBitvec& pred,
+                           length_t textLength) {
+    for (length_t i = 0; i < move.size(); i++) {
+        length_t textPos = move.getOutputStartPos(i);
+        length_t runIndexInText = pred.rank(textPos);
+        move.setOutputStartRun(i, runIndexInText);
+        assert(move.getOutputStartRun(i) == runIndexInText);
+    }
+}
+
+#ifdef BIG_BWT_USABLE
+
+void readSuffixArrayFile(const std::string& baseFN,
+                         const std::string& extension,
+                         vector<length_t>& samples, vector<length_t>& toRun,
+                         length_t size, length_t nrOfRuns, bool reverse,
+                         bool makeToRun) {
+    logger.logInfo("Reading suffix array samples from " + baseFN + extension +
+                   "...");
+
+    string fileName = baseFN + extension;
+
+    // Open the file
+    FILE* file = fopen(fileName.c_str(), "rb");
+
+    samples = vector<length_t>(nrOfRuns, 0);
+    if (makeToRun) {
+        toRun = vector<length_t>(nrOfRuns, 0);
+    }
+    std::vector<std::pair<length_t, length_t>> pos_run_pairs(nrOfRuns);
+
+    uint64_t* buf = new uint64_t[1];
+
+    for (length_t i = 0; i < nrOfRuns; ++i) {
+        // Read the first SABYTES bytes into buf from file
+        if (fread(buf, SABYTES, 1, file) != 1)
+            throw runtime_error((fileName + " read failed."));
+
+        // Read the next SABYTES bytes into buf from file
+        if (fread(buf, SABYTES, 1, file) != 1)
+            throw runtime_error((fileName + " read failed."));
+
+        // Calculate sa_val from buf: take the first byte, ensure it's within
+        // range, and adjust as needed based on the data size
+        uint64_t sa_val = buf[0] % (1UL << (8 * SABYTES));
+        if (reverse) {
+            // Only for the reverse suffix array, sa_val must be corrected.
+            // For the reverse case, the value is too small since Big-BWT
+            // puts the sentinel character at the end of the reverse text as
+            // well.
+            sa_val = (sa_val < size - 1) ? (sa_val + 1) : 0;
+        }
+
+        // Store sa_val in samples array at index i
+        assert(sa_val >= 0 && sa_val < size);
+        samples[i] = (length_t)sa_val;
+
+        // Store {sa_val, i} pair in pos_run_pairs array
+        pos_run_pairs[i] = {sa_val > 0 ? (length_t)sa_val - 1 : size - 1, i};
+    }
+
+    delete[] buf;
+
+    if (!reverse) {
+
+        logger.logInfo(
+            "Creating the mapping between the predecessor bits and the "
+            "runs...");
+
+        std::sort(pos_run_pairs.begin(), pos_run_pairs.end());
+
+        std::vector<length_t> positions;
+        for (length_t i = 0; i < nrOfRuns; ++i) {
+            positions.push_back(pos_run_pairs[i].first);
+            if (makeToRun) {
+                toRun[i] = pos_run_pairs[i].second;
+            }
+        }
+    }
+
+    fclose(file);
+}
+
+#endif
+
+void constructRunLengthEncodedPLCP(const SparseBitvec& first,
+                                   const vector<length_t>& first_to_run,
+                                   const std::vector<length_t>& charCounts,
+                                   length_t size, length_t r, PLCP& plcp,
+                                   const std::string& baseFN,
+                                   const Alphabet<ALPHABET>& sigma) {
+    logger.logInfo("Constructing run-length encoded PLCP...");
+
+    // Construct cumulative char counts more efficiently
+    vector<length_t> charCountsCumulative(256, 0);
+    for (size_t i = 1; i < 256; ++i) {
+        charCountsCumulative[i] = charCountsCumulative[i - 1] + charCounts[i];
+    }
+
+    logger.logDeveloper("Reading " + baseFN + ".LFBP...");
+    MoveLFReprBP rows;
+    if (!rows.load(baseFN)) {
+        logger.logError("Error: Could not load " + baseFN + ".LFBP");
+        exit(1);
+    }
+
+    logger.logDeveloper("Creating bitvectors for select support...");
+
+    // Create bitvectors and select structures
+    sdsl::bit_vector char_bv[ALPHABET];
+    sdsl::bit_vector::select_1_type select[ALPHABET];
+
+    for (length_t i = 0; i < ALPHABET; ++i) {
+        char_bv[i] = sdsl::bit_vector(size, 0); // Initialize bit vector
+    }
+
+    logger.logDeveloper("Initialization successful.");
+
+    for (length_t i = 0; i < r; ++i) {
+        size_t c = rows.getRunHead(i);
+        for (length_t j = rows.getInputStartPos(i);
+             j < rows.getInputStartPos(i + 1); ++j) {
+            char_bv[c][j] = true; // Mark positions with true
+        }
+    }
+
+    logger.logDeveloper("Marked positions in bitvectors.");
+
+    for (length_t i = 0; i < ALPHABET; ++i) {
+        select[i] = sdsl::bit_vector::select_1_type(
+            &char_bv[i]); // Initialize select support
+    }
+
+    logger.logDeveloper("Creating PLCP...");
+
+    std::vector<length_t> ones, zeros;
+    ones.reserve(r + 1);
+    zeros.reserve(r + 1);
+
+    length_t pos = 0, gap = 0, l = 0, p = 0, p0 = 0, prev_pos = 0, prev_l = 0;
+    length_t acc0 = 0, acc1 = 0;
+
+    for (length_t i = 0; i < r; ++i) {
+        if (r > 100 && i % (r / 100) == 0) {
+            logger.logDeveloper("Progress: " + std::to_string(i) + " / " +
+                                std::to_string(r) + " (" +
+                                std::to_string((i * 100.0) / r) + "%)");
+        }
+
+        // Perform select on the sparse bit vector
+        try {
+            pos = first.select(i);
+        } catch (const std::exception& e) {
+            std::cerr << "Error: " << e.what() << " while selecting index " << i
+                      << '\n';
+            exit(1);
+        }
+
+        gap = (i == 0) ? pos : (pos - prev_pos - 1);
+
+        l = 0;
+        length_t tempIdx = first_to_run[i];
+        p = rows.getInputStartPos(tempIdx);
+        char c = sigma.i2c(rows.getRunHead(tempIdx));
+        rows.findLF(p, tempIdx);
+
+        if (p != 0) {
+            p0 = p - 1;
+            char c0 = std::upper_bound(charCountsCumulative.begin(),
+                                       charCountsCumulative.end(), p0) -
+                      charCountsCumulative.begin();
+
+            // Loop until characters diverge
+            while (c == c0) {
+                l++;
+                length_t i = p - charCountsCumulative[c - 1];
+
+                // Perform select on the current character
+                try {
+                    p = select[sigma.c2i(c)](i + 1);
+                } catch (const std::exception& e) {
+                    std::cerr << "Error: " << e.what()
+                              << " while selecting character " << c << '\n';
+                    exit(1);
+                }
+
+                c = std::upper_bound(charCountsCumulative.begin(),
+                                     charCountsCumulative.end(), p) -
+                    charCountsCumulative.begin();
+                length_t i0 = p0 - charCountsCumulative[c0 - 1];
+
+                // Perform select on the previous character
+                try {
+                    p0 = select[sigma.c2i(c0)](i0 + 1);
+                } catch (const std::exception& e) {
+                    std::cerr << "Error: " << e.what()
+                              << " while selecting character " << c0 << '\n';
+                    exit(1);
+                }
+
+                c0 = std::upper_bound(charCountsCumulative.begin(),
+                                      charCountsCumulative.end(), p0) -
+                     charCountsCumulative.begin();
+            }
+        }
+
+        // Update ones and zeros based on gap and l values
+        if (i == 0) {
+            if (l + gap > 0) {
+                ones.push_back(acc1);
+                acc0 += l + gap - 1;
+                zeros.push_back(acc0);
+                acc1 += gap + 1;
+            } else {
+                acc1 += gap + 1;
+            }
+        } else if (l + gap + 1 - prev_l) {
+            ones.push_back(acc1);
+            acc0 += l + gap + 1 - prev_l;
+            zeros.push_back(acc0);
+            acc1 += gap + 1;
+        } else {
+            acc1 += gap + 1;
+        }
+
+        prev_pos = pos;
+        prev_l = l;
+    }
+
+    // Final push to ensure last values are stored
+    ones.push_back(acc1);
+
+    logger.logDeveloper("Copying the PLCP into its correct object...");
+    plcp = PLCP(size, ones, zeros);
+
+    logger.logInfo("Constructed run-length encoded PLCP.");
+}
+
+void writePhiMoveStructures(MovePhiReprBP& phiMove, const string& baseFN,
+                            const string& suffix, bool inverse,
+                            length_t bwtSize) {
+    // Generate and write predecessor bitvector
+    logger.logInfo("\tGenerating the predecessor bitvector...");
+    SparseBitvec pred;
+    generatePredecessors(phiMove, pred, bwtSize);
+
+    string predFileName =
+        baseFN + ".move." + suffix + "." + (inverse ? "prdl" : "prdf");
+    pred.write(predFileName);
+    logger.logInfo("\tWrote file " + predFileName);
+
+    // Generate and write phi run mapping
+    logger.logInfo("\tGenerating the mapping between output interval start "
+                   "positions and their run identifiers...");
+    generatePhiRunMapping(phiMove, pred, bwtSize);
+
+    string moveFileName = baseFN + ".phiBP." + suffix + (inverse ? ".inv" : "");
+    phiMove.write(moveFileName);
+    logger.logInfo("\tWrote file " + moveFileName);
+}
+
+void processPhiMoveStructures(const string& baseFN,
+                              map<length_t, length_t>& inputIntervals,
+                              map<length_t, length_t>& outputIntervals,
+                              bool inverse, length_t bwtSize,
+                              length_t maxOverlap = 4) {
+
+    { // Balanced move table
+        logger.logInfo("\tCollecting the unbalanced intervals...");
+        map<length_t, length_t> unbalancedIntervals;
+        fillTUnbalanced(unbalancedIntervals, inputIntervals, outputIntervals,
+                        maxOverlap);
+
+        logger.logInfo("\tBalancing the intervals...");
+        MovePhiReprBP phiMove;
+        balanceIntervals(unbalancedIntervals, phiMove, inputIntervals,
+                         outputIntervals, maxOverlap, bwtSize);
+        unbalancedIntervals.clear();
+
+        writePhiMoveStructures(phiMove, baseFN, "balanced", inverse, bwtSize);
+    }
+}
+
+void processPhiAndPhiInverse(const string& baseFN,
+                             vector<length_t>& samplesFirst,
+                             vector<length_t>& samplesLast, length_t bwtSize) {
+    // Initialize move structures for phi
+    map<length_t, length_t> inputIntervals;
+    map<length_t, length_t> outputIntervals;
+
+    logger.logInfo("Initiating the samples for the phi move structures...");
+    startBuildForPhiMove(inputIntervals, outputIntervals, samplesFirst,
+                         samplesLast);
+
+    samplesFirst.clear();
+    samplesLast.clear();
+
+    length_t maxOverlap = 4;
+
+    // Log creation of move table for phi
+    logger.logInfo("Creating the move table for phi...");
+    processPhiMoveStructures(baseFN, inputIntervals, outputIntervals, false,
+                             bwtSize, maxOverlap);
+
+    // Log creation of move table for phi inverse
+    logger.logInfo("Creating the move table for phi inverse...");
+    processPhiMoveStructures(baseFN, outputIntervals, inputIntervals, true,
+                             bwtSize, maxOverlap);
+
+    inputIntervals.clear();
+    outputIntervals.clear();
+}
+
+#ifdef BIG_BWT_USABLE
+
+// Optimized helper function to replace multiple characters and log their counts
+void replaceSentinel(std::string& str) {
+    logger.logInfo("Replacing special characters in the BWT...");
+
+    size_t countNull = 0; // Count for '\0'
+    size_t countOne = 0;  // Count for '\1'
+    size_t countTwo = 0;  // Count for '\2'
+
+    // Traverse the string once to count and replace
+    for (auto& ch : str) {
+        if (ch == '\0') {
+            countNull++; // Count '\0'
+            ch = '$';    // Replace with '$'
+        } else if (ch == '\1') {
+            countOne++; // Count '\1'
+            ch = '$';   // Replace with '$'
+        } else if (ch == '\2') {
+            countTwo++; // Count '\2'
+            ch = '$';   // Replace with '$'
+        }
+    }
+
+    // Log results after the single pass
+    logger.logDeveloper("Found " + std::to_string(countNull) +
+                        " \\0 characters.");
+    logger.logDeveloper("Found " + std::to_string(countOne) +
+                        " \\1 characters.");
+    logger.logDeveloper("Found " + std::to_string(countTwo) +
+                        " \\2 characters.");
+
+    size_t totalCount = countNull + countOne + countTwo;
+
+    // Error check
+    if (totalCount != 1) {
+        logger.logError("Found " + std::to_string(totalCount) +
+                        " special characters in the BWT. Expected 1.");
+        exit(1);
+    }
+}
+
+void processSamplesAndPreds(const string& baseFN,
+                            const vector<length_t>& samplesFirst,
+                            const vector<length_t>& samplesLast,
+                            const string& BWT) {
+    vector<length_t> firstToRun;
+    vector<length_t> lastToRun;
+
+    // Generate the predToRun arrays
+    logger.logInfo(
+        "Mapping the predecessor bits to their corresponding runs...");
+    generatePredToRun(samplesFirst, samplesLast, firstToRun, lastToRun,
+                      BWT.size());
+
+    SparseBitvec predFirst;
+    SparseBitvec predLast;
+
+    logger.logInfo("Generating the predecessor bitvectors for the samples...");
+    generatePredecessors(samplesFirst, samplesLast, predFirst, predLast,
+                         BWT.size());
+
+    // Write predecessor structures
+    predFirst.write(baseFN + ".og.prdf");
+    logger.logInfo("Wrote file " + baseFN + ".og.prdf");
+    predLast.write(baseFN + ".og.prdl");
+    logger.logInfo("Wrote file " + baseFN + ".og.prdl");
+
+    // Generate and write PLCP array
+    writeIntVectorBinary(baseFN + ".ftr", firstToRun);
+    logger.logInfo("Wrote file " + baseFN + ".ftr");
+    writeIntVectorBinary(baseFN + ".ltr", lastToRun);
+    logger.logInfo("Wrote file " + baseFN + ".ltr");
+
+    firstToRun.clear();
+    lastToRun.clear();
+}
+
+void createIndex(string& T, const BuildParameters& params,
                  const Alphabet<ALPHABET>& sigma,
                  const vector<length_t>& charCounts) {
     // aliasing
@@ -943,36 +1623,11 @@ void createIndex(const string& T, const BuildParameters& params,
         writeIntVectorBinary(baseFN + ".smpl", samplesLast);
         logger.logInfo("Wrote file " + baseFN + ".smpl");
 
-        SparseBitvec predFirst;
-        SparseBitvec predLast;
-        vector<length_t> firstToRun;
-        vector<length_t> lastToRun;
-
-        // Generate the predecessor bitvectors
-        logger.logInfo(
-            "Generating the predecessor bitvectors for the samples...");
-        generatePredecessors(samplesFirst, samplesLast, predFirst, predLast,
-                             BWT.size());
-        // Generate the predToRun arrays
-        logger.logInfo(
-            "Mapping the predecessor bits to their corresponding runs...");
-        generatePredToRun(samplesFirst, samplesLast, firstToRun, lastToRun);
-
-        samplesFirst.clear();
-        samplesLast.clear();
-
-        // Write predecessor structures
-        predFirst.write(baseFN + ".prdf");
-        logger.logInfo("Wrote file " + baseFN + ".prdf");
-        predLast.write(baseFN + ".prdl");
-        logger.logInfo("Wrote file " + baseFN + ".prdl");
-        writeIntVectorBinary(baseFN + ".ftr", firstToRun);
-        logger.logInfo("Wrote file " + baseFN + ".ftr");
-        writeIntVectorBinary(baseFN + ".ltr", lastToRun);
-        logger.logInfo("Wrote file " + baseFN + ".ltr");
-
-        firstToRun.clear();
-        lastToRun.clear();
+#ifndef PHI_MOVE
+        processSamplesAndPreds(baseFN, samplesFirst, samplesLast, BWT);
+#else
+        processPhiAndPhiInverse(baseFN, samplesFirst, samplesLast, BWT.size());
+#endif // PHI_MOVE
 
         // Create the Move structure
         logger.logInfo("Creating the move table...");
@@ -1016,233 +1671,6 @@ void createIndex(const string& T, const BuildParameters& params,
     }
 }
 
-#ifdef BIG_BWT_USABLE
-
-void readSuffixArrayFile(const std::string& baseFN,
-                         const std::string& extension,
-                         vector<length_t>& samples, vector<length_t>& toRun,
-                         length_t size, length_t nrOfRuns, bool reverse) {
-    logger.logInfo("Reading suffix array samples from " + baseFN + extension +
-                   "...");
-
-    string fileName = baseFN + extension;
-
-    // Open the file
-    FILE* file = fopen(fileName.c_str(), "rb");
-
-    samples = vector<length_t>(nrOfRuns, 0);
-    toRun = vector<length_t>(nrOfRuns, 0);
-    std::vector<std::pair<length_t, length_t>> pos_run_pairs(nrOfRuns);
-
-    length_t* buf = new length_t[1];
-
-    for (length_t i = 0; i < nrOfRuns; ++i) {
-        // Read the first SABYTES bytes into buf from file
-        if (fread(buf, SABYTES, 1, file) != 1)
-            throw runtime_error((fileName + " read failed."));
-
-        // Read the next SABYTES bytes into buf from file
-        if (fread(buf, SABYTES, 1, file) != 1)
-            throw runtime_error((fileName + " read failed."));
-
-        // Calculate sa_val from buf: take the first byte, ensure it's within
-        // range, and adjust as needed based on the data size
-        length_t sa_val = buf[0] % (1UL << (8 * SABYTES));
-        if (!reverse) {
-            // Only for the regular suffix array, sa_val must be corrected.
-            // For the reverse case, the value is already correct since Big-BWT
-            // puts the sentinel character at the end of the reverse text as
-            // well.
-            sa_val = (sa_val > 0) ? (sa_val - 1) : (size - 1);
-        }
-
-        // Store sa_val in samples array at index i
-        samples[i] = sa_val;
-
-        // Store {sa_val, i} pair in pos_run_pairs array
-        pos_run_pairs[i] = {sa_val, i};
-    }
-
-    delete[] buf;
-
-    if (!reverse) {
-
-        logger.logInfo(
-            "Creating the mapping between the predecessor bits and the "
-            "runs...");
-
-        std::sort(pos_run_pairs.begin(), pos_run_pairs.end());
-
-        std::vector<length_t> positions;
-        for (length_t i = 0; i < nrOfRuns; ++i) {
-            positions.push_back(pos_run_pairs[i].first);
-            toRun[i] = pos_run_pairs[i].second;
-        }
-    }
-
-    fclose(file);
-}
-
-#endif
-
-void constructRunLengthEncodedPLCP(const SparseBitvec& first,
-                                   const vector<length_t>& first_to_run,
-                                   const std::vector<length_t>& charCounts,
-                                   length_t size, length_t r, PLCP& plcp,
-                                   const std::string& baseFN,
-                                   const Alphabet<ALPHABET>& sigma) {
-    logger.logInfo("Constructing run-length encoded PLCP...");
-
-    // Construct cumulative char counts
-    vector<length_t> charCountsCumulative(256, 0);
-    for (size_t i = 1; i < 256; i++) {
-        auto temp = charCountsCumulative[i - 1] + charCounts[i];
-        charCountsCumulative[i] = temp;
-    }
-
-    logger.logDeveloper("Reading " + baseFN + ".move...");
-
-    MoveRepr rows;
-    rows.load(baseFN, false);
-
-    logger.logDeveloper("Creating bitvectors to support select for each "
-                        "character in the BWT...");
-
-    sdsl::bit_vector char_bv[ALPHABET];
-    sdsl::bit_vector::select_1_type select[ALPHABET];
-
-    {
-
-        for (length_t i = 0; i < ALPHABET; i++) {
-            char_bv[i] = sdsl::bit_vector(size, 0);
-        }
-
-        for (length_t i = 0; i < r; i++) {
-            size_t c = rows.getRunHead(i);
-            for (length_t j = rows.getInputStartPos(i);
-                 j < rows.getInputStartPos(i + 1); j++) {
-                char_bv[c][j] = true;
-            }
-        }
-
-        for (length_t i = 0; i < ALPHABET; i++) {
-            select[i] = sdsl::bit_vector::select_1_type(&char_bv[i]);
-        }
-    }
-
-    logger.logDeveloper("Creating PLCP...");
-
-    std::vector<length_t> ones, zeros;
-
-    char c, c0;
-    length_t p, p0, pos, l, gap;
-    length_t prev_pos = 0;
-    length_t prev_l = 0;
-    length_t acc0 = 0, acc1 = 0;
-
-    try {
-
-        for (length_t i = 0; i < r; ++i) {
-            // Log a progress message that takes r into account (e.g 100 times
-            // from 0 to r-1)
-            if (i % (r / 100) == 0) {
-                logger.logDeveloper("Progress: " + std::to_string(i) + " / " +
-                                    std::to_string(r) + " (" +
-                                    std::to_string((i * 100) / r) + "%)");
-            }
-
-            try {
-                pos = first.select(i);
-            } catch (const std::exception& e) {
-                std::cerr << "Error: " << e.what() << '\n';
-                std::cerr << "While trying to perform select on first, with i: "
-                          << i << '\n';
-                exit(1);
-            }
-
-            gap = i == 0 ? pos : (pos - prev_pos - 1);
-
-            l = 0;
-
-            length_t tempIdx = first_to_run[i];
-            p = rows.getInputStartPos(tempIdx);
-            c = sigma.i2c(rows.getRunHead(tempIdx));
-            rows.findLF(p, tempIdx);
-            if (p != 0) {
-                p0 = p - 1;
-                c0 = (std::upper_bound(charCountsCumulative.begin(),
-                                       charCountsCumulative.end(), p0) -
-                      charCountsCumulative.begin());
-                while (c == c0) {
-                    l++;
-                    length_t i = p - charCountsCumulative[c - 1];
-                    try {
-                        p = select[sigma.c2i(c)](i + 1);
-                    } catch (const std::exception& e) {
-                        std::cerr << "Error: " << e.what() << '\n';
-                        std::cerr << "While trying to perform select on "
-                                     "sigma.c2i(c), with i: "
-                                  << i << " and c: " << c << '\n';
-                        exit(1);
-                    }
-                    c = (std::upper_bound(charCountsCumulative.begin(),
-                                          charCountsCumulative.end(), p) -
-                         charCountsCumulative.begin());
-                    length_t i0 = p0 - charCountsCumulative[c0 - 1];
-                    try {
-                        p0 = select[sigma.c2i(c0)](i0 + 1);
-                    } catch (const std::exception& e) {
-                        std::cerr << "Error: " << e.what() << '\n';
-                        std::cerr << "While trying to perform select on "
-                                     "sigma.c2i(c0), with i0: "
-                                  << i0 << " and c0: " << c0 << '\n';
-                        exit(1);
-                    }
-                    c0 = (std::upper_bound(charCountsCumulative.begin(),
-                                           charCountsCumulative.end(), p0) -
-                          charCountsCumulative.begin());
-                }
-            }
-
-            if (i == 0) {
-                if (l + gap > 0) {
-                    ones.push_back(acc1);
-                    acc0 += l + gap - 1;
-                    zeros.push_back(acc0);
-                    acc1 += gap + 1;
-                } else {
-                    acc1 += gap + 1;
-                }
-            } else if (l + gap + 1 - prev_l) {
-                ones.push_back(acc1);
-                acc0 += l + gap + 1 - prev_l;
-                zeros.push_back(acc0);
-                acc1 += gap + 1;
-            } else {
-                acc1 += gap + 1;
-            }
-
-            prev_pos = pos;
-            prev_l = l;
-        }
-
-    } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << '\n';
-        std::cerr << "While trying to construct PLCP" << '\n';
-        exit(1);
-    }
-
-    ones.push_back(acc1);
-
-    logger.logDeveloper("Copying the PCLP into its correct object...");
-
-    plcp = PLCP(size, ones, zeros);
-
-    logger.logInfo("Constructed run-length encoded PLCP.");
-}
-
-#ifdef BIG_BWT_USABLE
-
 void createIndexPFP(const string& baseFN) {
 
     // build the BWT
@@ -1251,8 +1679,7 @@ void createIndexPFP(const string& baseFN) {
     logger.logInfo("Reading " + baseFN + ".bwt...");
     readText(baseFN + ".bwt", BWT);
 
-    // Replace '\0' with '$'
-    std::replace(BWT.begin(), BWT.end(), '\0', '$');
+    replaceSentinel(BWT);
 
     length_t bwtSize = BWT.size();
 
@@ -1273,56 +1700,72 @@ void createIndexPFP(const string& baseFN) {
 
         BWT.clear();
 
+#ifdef PHI_MOVE
+        bool makeToRun = false;
+#else
+        bool makeToRun = true;
+#endif // PHI_MOVE
+
         vector<length_t> samplesFirst;
         vector<length_t> firstToRun;
         readSuffixArrayFile(baseFN, ".ssa", samplesFirst, firstToRun, bwtSize,
-                            nrOfRuns, false);
+                            nrOfRuns, false, true);
 
         vector<length_t> samplesLast;
         vector<length_t> lastToRun;
         readSuffixArrayFile(baseFN, ".esa", samplesLast, lastToRun, bwtSize,
-                            nrOfRuns, false);
+                            nrOfRuns, false, makeToRun);
 
         // write samplesFirst and samplesLast to file
         writeIntVectorBinary(baseFN + ".smpf", samplesFirst);
         logger.logInfo("Wrote file " + baseFN + ".smpf");
         writeIntVectorBinary(baseFN + ".smpl", samplesLast);
         logger.logInfo("Wrote file " + baseFN + ".smpl");
+
+#ifndef PHI_MOVE
+        // write firstToRun and lastToRun to file
         writeIntVectorBinary(baseFN + ".ftr", firstToRun);
         logger.logInfo("Wrote file " + baseFN + ".ftr");
         writeIntVectorBinary(baseFN + ".ltr", lastToRun);
         logger.logInfo("Wrote file " + baseFN + ".ltr");
+#endif
 
         lastToRun.clear();
 
-        SparseBitvec predFirst;
-        SparseBitvec predLast;
+        { // Original phi operation + PLCP
+            SparseBitvec predFirst;
+            SparseBitvec predLast;
 
-        // Generate the predecessor bitvectors
-        logger.logInfo(
-            "Generating the predecessor bitvectors for the samples...");
-        generatePredecessors(samplesFirst, samplesLast, predFirst, predLast,
-                             bwtSize);
+            // Generate the predecessor bitvectors
+            logger.logInfo(
+                "Generating the predecessor bitvectors for the samples...");
+            generatePredecessors(samplesFirst, samplesLast, predFirst, predLast,
+                                 bwtSize);
 
-        samplesFirst.clear();
-        samplesLast.clear();
+#ifndef PHI_MOVE
+            // Write predecessor structures
+            predFirst.write(baseFN + ".og.prdf");
+            logger.logInfo("Wrote file " + baseFN + ".og.prdf");
+            predLast.write(baseFN + ".og.prdl");
+            logger.logInfo("Wrote file " + baseFN + ".og.prdl");
+#endif
 
-        // Write predecessor structures
-        predFirst.write(baseFN + ".prdf");
-        logger.logInfo("Wrote file " + baseFN + ".prdf");
-        predLast.write(baseFN + ".prdl");
-        logger.logInfo("Wrote file " + baseFN + ".prdl");
+            // generate and write PLCP array
+            logger.logInfo(
+                "Generating the permuted longest common prefix array...");
+            PLCP plcp;
+            constructRunLengthEncodedPLCP(predFirst, firstToRun, charCounts,
+                                          bwtSize, nrOfRuns, plcp, baseFN,
+                                          sigma);
+            plcp.write(baseFN + ".plcp");
+            logger.logInfo("Wrote file " + baseFN + ".plcp");
 
-        // generate and write PLCP array
-        logger.logInfo(
-            "Generating the permuted longest common prefix array...");
-        PLCP plcp;
-        constructRunLengthEncodedPLCP(predFirst, firstToRun, charCounts,
-                                      bwtSize, nrOfRuns, plcp, baseFN, sigma);
-        plcp.write(baseFN + ".plcp");
-        logger.logInfo("Wrote file " + baseFN + ".plcp");
+            firstToRun.clear();
+        }
 
-        firstToRun.clear();
+#ifdef PHI_MOVE
+        processPhiAndPhiInverse(baseFN, samplesFirst, samplesLast, bwtSize);
+#endif
     }
 
     logger.logInfo("Switching to reversed text...");
@@ -1334,8 +1777,7 @@ void createIndexPFP(const string& baseFN) {
         logger.logInfo("Reading " + baseFN + ".rev.bwt...");
         readText(baseFN + ".rev.bwt", revBWT);
 
-        // Replace '\0' with '$'
-        std::replace(revBWT.begin(), revBWT.end(), '\0', '$');
+        replaceSentinel(revBWT);
 
         // Create the Move structure
         logger.logInfo("Creating the move table...");
@@ -1348,14 +1790,14 @@ void createIndexPFP(const string& baseFN) {
         vector<length_t> revSamplesFirst;
         vector<length_t> revFirstToRun;
         readSuffixArrayFile(baseFN, ".rev.ssa", revSamplesFirst, revFirstToRun,
-                            bwtSize, nrOfRuns, true);
+                            bwtSize, nrOfRuns, true, false);
 
         revFirstToRun.clear();
 
         vector<length_t> revSamplesLast;
         vector<length_t> revLastToRun;
         readSuffixArrayFile(baseFN, ".rev.esa", revSamplesLast, revLastToRun,
-                            bwtSize, nrOfRuns, true);
+                            bwtSize, nrOfRuns, true, false);
         revLastToRun.clear();
 
         // write samplesFirst and samplesLast to file
@@ -1470,7 +1912,7 @@ void writeBWTBitvectors(const string& baseFN, const string& BWT,
     logger.logInfo("Wrote file " + baseFN + extension);
 }
 
-void createIndex(const string& T, const BuildParameters& params,
+void createIndex(string& T, const BuildParameters& params,
                  const Alphabet<ALPHABET>& sigma,
                  const vector<length_t>& charCounts) {
 
@@ -1478,23 +1920,25 @@ void createIndex(const string& T, const BuildParameters& params,
     const auto& baseFN = params.baseFN;
 
     // create SA and BWT
-    vector<length_t> SA;
-    string BWT;
-    createSuffixArrayAndBWT(T, SA, BWT);
-    writeBWT(sigma, baseFN, BWT);
+    {
+        vector<length_t> SA;
+        string BWT;
+        createSuffixArrayAndBWT(T, SA, BWT);
+        writeBWT(sigma, baseFN, BWT);
 
-    // create sparse suffix arrays
-    if (params.allSparsenessFactors) {
-        writeSA(baseFN, SA);
-    } else {
-        writeSA(baseFN, SA, params.sparsenessFactor);
-    }
-    SA.clear();
+        // create sparse suffix arrays
+        if (params.allSparsenessFactors) {
+            writeSA(baseFN, SA);
+        } else {
+            writeSA(baseFN, SA, params.sparsenessFactor);
+        }
+        SA.clear();
+        vector<length_t>().swap(SA);
 
-    // create succinct BWT bitvector table
-    writeBWTBitvectors(baseFN, BWT, sigma, false);
-    BWT.clear();
+        // create succinct BWT bitvector table
+        writeBWTBitvectors(baseFN, BWT, sigma, false);
 
+    } // string BWT goes out of scope here
     logger.logInfo("Switching to reversed text...");
 
     // read or create the reverse suffix array
@@ -1505,8 +1949,8 @@ void createIndex(const string& T, const BuildParameters& params,
     string rBWT;
     createRevBWT(baseFN, T, revSA, sigma, rBWT);
     revSA.clear();
+    vector<length_t>().swap(revSA);
     writeBWTBitvectors(baseFN, rBWT, sigma, true);
-    rBWT.clear();
 }
 #endif
 
@@ -1521,8 +1965,15 @@ void createIndex(const string& T, const BuildParameters& params,
  */
 void processFastaFiles(const BuildParameters& params) {
     std::string T; // the (concatenated) text
-    preprocessFastaFiles(params.fastaFiles, params.baseFN, T,
-                         params.seedLength);
+
+#ifdef RUN_LENGTH_COMPRESSION
+    bool noWriting = true;
+#else
+    bool noWriting = false;
+#endif
+
+    preprocessFastaFiles(params.fastaFiles, params.baseFN, T, params.seedLength,
+                         noWriting);
 
     // create alphabet and charCounts
     Alphabet<ALPHABET> sigma;

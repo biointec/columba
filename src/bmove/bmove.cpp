@@ -31,6 +31,7 @@
 #include <ostream>             // for opera...
 #include <sdsl/int_vector.hpp> // for int_v...
 #include <stdexcept>           // for runti...
+#include <string>              // for string
 class MemoryMappedTextFile;
 class Search;
 class Substring;
@@ -43,7 +44,6 @@ using namespace std;
 
 void BMove::fromFiles(const string& baseFile, bool verbose) {
 
-    readMetaAndCounts(baseFile, verbose);
     stringstream ss;
     // Read BMove specific files
     if (verbose) {
@@ -55,11 +55,12 @@ void BMove::fromFiles(const string& baseFile, bool verbose) {
     }
 
     if (verbose) {
-        ss << "Reading " << baseFile << ".move...";
+        ss << "Reading " << baseFile << ".LFBP"
+           << "...";
         logger.logInfo(ss);
     }
-    if (!move.load(baseFile, verbose)) {
-        throw runtime_error("Error loading move file: " + baseFile + ".move");
+    if (!move.load(baseFile)) {
+        throw runtime_error("Error loading move file: " + baseFile + ".LFBP");
     }
 
     if (verbose) {
@@ -78,22 +79,47 @@ void BMove::fromFiles(const string& baseFile, bool verbose) {
         throw runtime_error("Cannot open file: " + baseFile + ".smpl");
     }
 
+#ifdef PHI_MOVE
     if (verbose) {
-        ss << "Reading " << baseFile << ".prdf...";
+        ss << "Reading " << baseFile << ".move"
+           << ".balanced"
+           << ".prdf...";
         logger.logInfo(ss);
     }
-    if (!predFirst.read(baseFile + ".prdf")) {
-        throw runtime_error("Cannot open file: " + baseFile + ".prdf");
+    if (!predFirst.read(baseFile + ".move" + ".balanced" + ".prdf")) {
+        throw runtime_error("Cannot open file: " + baseFile + ".move" +
+                            ".balanced" + ".prdf");
     }
 
     if (verbose) {
-        ss << "Reading " << baseFile << ".prdl...";
+        ss << "Reading " << baseFile << ".move"
+           << ".balanced"
+           << ".prdl...";
         logger.logInfo(ss);
     }
-    if (!predLast.read(baseFile + ".prdl")) {
-        throw runtime_error("Cannot open file: " + baseFile + ".prdl");
+    if (!predLast.read(baseFile + ".move" + ".balanced" + ".prdl")) {
+        throw runtime_error("Cannot open file: " + baseFile + ".move" +
+                            ".balanced" + ".prdl");
+    }
+#else
+    if (verbose) {
+        ss << "Reading " << baseFile << ".og.prdf...";
+        logger.logInfo(ss);
+    }
+    if (!predFirst.read(baseFile + ".og.prdf")) {
+        throw runtime_error("Cannot open file: " + baseFile + ".og.prdf");
     }
 
+    if (verbose) {
+        ss << "Reading " << baseFile << ".og.prdl...";
+        logger.logInfo(ss);
+    }
+    if (!predLast.read(baseFile + ".og.prdl")) {
+        throw runtime_error("Cannot open file: " + baseFile + ".og.prdl");
+    }
+#endif
+
+#ifndef PHI_MOVE
     if (verbose) {
         ss << "Reading " << baseFile << ".ftr...";
         logger.logInfo(ss);
@@ -109,14 +135,38 @@ void BMove::fromFiles(const string& baseFile, bool verbose) {
     if (!readIntVector(baseFile + ".ltr", lastToRun)) {
         throw runtime_error("Cannot open file: " + baseFile + ".ltr");
     }
+#else
 
     if (verbose) {
-        ss << "Reading " << baseFile << ".rev.move...";
+        ss << "Reading " << baseFile << ".phiBP.balanced"
+           << "...";
         logger.logInfo(ss);
     }
-    if (!moveR.load(baseFile + ".rev", verbose)) {
+    if (!phiMove.load(baseFile + ".phiBP.balanced")) {
+        throw runtime_error("Cannot open file: " + baseFile +
+                            ".phiBP.balanced");
+    }
+
+    if (verbose) {
+        ss << "Reading " << baseFile << ".phiBP.balanced"
+           << ".inv...";
+        logger.logInfo(ss);
+    }
+    if (!phiInvMove.load(baseFile + ".phiBP.balanced" + ".inv")) {
+        throw runtime_error("Cannot open file: " + baseFile +
+                            ".phiBP.balanced" + ".inv");
+    }
+#endif
+
+    if (verbose) {
+        ss << "Reading " << baseFile << ".rev"
+           << ".LFBP"
+           << "...";
+        logger.logInfo(ss);
+    }
+    if (!moveR.load(baseFile + ".rev")) {
         throw runtime_error("Error loading reverse move file: " + baseFile +
-                            ".rev.move");
+                            ".rev" + ".LFBP");
     }
 
     if (verbose) {
@@ -146,6 +196,7 @@ length_t BMove::getSwitchPoint() const {
     return 0; // no in-text verification with BMove
 }
 
+#ifndef PHI_MOVE
 void BMove::phi(length_t& pos) const {
     // Find the rank of the predecessor of pos in a circular manner.
     length_t predRank = predFirst.predecessorRankCircular(pos);
@@ -162,7 +213,7 @@ void BMove::phi(length_t& pos) const {
     length_t prev_sample = samplesLast[firstToRun[predRank] - 1];
 
     // Calculate and return the new position, modulo the text length.
-    pos = (prev_sample + delta) % textLength;
+    pos = (prev_sample + delta - 1) % textLength;
 }
 
 void BMove::phiInverse(length_t& pos) const {
@@ -182,8 +233,9 @@ void BMove::phiInverse(length_t& pos) const {
     length_t prev_sample = samplesFirst[lastToRun[predRank] + 1];
 
     // Calculate and return the new position, modulo the text length.
-    pos = (prev_sample + delta) % textLength;
+    pos = (prev_sample + delta - 1) % textLength;
 }
+#endif
 
 length_t BMove::computeToehold(const MoveRange& range, const length_t c) const {
 
@@ -192,7 +244,8 @@ length_t BMove::computeToehold(const MoveRange& range, const length_t c) const {
     uint8_t endRunHead = move.getRunHead(endRun);
 
     if (endRunHead == c) {
-        return samplesFirst[endRun];
+        assert(samplesFirst[endRun] > 0);
+        return samplesFirst[endRun] - 1;
     }
 
     length_t previousPos;
@@ -200,7 +253,8 @@ length_t BMove::computeToehold(const MoveRange& range, const length_t c) const {
 
     move.walkToPreviousRun(range, previousPos, previousRun, c);
 
-    return samplesLast[previousRun];
+    assert(samplesLast[previousRun] > 0);
+    return samplesLast[previousRun] - 1;
 }
 
 length_t BMove::computeToeholdRev(const MoveRange& range,
@@ -211,7 +265,8 @@ length_t BMove::computeToeholdRev(const MoveRange& range,
     length_t endRunHead = moveR.getRunHead(endRun);
 
     if (endRunHead == c) {
-        return revSamplesFirst[endRun];
+        assert(revSamplesFirst[endRun] > 0);
+        return revSamplesFirst[endRun] - 1;
     }
 
     length_t previousPos;
@@ -219,7 +274,8 @@ length_t BMove::computeToeholdRev(const MoveRange& range,
 
     moveR.walkToPreviousRun(range, previousPos, previousRun, c);
 
-    return revSamplesLast[previousRun];
+    assert(revSamplesLast[previousRun] > 0);
+    return revSamplesLast[previousRun] - 1;
 }
 
 // ----------------------------------------------------------------------------
@@ -433,21 +489,10 @@ SARangePair BMove::getRangeOfSingleChar(char c) const {
     }
 
     SARangePair pair = getCompleteRange();
-    if ((unsigned int)i < sigma.size() - 1) {
-        pair.getRangeSAMutable().setBegin(counts[i]);
-        pair.getRangeSAMutable().setEnd(counts[i + 1]);
-        pair.getRangeSARevMutable().setBegin(counts[i]);
-        pair.getRangeSARevMutable().setEnd(counts[i + 1]);
-        pair.getRangeSAMutable().setRunIndicesValid(false);
-        pair.getRangeSARevMutable().setRunIndicesValid(false);
-        return pair;
-    }
-    pair.getRangeSAMutable().setBegin(counts[i]);
-    pair.getRangeSAMutable().setEnd(textLength);
-    pair.getRangeSARevMutable().setBegin(counts[i]);
-    pair.getRangeSARevMutable().setEnd(textLength);
-    pair.getRangeSAMutable().setRunIndicesValid(false);
-    pair.getRangeSARevMutable().setRunIndicesValid(false);
+
+    Counters counters;
+    findRangesWithExtraCharBackward(i, pair, pair);
+
     return pair;
 }
 
@@ -459,25 +504,41 @@ void BMove::collectTextPositions(length_t firstPos, length_t originalDepth,
                                  std::vector<length_t>& positions) const {
 
     length_t currentPos = firstPos;
+#ifdef PHI_MOVE
+    length_t textRun = predFirst.rank(firstPos);
+#endif
 
     // Collect positions for the first while loop
     assert(currentPos < textLength);
     positions.push_back(currentPos);
 
     while (plcp[currentPos] >= originalDepth) {
+#ifdef PHI_MOVE
+        phiMove.phi(currentPos, textRun);
+#else
         phi(currentPos);
+#endif
         assert(currentPos < textLength);
         positions.push_back(currentPos);
     }
 
+#ifdef DEVELOPER_MODE
     // Reverse the collected positions from the first while loop
     std::reverse(positions.begin(), positions.end());
+#endif
 
     currentPos = firstPos;
+#ifdef PHI_MOVE
+    textRun = predLast.rank(currentPos);
+#endif
 
     // Collect positions for the second while loop
-    while (currentPos != getInitialToehold()) {
+    while (currentPos != getInitialToehold() + 1) {
+#ifdef PHI_MOVE
+        phiInvMove.phi(currentPos, textRun);
+#else
         phiInverse(currentPos);
+#endif
         if (plcp[currentPos] < originalDepth)
             break;
         assert(currentPos < textLength);

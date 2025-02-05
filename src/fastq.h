@@ -252,11 +252,13 @@ class Reader {
     size_t chunkID;                    // unique ID per chunk
 
     std::mutex processMutex; // mutex for processing time
-    double lowEndProcessingTime = 0.1;
-    double highEndProcessingTime = 1;
-    double midProcessingTime =
+
+    std::chrono::microseconds lowEndProcessingTime{5000};
+    std::chrono::microseconds highEndProcessingTime{10000};
+
+    std::chrono::microseconds midProcessingTime =
         (highEndProcessingTime + lowEndProcessingTime) / 2;
-    std::vector<double> processingTimes;
+    std::vector<std::chrono::microseconds> processingTimes;
 
     /**
      * Entry routine for the input thread.
@@ -312,8 +314,9 @@ class Reader {
 
     /**
      * Add processing time of a single chunk
+     * @param time Processing time of a single chunk
      */
-    void addProcessingTime(double time) {
+    void addProcessingTime(std::chrono::microseconds time) {
         std::lock_guard<std::mutex> lock(processMutex);
         processingTimes.push_back(time);
     }
@@ -456,13 +459,13 @@ class OutputChunk {
         return out;
     }
 
-    void addSingleEndRecord(const std::vector<TextOcc>& occ) {
-        records.emplace_back(occ);
+    void addSingleEndRecord(std::vector<TextOcc>&& occ) {
+        records.emplace_back(std::move(occ));
     }
 
-    void addPairedEndRecord(const std::vector<PairedTextOccs>& pairedOcc,
-                            const std::vector<TextOcc>& unpairedOcc) {
-        records.emplace_back(pairedOcc, unpairedOcc);
+    void addPairedEndRecord(std::vector<PairedTextOccs>&& pairedOcc,
+                            std::vector<TextOcc>&& unpairedOcc) {
+        records.emplace_back(std::move(pairedOcc), std::move(unpairedOcc));
     }
     /**
      * @returns true if this is an end OutputChunk

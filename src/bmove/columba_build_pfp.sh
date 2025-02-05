@@ -15,110 +15,96 @@ big_bwt_exe="./../external/Big-BWT/bigbwt"
 seedLength=100
 
 # Optional Big-BWT parameters
-ws=0     # Default window size (unset means 0)
-mod=0    # Default mod value (unset means 0)
+ws=0  # Default window size (unset means 0)
+mod=0 # Default mod value (unset means 0)
 
 # Array to store fasta files
 fasta_files=()
 
 # Function to show usage
 showUsage() {
-    echo "Usage: $0 [-l <seedLength>] [-w <ws>] [-p <mod>] -r <index_name> [-f <fasta_files>] [-F <fasta_file_list>]"
-    echo
-    echo "Required arguments:"
-    echo "  -r <index_name>   Name/location of the index to be created."
-    echo
-    echo "Optional arguments:"
-    echo "  -f <fasta_files>  Space-separated list of FASTA files."
-    echo "  -F <fasta_file_list>  Path to a file containing a list of FASTA files, one per line."
-    echo "  -l <seedLength>   Seed length for replacing non-ACGT characters (default: $seedLength). 0 means that no seed is used."
-    echo "  -w <ws>           Window size for Big-BWT. If unset, Big-BWT will use its default window size."
-    echo "  -p <mod>          Mod value for Big-BWT. If unset, Big-BWT will use its default mod value."
-}
-
-# Function to check if a file has a valid FASTA extension
-# Usage: isValidFastaFile <filename>
-isValidFastaFile() {
-    local filename="$1"
-    case "$filename" in
-        *.fasta|*.fa|*.FASTA|*.FA|*.fna|*.FNA)
-            return 0  # Valid FASTA file extension
-            ;;
-        *)
-            return 1  # Invalid FASTA file extension
-            ;;
-    esac
+	echo "Usage: $0 [-l <seedLength>] [-w <ws>] [-p <mod>] -r <index_name> [-f <fasta_files>] [-F <fasta_file_list>]"
+	echo
+	echo "Required arguments:"
+	echo "  -r <index_name>   Name/location of the index to be created."
+	echo
+	echo "Optional arguments:"
+	echo "  -f <fasta_files>  Space-separated list of FASTA files."
+	echo "  -F <fasta_file_list>  Path to a file containing a list of FASTA files, one per line."
+	echo "  -l <seedLength>   Seed length for replacing non-ACGT characters (default: $seedLength). 0 means that no seed is used."
+	echo "  -w <ws>           Window size for Big-BWT. If unset, Big-BWT will use its default window size."
+	echo "  -p <mod>          Mod value for Big-BWT. If unset, Big-BWT will use its default mod value."
 }
 
 # Function to run a command with /usr/bin/time -v and extract time and memory usage
 # Usage: runCommandWithTime <command> [<args>...]
 runCommandWithTime() {
-    local command="$1"
-    shift
-    # Run the command and capture output, while measuring time and memory usage
-    (/usr/bin/time -v "$command" "$@") || {
-        local status=$?
-        echo "Error: Command '$command $@' failed with exit status $status." >&2
-        exit $status
-    }
+	local command="$1"
+	shift
+	# Run the command and capture output, while measuring time and memory usage
+	(/usr/bin/time -v "$command" "$@") || {
+		local status=$?
+		echo "Error: Command '$command $@' failed with exit status $status." >&2
+		exit $status
+	}
 }
 
 # Function to parse command-line options
 parseOptions() {
-    # Parse command-line options
-    while getopts ":l:r:f:F:w:p:" opt; do
-        case $opt in
-            l)
-                seedLength=$OPTARG
-                ;;
-            r)
-                index_name=$OPTARG
-                ;;
-            f)
-                # Collect all subsequent arguments as the list of FASTA files
-                fasta_files+=("$OPTARG")
-                while [[ "$OPTIND" -le "$#" && ! "${!OPTIND}" =~ ^- ]]; do
-                    fasta_files+=("${!OPTIND}")
-                    OPTIND=$((OPTIND + 1))
-                done
-                ;;
-            F)
-                # Read each line in the specified file and add it to the fasta_files array
-                if [[ -f "$OPTARG" ]]; then
-                    while IFS= read -r line; do
-                        fasta_files+=("$line")
-                    done < "$OPTARG"
-                else
-                    echo "Error: File '$OPTARG' not found." >&2
-                    exit 1
-                fi
-                ;;
-            w)
-                ws=$OPTARG
-                ;;
-            p)
-                mod=$OPTARG
-                ;;
-            \?)
-                echo "Invalid option: -$OPTARG" >&2
-                showUsage
-                exit 1
-                ;;
-            :)
-                echo "Option -$OPTARG requires an argument." >&2
-                showUsage
-                exit 1
-                ;;
-        esac
-    done
-    # Shift off the options and optional --
-    shift $((OPTIND-1))
+	# Parse command-line options
+	while getopts ":l:r:f:F:w:p:" opt; do
+		case $opt in
+		l)
+			seedLength=$OPTARG
+			;;
+		r)
+			index_name=$OPTARG
+			;;
+		f)
+			# Collect all subsequent arguments as the list of FASTA files
+			fasta_files+=("$OPTARG")
+			while [[ $OPTIND -le $# && ! ${!OPTIND} =~ ^- ]]; do
+				fasta_files+=("${!OPTIND}")
+				OPTIND=$((OPTIND + 1))
+			done
+			;;
+		F)
+			# Read each line in the specified file and add it to the fasta_files array
+			if [[ -f $OPTARG ]]; then
+				while IFS= read -r line; do
+					fasta_files+=("$line")
+				done <"$OPTARG"
+			else
+				echo "Error: File '$OPTARG' not found." >&2
+				exit 1
+			fi
+			;;
+		w)
+			ws=$OPTARG
+			;;
+		p)
+			mod=$OPTARG
+			;;
+		\?)
+			echo "Invalid option: -$OPTARG" >&2
+			showUsage
+			exit 1
+			;;
+		:)
+			echo "Option -$OPTARG requires an argument." >&2
+			showUsage
+			exit 1
+			;;
+		esac
+	done
+	# Shift off the options and optional --
+	shift $((OPTIND - 1))
 
-    # Ensure required arguments are provided
-    if [ -z "$index_name" ] || [ "${#fasta_files[@]}" -eq 0 ]; then
-        showUsage
-        exit 1
-    fi
+	# Ensure required arguments are provided
+	if [ -z "$index_name" ] || [ "${#fasta_files[@]}" -eq 0 ]; then
+		showUsage
+		exit 1
+	fi
 }
 
 # Main script logic
@@ -131,20 +117,12 @@ echo "-------------------------------------------------------------"
 echo "Index name: $index_name"
 echo "Input FASTA files:"
 for file in "${fasta_files[@]}"; do
-    echo "  $file"
+	echo "  $file"
 done
 echo "Seed length: $seedLength"
 echo "Big-BWT window size: ${ws:-not set}"
 echo "Big-BWT mod value: ${mod:-not set}"
 echo "-------------------------------------------------------------"
-
-# Check if the input file(s) have a valid FASTA extension
-for file in "${fasta_files[@]}"; do
-    if ! isValidFastaFile "$file"; then
-        echo "Error: Input file '$file' must have a valid FASTA extension (.fasta, .fa, .fna)." >&2
-        exit 1
-    fi
-done
 
 # Start the preprocessing
 echo "Start preprocessing the fasta file(s) with Columba..."
@@ -157,10 +135,10 @@ base="${index_name}"
 # Build Big-BWT command with optional -w and -p arguments
 big_bwt_args=("$big_bwt_exe" -e -s -v "$base")
 if [ "$ws" -gt 0 ]; then
-    big_bwt_args+=(-w "$ws")
+	big_bwt_args+=(-w "$ws")
 fi
 if [ "$mod" -gt 0 ]; then
-    big_bwt_args+=(-p "$mod")
+	big_bwt_args+=(-p "$mod")
 fi
 
 # Start the prefix-free parsing
@@ -172,10 +150,10 @@ echo "-------------------------------------------------------------"
 # Adjust the arguments for the reverse string
 big_bwt_args=("$big_bwt_exe" -e -s -v "${base}.rev")
 if [ "$ws" -gt 0 ]; then
-    big_bwt_args+=(-w "$ws")
+	big_bwt_args+=(-w "$ws")
 fi
 if [ "$mod" -gt 0 ]; then
-    big_bwt_args+=(-p "$mod")
+	big_bwt_args+=(-p "$mod")
 fi
 
 echo "Start prefix-free parsing for the reverse string..."

@@ -51,6 +51,7 @@ class Alphabet {    // e.g. S = 5 for DNA (A,C,G,T + $)
      */
     void initialize(const std::vector<length_t>& charCounts) {
         charToIndex = std::vector<int>(NUM_CHAR, -1);
+        indexToChar.fill(0);
         for (size_t i = 0, j = 0; i < charCounts.size(); i++) {
             if (charCounts[i] > 0) {
                 charToIndex[i] = j;

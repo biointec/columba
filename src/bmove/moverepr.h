@@ -17,70 +17,124 @@
  * You should have received a copy of the GNU Affero General Public License   *
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.     *
  ******************************************************************************/
-#ifndef MOVEREPR_H
-#define MOVEREPR_H
+#ifndef MOVELFREPR_H
+#define MOVELFREPR_H
 
 #include "../definitions.h"  // for length_t
 #include "../indexhelpers.h" // for SARange
-#include "moverow.h"         // for MoveRow
 #include <memory>            // for allocator_traits<>::value_type
 #include <stdint.h>          // for uint8_t
 #include <string>            // for string
 #include <utility>           // for pair
 #include <vector>            // for vector
 
-class MoveRepr {
+// ----------------------------------------------------------------------------
+//  BitPackedRepresentation
+// ----------------------------------------------------------------------------
 
-  private:
-    // Total size of the bwt.
-    length_t bwtSize;
-
-    // Total amount of runs.
+class BitPackedRepresentation {
+  protected:
+    uint8_t* buffer; // Buffer for bit-packed data
     length_t nrOfRuns;
+    length_t textSize;
+    uint8_t bitsForN, bitsForR; // Common bits for position and run indices
+    uint16_t totalBits, totalBytes;
 
-    // Rows of the move table
-    std::vector<MoveRow> rows;
-
-    // The position index of the zero character
-    length_t zeroCharPos;
+    // Helper function to calculate bits needed for maximum value
+    uint8_t calculateBits(length_t maxValue) const {
+        return static_cast<uint8_t>(std::ceil(std::log2(maxValue)));
+    }
 
   public:
-    /**
-     * @brief Get the total amount of runs.
-     *
-     * @return length_t
-     */
-    length_t getNrOfRuns() const {
+    BitPackedRepresentation()
+        : buffer(nullptr), nrOfRuns(0), textSize(0), bitsForN(0), bitsForR(0),
+          totalBits(0), totalBytes(0) {
+    }
+    virtual ~BitPackedRepresentation() {
+        delete[] buffer; // Clean up buffer
+    }
+
+    // return the number of runs
+    length_t size() const {
         return nrOfRuns;
     }
 
-    /**
-     * @brief Get the total size of the bwt.
-     *
-     * @return length_t
-     */
-    length_t getBwtSize() const {
-        return bwtSize;
+    // Pure virtual methods to be implemented in each derived class
+    virtual bool initialize(length_t nrOfRuns, length_t textSize) = 0;
+    virtual bool load(const std::string& fileName) = 0;
+    virtual bool write(const std::string& fileName) const = 0;
+
+    // Shared helpers for reading/writing bits in buffer
+    length_t getRowValue(length_t rowIndex, uint16_t bitOffset,
+                         uint8_t numBits) const;
+    void setRowValue(length_t rowIndex, length_t value, uint16_t bitOffset,
+                     uint8_t numBits);
+};
+
+// ----------------------------------------------------------------------------
+//  MoveLFReprBP
+// ----------------------------------------------------------------------------
+
+class MoveLFReprBP : public BitPackedRepresentation {
+  private:
+    uint8_t bitsForC; // Bits for the 'c' field, unique to MoveLFReprBP
+
+    length_t zeroCharPos; // The position index of the zero character
+
+  public:
+    // Default constructor
+    MoveLFReprBP() : bitsForC(0), zeroCharPos(0) {
     }
 
-    /**
-     * Get the run head of the run with given index.
-     * @param pos The position for which to get the run head within the block.
-     * @return The run head of the given run index.
-     */
-    uint8_t getRunHead(const length_t& runIndex) const {
-        return rows[runIndex].c;
+    // Initialize function to set up bit packing
+    bool initialize(length_t nrOfRuns, length_t bwtSize) override;
+
+    // Load the move representation from a file
+    bool load(const std::string& fileName) override;
+
+    // Write the move representation to a file
+    bool write(const std::string& fileName) const override;
+
+    // Initialize values for each row
+    void setRowValues(length_t rowIndex, uint8_t runChar,
+                      length_t inputStartPos, length_t outputStartPos,
+                      length_t outputStartRun);
+
+    // Get the run head (character) for a given row
+    uint8_t getRunHead(length_t runIndex) const;
+
+    // Get the inputStartPos for a given row
+    length_t getInputStartPos(length_t runIndex) const;
+
+    // Get the outputStartPos for a given row
+    length_t getOutputStartPos(length_t runIndex) const;
+
+    // Get the outputStartRun for a given row
+    length_t getOutputStartRun(length_t runIndex) const;
+
+    // Set the outputStartRun value for a specific row
+    void setOutputStartRun(length_t rowIndex, length_t value);
+
+    // Set the zeroCharPos value
+    void setZeroCharPos(length_t value) {
+        zeroCharPos = value;
     }
 
+    // Perform the LF-mapping step for positionIndex, updating runIndex
+    void findLF(length_t& positionIndex, length_t& runIndex) const;
+
     /**
-     * @brief Get the Input Start Pos object
+     * @brief Perform the LF operation on the given positionIndex and runIndex
+     * without fast forwarding.
      *
-     * @param runIndex
-     * @return length_t
+     * @param positionIndex The position index to perform the LF operation on.
+     * @param runIndex The run index to perform the LF operation on.
      */
-    length_t getInputStartPos(const length_t& runIndex) const {
-        return rows[runIndex].inputStartPos;
-    }
+    void findLFWithoutFastForward(length_t& positionIndex,
+                                  const length_t& runIndex) const;
+
+    // Fast-forward to the run containing a given position index
+    void fastForward(const length_t& positionIndex, length_t& runIndex) const;
 
     /**
      * Find the run index for a given position.
@@ -137,33 +191,6 @@ class MoveRepr {
                            length_t& previousRun, const length_t c) const;
 
     /**
-     * @brief Fast forward the runIndex until it contains the run that contains
-     * the positionIndex.
-     *
-     * @param positionIndex The position index to fast forward to.
-     * @param runIndex The run index to fast forward.
-     */
-    void fastForward(const length_t& positionIndex, length_t& runIndex) const;
-
-    /**
-     * @brief Perform the LF operation on the given positionIndex and runIndex.
-     *
-     * @param positionIndex The position index to perform the LF operation on.
-     * @param runIndex The run index to perform the LF operation on.
-     */
-    void findLF(length_t& positionIndex, length_t& runIndex) const;
-
-    /**
-     * @brief Perform the LF operation on the given positionIndex and runIndex
-     * without fast forwarding.
-     *
-     * @param positionIndex The position index to perform the LF operation on.
-     * @param runIndex The run index to perform the LF operation on.
-     */
-    void findLFWithoutFastForward(length_t& positionIndex,
-                                  const length_t& runIndex) const;
-
-    /**
      * @brief Extend the match corresponding to parentRange by prepending
      * character c to the match.
      *
@@ -195,16 +222,48 @@ class MoveRepr {
      */
     length_t getCumulativeCounts(const SARange& range,
                                  length_t positionInAlphabet) const;
+};
 
-    /**
-     * @brief Load the move representation from a file.
-     *
-     * @param baseFile Base file name
-     * @param verbose Print verbose output
-     * @return true if the move representation was loaded successfully
-     * @return false otherwise
-     */
-    bool load(const string& baseFile, bool verbose);
+// ----------------------------------------------------------------------------
+//  MovePhiReprBP
+// ----------------------------------------------------------------------------
+
+class MovePhiReprBP : public BitPackedRepresentation {
+  public:
+    // Default constructor
+    MovePhiReprBP() {
+    }
+
+    // Initialize function to handle memory allocation
+    bool initialize(length_t nrOfRuns, length_t textSize) override;
+
+    // Load function to handle initialization
+    bool load(const std::string& fileName) override;
+
+    // Write function to handle serialization
+    bool write(const std::string& fileName) const override;
+
+    // Initialize values for each row
+    void setRowValues(length_t rowIndex, length_t inputStartPos,
+                      length_t outputStartPos, length_t outputStartRun);
+
+    // Get the inputStartPos value for a specific row
+    length_t getInputStartPos(length_t i) const;
+
+    // Get the outputStartPos value for a specific row
+    length_t getOutputStartPos(length_t i) const;
+
+    // Get the outputStartRun value for a specific row
+    length_t getOutputStartRun(length_t i) const;
+
+    // Set the outputStartRun value for a specific row
+    void setOutputStartRun(length_t rowIndex, length_t value);
+
+    // Fast-forward runIndex to the row containing positionIndex
+    void fastForward(const length_t& positionIndex, length_t& runIndex) const;
+
+    // Perform the LF-mapping step for positionIndex, updating the runIndex
+    void phi(length_t& positionIndex, length_t& runIndex) const;
 };
 
 #endif

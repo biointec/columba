@@ -73,6 +73,31 @@ class IBitParallelED {
         return c2i;
     }
 
+    /**
+     * Wrapper for the popcount function that counts the number of set bits in
+     * the word.
+     * @param x The 64-bit word to count the number of set bits in
+     */
+    static int popcount(uint64_t x) {
+        return __builtin_popcountll(x);
+    }
+
+    /**
+     * Wrapper for the popcount function that counts the number of set bits in
+     * the word.
+     * @param x The 128-bit word to count the number of set bits in
+     */
+    static int popcount(UInt128 x) {
+#if HAS_UINT128_T
+        uint64_t high = x >> 64; // Extract the high 64 bits
+        uint64_t low =
+            x; // Implicitly cast to uint64_t, so extract the low 64 bits
+        return __builtin_popcountll(high) + __builtin_popcountll(low);
+#else
+        return x.popcount();
+#endif // HAS_UINT128_T
+    }
+
   public:
     virtual ~IBitParallelED() = default;
     /**
@@ -89,8 +114,8 @@ class IBitParallelED {
      * @param maxED Maximum edit distance allowed during alignment
      * @param initED Edit distances of column zero (default = 0, 1, ... maxED)
      */
-    virtual void initializeMatrix(uint16_t maxED,
-                                  const std::vector<uint16_t>& initED = {}) = 0;
+    virtual void initializeMatrix(uint32_t maxED,
+                                  const std::vector<uint32_t>& initED = {}) = 0;
 
     /**
      * Compute a row of the edit distance matrix in a bit-parallel manner
@@ -98,7 +123,7 @@ class IBitParallelED {
      * @param Y character of Y-sequence at row i
      * @return false if all elements on row i exceed maxED, true otherwise
      */
-    virtual bool computeRow(uint16_t i, char Y) = 0;
+    virtual bool computeRow(uint32_t i, char Y) = 0;
 
     /**
      * Find the minimum edit distance value and its position on a row
@@ -106,36 +131,37 @@ class IBitParallelED {
      * @param jMin Column index at which minimum value is found (output)
      * @param minScore Minimum value (output)
      */
-    virtual void findMinimumAtRow(uint16_t i, uint16_t& jMin,
-                                  uint16_t& minScore) const = 0;
+    virtual void findMinimumAtRow(uint32_t i, uint32_t& jMin,
+                                  uint32_t& minScore) const = 0;
 
     /**
      * Check if a certain row contains the final column
      * @param i The row index
      * @return True if the final column is contained in the row
      */
-    virtual bool inFinalColumn(const uint16_t i) const = 0;
+    virtual bool inFinalColumn(const uint32_t i) const = 0;
 
 #ifndef RUN_LENGTH_COMPRESSION // functions related to CIGAR strings
     /**
      * Find the CIGAR string of the alignment of a reference substring to
      * the query sequence the matrix was initialized with. The sequence
      * should be set before calling this function
-     * @param ref the reference string that was aligned
+     * @param ref the reference string that was aligned. Will be accesssed in
+     * the forward direction.
      * @param score the alignment score between ref and query
-     * @param CIGAR (output) the CIGAR string of the alignment
+     * @param CIGAR (output) the CIGAR string of the alignment, must be empty
      */
-    virtual void findCIGAR(const Substring& ref, const uint16_t score,
+    virtual void findCIGAR(const Substring& ref, const uint32_t score,
                            std::string& CIGAR) = 0;
 
     /**
-     * Do backtracking and compute CIGAR string
-     * @param ref reference sequence, pattern P should be set using
-     * setSequence(P)(...)$
+     * Trace the alignment and compute CIGAR string
+     * @param ref reference sequence (will be accessed in forward direction),
+     * pattern P should be set using setSequence(P)(...)$
      * @param refEnd End offset of the reference sequence
      * @param refBegin Begin offset of the reference sequence (output)
      * @param ED Edit distance score associated with this alignment (output)
-     * @param CIGAR CIGAR string (output)
+     * @param CIGAR CIGAR string (output), must be empty
      */
     virtual void traceBack(const Substring& ref, const length_t refEnd,
                            length_t& refBegin, length_t& ED,
@@ -152,9 +178,9 @@ class IBitParallelED {
      * @param maxED the maximal allowed edit distance
      * @param minED the minimal allowed edit distance
      */
-    virtual void findClusterCenters(const uint16_t lastRow,
+    virtual void findClusterCenters(const uint32_t lastRow,
                                     std::vector<length_t>& refEnds,
-                                    uint16_t maxED, uint16_t minED) const = 0;
+                                    uint32_t maxED, uint32_t minED) const = 0;
 
     /**
      * Find the element at index (i, j) this procedure is O(1)
@@ -162,7 +188,7 @@ class IBitParallelED {
      * @param j Column index
      * @return Score at position (i, j)
      */
-    virtual uint16_t at(uint16_t i, uint16_t j) const = 0;
+    virtual uint32_t at(uint32_t i, uint32_t j) const = 0;
 
     /**
      * Check whether after row i, the alignment involves only vertical gaps.
@@ -171,7 +197,7 @@ class IBitParallelED {
      * @param i The row index
      * @return true of false
      */
-    virtual bool onlyVerticalGapsLeft(uint16_t i) const = 0;
+    virtual bool onlyVerticalGapsLeft(uint32_t i) const = 0;
 
     /**
      * Retrieves the first column index that is in the band for the
@@ -179,19 +205,19 @@ class IBitParallelED {
      * @param i The row
      * @returns The first column of the row
      */
-    virtual uint16_t getFirstColumn(uint16_t i) const = 0;
+    virtual uint32_t getFirstColumn(uint32_t i) const = 0;
 
     /**
      * Get the number of columns in the matrix
      * @return The number of columns in the matrix (== X.size() + 1)
      */
-    virtual uint16_t getNumberOfCols() const = 0;
+    virtual uint32_t getNumberOfCols() const = 0;
 
     /**
      * Get the number of rows in the matrix
      * @return The number of rows in the matrix (== Y.size() + 1)
      */
-    virtual uint16_t getNumberOfRows() const = 0;
+    virtual uint32_t getNumberOfRows() const = 0;
 
     /**
      * Check whether setSequenceX() has been called
@@ -208,18 +234,18 @@ class IBitParallelED {
      * Get the vertical size of the final column
      * @return  the vertical size of the final column
      */
-    virtual uint16_t getSizeOfFinalColumn() const = 0;
+    virtual uint32_t getSizeOfFinalColumn() const = 0;
 
     /**
      * Get the maximum edit distance that can be computed by a matrix of this
      * type
      */
-    static uint16_t getMatrixMaxED();
+    static uint32_t getMatrixMaxED();
     /**
      * Get the maximum number of rows in the first column allowed by a matrix of
      * this type
      */
-    static uint16_t getMaxFirstColRows();
+    static uint32_t getMaxFirstColRows();
 };
 
 /**
@@ -247,20 +273,19 @@ class BitParallelED : public IBitParallelED {
                   "WordType must be either uint64_t or UInt128");
 
   private:
-    static const uint16_t WORD_SIZE =
+    static const uint32_t WORD_SIZE =
         sizeof(WordType) * 8;                         ///< word size in bits
-    static const uint16_t BLOCK_SIZE = WORD_SIZE / 2; ///< block size in bits
+    static const uint32_t BLOCK_SIZE = WORD_SIZE / 2; ///< block size in bits
     ///< maximum supported edit distance
-    static const uint16_t MATRIX_MAX_ED = (WORD_SIZE - BLOCK_SIZE - 2) / 3;
+    static const uint32_t MATRIX_MAX_ED = (WORD_SIZE - BLOCK_SIZE - 2) / 3;
     ///< number of leftmost bits (= max size of first column)
-    static const uint16_t LEFT = 2 * MATRIX_MAX_ED + 1;
-    static const uint16_t DIAG_R0 = 2 * MATRIX_MAX_ED; ///< diagonal offset
+    static const uint32_t LEFT = 2 * MATRIX_MAX_ED + 1;
+    static const uint32_t DIAG_R0 = 2 * MATRIX_MAX_ED; ///< diagonal offset
 
     /**
      * Wrapper for the popcount function that counts the number of set bits in
      * the word.
      */
-    static int popcount(const WordType x);
 
   public:
     /**
@@ -285,21 +310,21 @@ class BitParallelED : public IBitParallelED {
      * @see IBitParallelED::initializeMatrix
      */
     void
-    initializeMatrix(uint16_t maxED,
-                     const std::vector<uint16_t>& initED = {}) override final;
+    initializeMatrix(uint32_t maxED,
+                     const std::vector<uint32_t>& initED = {}) override final;
 
     /**
      * @see IBitParallelED::computeRow
      */
-    bool computeRow(uint16_t i, char Y) override final {
+    bool computeRow(uint32_t i, char Y) override final {
         assert(i > 0);
         assert(i < m);
         assert(char2idx[Y] < N_MATCH_VECTORS);
         assert(sequenceSet());
 
         // define BLOCK_SIZE as power of two to make sure this is fast:
-        const uint16_t b = i / BLOCK_SIZE; // block identifier
-        const uint16_t l = i % BLOCK_SIZE; // leftmost relevant bit
+        const uint32_t b = i / BLOCK_SIZE; // block identifier
+        const uint32_t l = i % BLOCK_SIZE; // leftmost relevant bit
 
         // aliases to the bitvectors of the current row i (will be computed)
         WordType& HP = bv[i].HP;
@@ -333,7 +358,7 @@ class BitParallelED : public IBitParallelED {
         HN = (D0 & (VP << 1u));
 
         // compute the minScore at the diagonal
-        const uint16_t diagBit = l + DIAG_R0;
+        const uint32_t diagBit = l + DIAG_R0;
         bv[i].score = bv[i - 1].score + (D0 & (WordType(1) << diagBit) ? 0 : 1);
 
         // update the rightmost active column (Hyyro)
@@ -358,13 +383,13 @@ class BitParallelED : public IBitParallelED {
     /**
      * @see IBitParallelED::findMinimumAtRow
      */
-    void findMinimumAtRow(uint16_t i, uint16_t& jMin,
-                          uint16_t& minScore) const override final {
+    void findMinimumAtRow(uint32_t i, uint32_t& jMin,
+                          uint32_t& minScore) const override final {
         jMin = getFirstColumn(i);
         minScore = operator()(i, jMin);
 
-        for (uint16_t j = getFirstColumn(i) + 1; j <= getLastColumn(i); j++) {
-            uint16_t thisScore = operator()(i, j);
+        for (uint32_t j = getFirstColumn(i) + 1; j <= getLastColumn(i); j++) {
+            uint32_t thisScore = operator()(i, j);
             if (thisScore < minScore) {
                 minScore = thisScore;
                 jMin = j;
@@ -375,7 +400,7 @@ class BitParallelED : public IBitParallelED {
     /**
      * @see IBitParallelED::inFinalColumn
      */
-    bool inFinalColumn(const uint16_t i) const override final {
+    bool inFinalColumn(const uint32_t i) const override final {
         return i >= getNumberOfRows() - getSizeOfFinalColumn();
     }
 
@@ -390,19 +415,20 @@ class BitParallelED : public IBitParallelED {
     /**
      * @see IBitParallelED::findCIGAR
      */
-    void findCIGAR(const Substring& ref, const uint16_t score,
+    void findCIGAR(const Substring& ref, const uint32_t score,
                    std::string& CIGAR) override final {
+        assert(CIGAR.empty());
         // initialize the matrix with the alignment score
         initializeMatrix(score);
 
         // compute the rows
         for (unsigned int i = 0; i < ref.size(); i++) {
-            computeRow(i + 1, ref[i]);
+            computeRow(i + 1, ref.forwardAccessor(i));
         }
 
         // backtrack starting from the final cell
-        uint16_t i = ref.size();
-        uint16_t j = n - 1;
+        uint32_t i = ref.size();
+        uint32_t j = n - 1;
 
         // make sure the score is correct
         // if the score is higher than what was found here that means there was
@@ -413,37 +439,37 @@ class BitParallelED : public IBitParallelED {
         assert(operator()(i, j) <= score);
 
         CIGARstate state = NOTHING;
-        std::vector<std::pair<char, uint16_t>> vCIGAR;
-        vCIGAR.reserve(2 * score + 1);
+        std::vector<std::pair<char, uint32_t>> vCIGAR;
 
         while (j > 0 || i > 0) {
 
-            const uint16_t b = i / BLOCK_SIZE; // block identifier
-            WordType bit = WordType(1) << ((j - b * BLOCK_SIZE) + DIAG_R0);
+            const uint32_t b = i / BLOCK_SIZE; // block identifier
+            const WordType bit = WordType(1)
+                                 << ((j - b * BLOCK_SIZE) + DIAG_R0);
 
             if ((j > 0) && bv[i].HP & bit) { // gap in horizontal
-                j--;
+                --j;
                 if (state != CIGARstate::I) {
                     vCIGAR.emplace_back('I', 0);
                     state = CIGARstate::I;
                 }
 
-            } else {
-                const WordType& M = mv[b][char2idx[ref[i - 1]]];
-                if ((i > 0 && j > 0) && ((M | ~bv[i].D0) & bit)) { // diagonal
-                    i--;
-                    j--;
-                    if (state != CIGARstate::M) {
-                        vCIGAR.emplace_back('M', 0);
-                        state = CIGARstate::M;
-                    }
+            } else if (i > 0 && j > 0 &&
+                       ((mv[b][char2idx[ref.forwardAccessor(i - 1)]] |
+                         ~bv[i].D0) &
+                        bit)) { // diagonal
+                --i;
+                --j;
+                if (state != CIGARstate::M) {
+                    vCIGAR.emplace_back('M', 0);
+                    state = CIGARstate::M;
+                }
 
-                } else { // gap in vertical
-                    i--;
-                    if (state != CIGARstate::D) {
-                        vCIGAR.emplace_back('D', 0);
-                        state = CIGARstate::D;
-                    }
+            } else { // gap in vertical
+                --i;
+                if (state != CIGARstate::D) {
+                    vCIGAR.emplace_back('D', 0);
+                    state = CIGARstate::D;
                 }
             }
 
@@ -451,17 +477,8 @@ class BitParallelED : public IBitParallelED {
         }
 
         // reverse the cigar as it was created from end to beginning
-        std::reverse(vCIGAR.begin(), vCIGAR.end());
-        if (vCIGAR.empty()) {
-            CIGAR = "*";
-        } else {
-            CIGAR.clear();
-            // 3 digits per entry as upper bound
-            CIGAR.reserve(4 * vCIGAR.size());
-
-            for (const auto& p : vCIGAR) {
-                CIGAR += fmt::format("{}{}", p.second, p.first);
-            }
+        for (auto it = vCIGAR.crbegin(); it != vCIGAR.crend(); ++it) {
+            CIGAR += fmt::format("{}{}", it->second, it->first);
         }
     }
 
@@ -472,41 +489,42 @@ class BitParallelED : public IBitParallelED {
                    length_t& refBegin, length_t& ED,
                    std::string& CIGAR) const override final {
 
-        CIGAR.clear();
-        CIGAR.reserve((2 * MATRIX_MAX_ED + 1) * 4);
+        assert(CIGAR.empty());
 
-        std::vector<std::pair<char, uint16_t>> vCIGAR;
+        std::vector<std::pair<char, uint32_t>> vCIGAR;
 
-        uint16_t i = refEnd;
-        uint16_t j = n - 1;
+        uint32_t i = refEnd;
+        uint32_t j = n - 1;
         ED = operator()(i, j);
 
         CIGARstate state = NOTHING;
 
         while (j > 0) {
 
-            const uint16_t b = i / BLOCK_SIZE; // block identifier
-
-            WordType bit = WordType(1) << ((j - b * BLOCK_SIZE) + DIAG_R0);
+            const uint32_t b = i / BLOCK_SIZE; // block identifier
+            const WordType bit = WordType(1)
+                                 << ((j - b * BLOCK_SIZE) + DIAG_R0);
 
             if ((bv[i].HP & bit)) { // gap in horizontal direction -> insertion
-                j--;
+                --j;
                 if (state != CIGARstate::I) {
                     vCIGAR.emplace_back('I', 0);
                     state = CIGARstate::I;
                 }
 
-            } else if ((i > 0) && ((mv[b][char2idx[ref[i - 1]]] | ~bv[i].D0) &
-                                   bit)) { // diagonal
-                i--;
-                j--;
+            } else if ((i > 0) &&
+                       ((mv[b][char2idx[ref.forwardAccessor(i - 1)]] |
+                         ~bv[i].D0) &
+                        bit)) { // diagonal
+                --i;
+                --j;
                 if (state != CIGARstate::M) {
                     vCIGAR.emplace_back('M', 0);
                     state = CIGARstate::M;
                 }
 
             } else { // gap in vertical direction
-                i--;
+                --i;
                 if (state != CIGARstate::D) {
                     vCIGAR.emplace_back('D', 0);
                     state = CIGARstate::D;
@@ -516,38 +534,30 @@ class BitParallelED : public IBitParallelED {
             vCIGAR.back().second++;
         }
 
-        std::reverse(vCIGAR.begin(), vCIGAR.end());
-        // convert the vector to a string
-        if (vCIGAR.empty()) {
-            CIGAR = "*";
-        } else {
-            CIGAR.reserve(4 * vCIGAR.size());
-
-            for (const auto& p : vCIGAR) {
-                CIGAR += fmt::to_string(p.second);
-                CIGAR.push_back(p.first);
-            }
-        }
-
         refBegin = i;
+
+        // reverse the cigar as it was created from end to beginning
+        for (auto it = vCIGAR.crbegin(); it != vCIGAR.crend(); ++it) {
+            CIGAR += fmt::format("{}{}", it->second, it->first);
+        }
     }
 #endif // end not RUN_LENGTH_COMPRESSION
 
     /**
      * @see IBitParallelED::findClusterCenters
      */
-    void findClusterCenters(const uint16_t lastRow,
-                            std::vector<length_t>& refEnds, uint16_t maxED,
-                            uint16_t minED) const override final {
+    void findClusterCenters(const uint32_t lastRow,
+                            std::vector<length_t>& refEnds, uint32_t maxED,
+                            uint32_t minED) const override final {
         refEnds.clear();
         refEnds.reserve(getSizeOfFinalColumn());
 
-        uint16_t firstRow = (m - 1) - getSizeOfFinalColumn();
+        uint32_t firstRow = (m - 1) - getSizeOfFinalColumn();
 
-        uint16_t col = n - 1;
+        uint32_t col = n - 1;
 
-        for (uint16_t i = lastRow; i > (m - 1) - getSizeOfFinalColumn(); i--) {
-            uint16_t ED = operator()(i, col);
+        for (uint32_t i = lastRow; i > (m - 1) - getSizeOfFinalColumn(); i--) {
+            uint32_t ED = operator()(i, col);
             if (ED > maxED || ED < minED) {
                 continue;
             }
@@ -567,21 +577,21 @@ class BitParallelED : public IBitParallelED {
      * @param j Column index
      * @return Score at position (i, j)
      */
-    uint16_t operator()(uint16_t i, uint16_t j) const {
+    uint32_t operator()(uint32_t i, uint32_t j) const {
         // make sure i and j are within matrix bounds
         assert(i < m);
         assert(j < n);
 
         // we need the bits in the range [b,e[ in HN and HP
-        const uint16_t bit = (i % BLOCK_SIZE) + DIAG_R0;
-        uint16_t b = (i > j) ? bit - (i - j) + 1 : bit + 1;
-        uint16_t e = (i > j) ? bit + 1 : bit + (j - i) + 1;
+        const uint32_t bit = (i % BLOCK_SIZE) + DIAG_R0;
+        uint32_t b = (i > j) ? bit - (i - j) + 1 : bit + 1;
+        uint32_t e = (i > j) ? bit + 1 : bit + (j - i) + 1;
 
         WordType mask = ((WordType(1) << (e - b)) - WordType(1)) << b;
         int negatives = popcount(bv[i].HN & mask);
         int positives = popcount(bv[i].HP & mask);
 
-        uint16_t score = bv[i].score;
+        uint32_t score = bv[i].score;
         score += (i > j) ? (negatives - positives) : (positives - negatives);
         return score;
     }
@@ -589,25 +599,25 @@ class BitParallelED : public IBitParallelED {
     /**
      * @see IBitParallelED::at
      */
-    uint16_t at(uint16_t i, uint16_t j) const override final {
+    uint32_t at(uint32_t i, uint32_t j) const override final {
         return operator()(i, j);
     }
 
     /**
      * @see IBitParallelED::onlyVerticalGapsLeft
      */
-    bool onlyVerticalGapsLeft(uint16_t i) const override final {
+    bool onlyVerticalGapsLeft(uint32_t i) const override final {
         assert(i < m);
 
         if (i + LEFT < n) // if the column n is not yet reached on row i
             return false;
 
-        const uint16_t b = i / BLOCK_SIZE;
-        const uint16_t r = i % BLOCK_SIZE;
+        const uint32_t b = i / BLOCK_SIZE;
+        const uint32_t r = i % BLOCK_SIZE;
 
         // check if all relevant bits for HN are set to 1
-        uint16_t bb = DIAG_R0 - Wv + r + 1;
-        uint16_t be = DIAG_R0 + n - b * BLOCK_SIZE;
+        uint32_t bb = DIAG_R0 - Wv + r + 1;
+        uint32_t be = DIAG_R0 + n - b * BLOCK_SIZE;
 
         return (((~bv[i].HN >> bb) << bb) << (WORD_SIZE - be)) == WordType(0);
     }
@@ -615,21 +625,21 @@ class BitParallelED : public IBitParallelED {
     /**
      * @see IBitParallelED::getFirstColumn
      */
-    uint16_t getFirstColumn(uint16_t i) const override final {
+    uint32_t getFirstColumn(uint32_t i) const override final {
         return (i <= Wv) ? 0u : i - Wv;
     }
 
     /**
      * @see IBitParallelED::getNumberOfCols
      */
-    uint16_t getNumberOfCols() const override final {
+    uint32_t getNumberOfCols() const override final {
         return n;
     }
 
     /**
      * @see IBitParallelED::getNumberOfRows
      */
-    uint16_t getNumberOfRows() const override final {
+    uint32_t getNumberOfRows() const override final {
         return m;
     }
 
@@ -650,7 +660,7 @@ class BitParallelED : public IBitParallelED {
     /**
      * @see IBitParallelED::getSizeOfFinalColumn
      */
-    uint16_t getSizeOfFinalColumn() const override final {
+    uint32_t getSizeOfFinalColumn() const override final {
         return Wh + Wv + 1;
     }
 
@@ -658,7 +668,7 @@ class BitParallelED : public IBitParallelED {
      * Print the banded matrix. This is a debugging function.
      * @param maxRow Last row index to print
      */
-    void printMatrix(uint16_t maxRow = 500) const;
+    void printMatrix(uint32_t maxRow = 500) const;
 
     /**
      * Get the maximum edit distance that can be computed by a matrix of this
@@ -677,11 +687,11 @@ class BitParallelED : public IBitParallelED {
     }
 
   private:
-    uint16_t maxED; // maximum allowed edit distance
-    uint16_t m;     // number of rows
-    uint16_t n;     // number of columns
-    uint16_t Wv;    // vertical width of the band
-    uint16_t Wh;    // horizontal width of the band
+    uint32_t maxED; // maximum allowed edit distance
+    uint32_t m;     // number of rows
+    uint32_t n;     // number of columns
+    uint32_t Wv;    // vertical width of the band
+    uint32_t Wh;    // horizontal width of the band
 
     std::vector<BitVectors<WordType>> bv;                  // bitvectors
     std::vector<std::array<WordType, N_MATCH_VECTORS>> mv; // match vectors
@@ -692,7 +702,7 @@ class BitParallelED : public IBitParallelED {
      * @param i The row to fill in
      * @returns The last column to fill in
      */
-    uint16_t getLastColumn(uint16_t i) const {
+    uint32_t getLastColumn(uint32_t i) const {
         return std::min(n - 1, i + Wh);
     }
 };

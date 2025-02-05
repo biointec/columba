@@ -17,6 +17,8 @@
  ******************************************************************************/
 
 #include "seqfile.h"
+#include <algorithm>
+#include <unordered_map>
 
 #ifdef HAVE_ZLIB
 #include "zlib.h" // for gzeof, gzgets, gzputc, gzungetc, gzwrite, gzgetc
@@ -25,8 +27,43 @@
 using namespace std;
 
 // ============================================================================
-// FILETYPE ENUM
+// FILETYPE FUNCTIONS
 // ============================================================================
+
+pair<FileType, string> getFileType(const string& fn) {
+    // Map of extensions to file types
+    static const unordered_map<string, FileType> extensionMap = {
+        {".fa", FileType::FASTA},          {".fna", FileType::FASTA},
+        {".fasta", FileType::FASTA},       {".fa.gz", FileType::FASTA_GZ},
+        {".fna.gz", FileType::FASTA_GZ},   {".fasta.gz", FileType::FASTA_GZ},
+        {".fq", FileType::FASTQ},          {".fastq", FileType::FASTQ},
+        {".fnq", FileType::FASTQ},         {".fq.gz", FileType::FASTQ_GZ},
+        {".fastq.gz", FileType::FASTQ_GZ}, {".fnq.gz", FileType::FASTQ_GZ}};
+
+    // Convert the filename to lowercase
+    string lowerFn = fn;
+    transform(lowerFn.begin(), lowerFn.end(), lowerFn.begin(), ::tolower);
+
+    for (unordered_map<string, FileType>::const_iterator it =
+             extensionMap.begin();
+         it != extensionMap.end(); ++it) {
+        const auto& extension = it->first;
+        const auto& type = it->second;
+
+        // Check if the filename ends with the current extension
+        if (lowerFn.size() >= extension.size() &&
+            lowerFn.compare(lowerFn.size() - extension.size(), extension.size(),
+                            extension) == 0) {
+            // Extract the basename by removing the extension
+            string basename = fn.substr(0, fn.size() - extension.size());
+            return make_pair(type, basename);
+        }
+    }
+
+    // If no matching extension is found, return UNKNOWN file type with the
+    // original filename
+    return make_pair(FileType::UNKNOWN_FT, fn);
+}
 
 std::ostream& operator<<(std::ostream& out, const FileType& fileType) {
     switch (fileType) {

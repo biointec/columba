@@ -571,24 +571,30 @@ bool SearchStrategy::findBestAlignments(const ReadBundle& bundle,
     const auto& read = bundle.getRead();
     const auto& revC = bundle.getRevComp();
 
-    if (!ovFW[0].first) {
-        // start with exact match, this does not need an in-text verification
-        // matrix as an exact match has no insertions or deletions
-        index.setIndexInMode(FORWARD_STRAND);
-        index.exactMatchesOutput(bundle.getRead(), counters, ovFW[0].second);
-        ovFW[0].first = true;
-    }
-    if (!ovRC[0].first) {
-        index.setIndexInMode(REVERSE_C_STRAND);
-        index.exactMatchesOutput(bundle.getRevComp(), counters, ovRC[0].second);
-        ovRC[0].first = true; // processing for 0 finished
-    }
+    if (x == 0) {
+        // start with exact match, this does not need an in-text
+        // verification matrix as an exact match has no insertions or
+        // deletions
+        if (!ovFW[0].first) {
 
-    if (!ovFW[0].second.empty() || !ovRC[0].second.empty()) {
-        checkAlignments(ovFW, best, 0, counters, cutOff, read);
-        checkAlignments(ovRC, best, 0, counters, cutOff, revC);
-        if (best == 0) {
-            bestFound = true;
+            index.setIndexInMode(FORWARD_STRAND, status);
+            index.exactMatchesOutput(bundle.getRead(), counters,
+                                     ovFW[0].second);
+            ovFW[0].first = true;
+        }
+        if (!ovRC[0].first) {
+            index.setIndexInMode(REVERSE_C_STRAND, status);
+            index.exactMatchesOutput(bundle.getRevComp(), counters,
+                                     ovRC[0].second);
+            ovRC[0].first = true; // processing for 0 finished
+        }
+
+        if (!ovFW[0].second.empty() || !ovRC[0].second.empty()) {
+            checkAlignments(ovFW, best, 0, counters, cutOff, read);
+            checkAlignments(ovRC, best, 0, counters, cutOff, revC);
+            if (best == 0) {
+                bestFound = true;
+            }
         }
     }
 
@@ -962,6 +968,7 @@ void SearchStrategy::processCombFR(ReadPair& pair, OccVector& matches1,
                                    Counters& counters) {
     vector<PairedTextOccs> pairs12; // the pairs that are 1-2
     vector<PairedTextOccs> pairs21; // the pairs that are 2-1
+
     auto process12 = [&]() {
         processComb(pair.getBundle1().getRead(), pair.getBundle2().getRevComp(),
                     counters, FIRST_IN_PAIR, FORWARD_STRAND, SECOND_IN_PAIR,
@@ -1045,34 +1052,42 @@ vector<PairedTextOccs> SearchStrategy::matchApproxPairedEndBestPlusX(
     index.resetInTextMatrices();
 #endif
 
+    // the minimal distance that has not been explored
+    length_t minDistNotExplored = 0;
+
     // try to find a pair that matches exactly according to the
     // orientation
-    (this->*processOriBestPtr)(pair, fw1, fw2, rc1, rc2, pairs, maxFragSize,
-                               minFragSize, 0, 0, counters);
+    if (x == 0) {
+
+        (this->*processOriBestPtr)(pair, fw1, fw2, rc1, rc2, pairs, maxFragSize,
+                                   minFragSize, 0, 0, counters);
+        minDistNotExplored = 1; // all distances below 1 have been explored
+    }
     bool bestFound = false;
     if (!pairs.empty()) {
         best = 0;
         bestFound = true;
     }
 
-    length_t minTotDist = 1;
     length_t maxStratum = (best == 0) ? x : cutOff1 + cutOff2;
 
     for (length_t k = max(x, (length_t)1); k <= maxStratum;) {
 
         (this->*processOriBestPtr)(pair, fw1, fw2, rc1, rc2, pairs, maxFragSize,
-                                   minFragSize, k, minTotDist, counters);
+                                   minFragSize, k, minDistNotExplored,
+                                   counters);
 
         if (!bestFound) {
             if (!pairs.empty()) {
                 // A best pair has been found
                 best = k;
                 bestFound = true;
-                maxStratum = min(best + x, cutOff1 + cutOff2 + 1);
-                minTotDist = best + 1;
+                maxStratum = min(best + x, cutOff1 + cutOff2);
+                minDistNotExplored = k + 1;
                 if (x == 0) {
                     break;
                 }
+
                 k = maxStratum;
 
             } else {
@@ -1091,6 +1106,7 @@ vector<PairedTextOccs> SearchStrategy::matchApproxPairedEndBestPlusX(
     }
 
     if (pairs.empty()) {
+
         // no pairs found, try discordant pairs
         pairDiscordantlyBest(fw1, rc1, fw2, rc2, pairs, pair, counters,
                              unpairedOcc, x);
@@ -1368,9 +1384,10 @@ void SearchStrategy::addOneUnmapped(ReadPair& reads, vector<TextOcc>& matches1,
     // mapped read
     auto createPairedOccurrences = [&](vector<TextOcc>& occurrences,
                                        ReadBundle& bundle1, ReadBundle& bundle2,
-                                       bool isFirstMapped,
+                                       const bool isFirstMapped,
                                        vector<PairedTextOccs>& pairs) {
         const auto& mappedBundle = (isFirstMapped) ? bundle1 : bundle2;
+
         for (auto& occurrence : occurrences) {
             // assign sequence and generate CIGAR string
             const auto& seq = mappedBundle.getSequence(occurrence.getStrand());
@@ -1401,10 +1418,10 @@ void SearchStrategy::addOneUnmapped(ReadPair& reads, vector<TextOcc>& matches1,
     // mate is empty (unmapped) downstream
     if (firstMapped) {
         createPairedOccurrences(matches1, reads.getBundle1(),
-                                reads.getBundle2(), true, pairs);
+                                reads.getBundle2(), firstMapped, pairs);
     } else {
         createPairedOccurrences(matches2, reads.getBundle1(),
-                                reads.getBundle2(), false, pairs);
+                                reads.getBundle2(), firstMapped, pairs);
     }
     if (pairs.empty()) {
         // unlikely but possible that no match with assigned sequence
@@ -1565,28 +1582,35 @@ void SearchStrategy::pairDiscordantlyBest(OccVector& fw1, OccVector& rc1,
                                           ReadPair& reads, Counters& counters,
                                           vector<TextOcc>& unpairedOcc,
                                           length_t x) {
+
     assert(fw1.size() == rc1.size());
     assert(fw2.size() == rc2.size());
     length_t max1 = fw1.size() - 1;
     length_t max2 = fw2.size() - 1;
     if (discordantAllowed) {
 
+        length_t bestStratum = fw1.size() + fw2.size() + 1;
+        bool bestFound = false;
+
         // we need to find the pair with the best total distance score
+
         for (length_t i = 0; i < fw1.size() + fw2.size(); i++) {
-            for (length_t e1 = 0; e1 <= min(i, max1); e1++) {
-                length_t e2 = i - e1;
-                if (e2 > max2) {
-                    continue;
-                }
-                // map the reads in both orientations for this stratum
-                mapStratum(fw1, e1, counters, reads.getRead1(), FIRST_IN_PAIR,
+            if (i <= max1) {
+                mapStratum(fw1, i, counters, reads.getRead1(), FIRST_IN_PAIR,
                            FORWARD_STRAND);
-                mapStratum(rc1, e1, counters, reads.getRevComp1(),
-                           FIRST_IN_PAIR, REVERSE_C_STRAND);
-                mapStratum(fw2, e2, counters, reads.getRead2(), SECOND_IN_PAIR,
+                mapStratum(rc1, i, counters, reads.getRevComp1(), FIRST_IN_PAIR,
+                           REVERSE_C_STRAND);
+            }
+            if (i <= max2) {
+                mapStratum(fw2, i, counters, reads.getRead2(), SECOND_IN_PAIR,
                            FORWARD_STRAND);
-                mapStratum(rc2, e2, counters, reads.getRevComp2(),
+                mapStratum(rc2, i, counters, reads.getRevComp2(),
                            SECOND_IN_PAIR, REVERSE_C_STRAND);
+            }
+            length_t min1 = (i > max2) ? i - max2 : 0;
+            for (length_t e1 = min1; e1 <= min(i, max1); e1++) {
+                length_t e2 = i - e1;
+
                 // get all possible discordant pairs for this stratum
                 addDiscPairs(fw1[e1].second, rc1[e1].second, fw2[e2].second,
                              rc2[e2].second, pairs, i, counters, reads,
@@ -1594,7 +1618,13 @@ void SearchStrategy::pairDiscordantlyBest(OccVector& fw1, OccVector& rc1,
             }
             if (!pairs.empty()) {
                 // found discordant pairs
-                return;
+                if (!bestFound) {
+                    bestStratum = i;
+                    bestFound = true;
+                }
+                if (i == bestStratum + x) {
+                    return;
+                }
             }
         }
     }
@@ -1605,6 +1635,7 @@ void SearchStrategy::pairDiscordantlyBest(OccVector& fw1, OccVector& rc1,
                                  FIRST_IN_PAIR, x);
     auto best2 = findBestMapping(fw2, rc2, reads.getBundle2(), counters,
                                  SECOND_IN_PAIR, x);
+
     if (best1.empty() && best2.empty()) {
         // no mappings found, add both reads as unmapped
         addBothUnmapped(reads, pairs);
@@ -1722,7 +1753,7 @@ void SearchStrategy::generateOutputSingleEnd(vector<TextOcc>& occs,
 
     // for each occurrence find the assigned sequence
     for (auto& t : occs) {
-        index.setIndexInMode(t.getStrand(), t.getPairStatus());
+        index.setIndexInMode(t.getStrand());
         const auto& seq = bundle.getSequence(t.getStrand());
         length_t seqID;
         SeqNameFound found =

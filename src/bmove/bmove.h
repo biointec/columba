@@ -52,13 +52,19 @@ class BMove : public IndexInterface {
     SparseBitvec predFirst;
     SparseBitvec predLast;
 
+#ifndef PHI_MOVE
     // Contain predecessor to run mappings.
     sdsl::int_vector<> firstToRun;
     sdsl::int_vector<> lastToRun;
+#else
+    // Contains bit packed phi and phi inverse move structures
+    MovePhiReprBP phiMove;
+    MovePhiReprBP phiInvMove;
+#endif
 
     // The Move data structure of the text and the reverse text
-    MoveRepr move;
-    MoveRepr moveR;
+    MoveLFReprBP move;
+    MoveLFReprBP moveR;
 
     // ----------------------------------------------------------------------------
     // PREPROCESSING ROUTINES
@@ -92,6 +98,7 @@ class BMove : public IndexInterface {
     // ROUTINES FOR ACCESSING DATA STRUCTURE
     // ----------------------------------------------------------------------------
 
+#ifndef PHI_MOVE
     /**
      * Finds the text position given the position that succeeds it in the SA,
      * in other words, finds SA[i-1] given SA[i]
@@ -105,6 +112,7 @@ class BMove : public IndexInterface {
      * @param pos Position SA[i] in the text, to be updated to SA[i+1]
      */
     void phiInverse(length_t& pos) const;
+#endif
 
     /**
      * Get toehold for the given character to match.
@@ -129,7 +137,8 @@ class BMove : public IndexInterface {
      * @returns A toehold for the full range in the BWT.
      */
     length_t getInitialToehold() const {
-        return samplesLast[samplesLast.size() - 1];
+        assert(samplesLast[samplesLast.size() - 1]);
+        return samplesLast[samplesLast.size() - 1] - 1;
     }
 
     // ----------------------------------------------------------------------------
@@ -154,8 +163,8 @@ class BMove : public IndexInterface {
      */
     void
     findRangeWithExtraCharBackwardAuxiliary(length_t positionInAlphabet,
-                                           SARange& parentBackwardRange,
-                                           SARange& childBackwardRange) const;
+                                            SARange& parentBackwardRange,
+                                            SARange& childBackwardRange) const;
 
     /**
      * Finds the ranges of cP using the principle explained in the paper of
@@ -350,8 +359,8 @@ class BMove : public IndexInterface {
      * index.
      */
     virtual SARangePair getCompleteRange() const override {
-        return SARangePair(SARange(0, textLength, 0, move.getNrOfRuns() - 1),
-                           SARange(0, textLength, 0, moveR.getNrOfRuns() - 1),
+        return SARangePair(SARange(0, textLength, 0, move.size() - 1),
+                           SARange(0, textLength, 0, moveR.size() - 1),
                            getInitialToehold(), false, 0);
     }
 

@@ -7,6 +7,11 @@
 
 #include <vector>
 
+#ifdef _WIN32
+#include <direct.h>
+#define stat _stat
+#endif
+
 const std::vector<std::string> schemes = {
     "kuch1",  "kuch2", "kianfar",  "pigeon", "01*0",
     "custom", "naive", "multiple", "minU",   "columba"};
@@ -180,6 +185,21 @@ class CustomOption : public ParameterOption {
     }
 };
 
+class NoDynamicSelectionWithCustomOption : public ParameterOption {
+  public:
+    NoDynamicSelectionWithCustomOption()
+        : ParameterOption("nD", "no-dynamic-selection", false, NONE, ADVANCED) {
+    }
+
+    void process(const std::string& arg, Parameters& params) const override {
+        params.customDynamicSelection = false;
+    }
+
+    std::string getDescription() const override {
+        return "Do not use dynamic selection with custom search scheme.";
+    }
+};
+
 /**
  * Option for the command line arguments considering the dynamic selection
  * custom collection of search schemes option to be used.
@@ -318,9 +338,29 @@ class OutputFileOption : public ParameterOption {
 
     void process(const std::string& arg, Parameters& params) const override {
         params.outputFile = arg;
-        if (params.outputFile.size() > 3 &&
-            params.outputFile.substr(params.outputFile.size() - 4) != ".sam") {
-            params.outputIsSAM = false;
+
+        bool samExt =
+            (params.outputFile.size() > 3 &&
+             params.outputFile.substr(params.outputFile.size() - 4) == ".sam");
+        bool samGzExt = (params.outputFile.size() > 6 &&
+                         params.outputFile.substr(params.outputFile.size() -
+                                                  7) == ".sam.gz");
+
+        params.outputIsSAM = samExt || samGzExt;
+
+        // check if the directory of the output file exists
+        size_t found = params.outputFile.find_last_of("/\\");
+        if (found == std::string::npos) {
+            return;
+        }
+        std::string directory = params.outputFile.substr(0, found);
+        struct stat info;
+        if (stat(directory.c_str(), &info) != 0 || !(info.st_mode & S_IFDIR)) {
+            std::string withoutDirectory = params.outputFile.substr(found + 1);
+            logger.logWarning("Directory " + directory +
+                              " does not exist. Setting output file to " +
+                              withoutDirectory + " in the current directory.");
+            params.outputFile = withoutDirectory;
         }
     }
 
@@ -373,13 +413,19 @@ class KmerSizeOption : public ParameterOption {
         try {
             params.kmerSize = std::stoi(arg);
         } catch (...) {
-            logger.logWarning("kmerSkipSize should be an integer." +
+            logger.logWarning("kmer-size should be an integer." +
                               ignoreMessage());
         }
         if (params.kmerSize < 0 || params.kmerSize > 15) {
-            logger.logWarning("kmerSkipSize should be in [0, 15]." +
+            logger.logWarning("kmer-size should be in [0, 15]." +
                               ignoreMessage());
             params.kmerSize = defaultKmerSize;
+        }
+
+        if (params.kmerSize == 0) {
+            logger.logWarning(
+                "Setting kmer-size to 0 will affect peformance. Consider "
+                "choosing a value of at least 1.");
         }
     }
 
@@ -703,6 +749,39 @@ class ReorderOption : public ParameterOption {
     }
 };
 
+class StrataAfterBestOption : public ParameterOption {
+  public:
+    StrataAfterBestOption()
+        : ParameterOption("x", "strata-after-best", true, INTEGER,
+                          OptionType::ALIGNMENT) {
+    }
+
+    void process(const std::string& arg, Parameters& params) const override {
+        if (!arg.empty()) {
+            try {
+                int x = std::stoi(arg);
+                if (x < 0) {
+                    logger.logWarning(
+                        "Number of strata to explore after best stratum (x) "
+                        "should be a positive integer!" +
+                        ignoreMessage(arg));
+                    x = 0;
+                }
+                params.strataAfterBest = x;
+            } catch (...) {
+                logger.logWarning("Number of strata to explore after best "
+                                  "stratum (x) should be a positive integer!" +
+                                  ignoreMessage(arg));
+            }
+        }
+    }
+
+    std::string getDescription() const override {
+        return "The number of strata above the best stratum to explore in "
+               "BEST mode. Default is 0.";
+    }
+};
+
 const std::vector<std::shared_ptr<Option>> ParametersInterface::options = {
     std::make_shared<PartitioningOption>(),
     std::make_shared<MetricOption>(),
@@ -726,8 +805,10 @@ const std::vector<std::shared_ptr<Option>> ParametersInterface::options = {
     std::make_shared<XATagOption>(),
     std::make_shared<SearchSchemeOption>(),
     std::make_shared<CustomOption>(),
+    std::make_shared<NoDynamicSelectionWithCustomOption>(),
     std::make_shared<DynamicSelectionOption>(),
     std::make_shared<ReorderOption>(),
+    std::make_shared<StrataAfterBestOption>(),
     std::make_shared<HelpOption>(),
 #ifndef RUN_LENGTH_COMPRESSION // options that are not available with run-length
                                // compression
@@ -748,6 +829,8 @@ Parameters Parameters::processOptionalArguments(int argc, char** argv) {
 
     params.parse(argc, argv);
 
+    // sanity checks
+
     if (params.maxDistance > 4 && params.custom.empty() &&
         params.dynamicSelectionPath.empty() && params.searchScheme != "naive") {
         if (params.searchScheme != "minU" && params.searchScheme != "columba") {
@@ -758,6 +841,55 @@ Parameters Parameters::processOptionalArguments(int argc, char** argv) {
         } else if (params.searchScheme == "minU" && params.maxDistance > 7) {
             throw std::runtime_error(
                 "MinU search scheme is only available for up to 7 errors.");
+        }
+    }
+
+    if (params.strataAfterBest > 0 && params.mMode != BEST) {
+        logger.logWarning("Strata exploration after best stratum is only "
+                          "available in BEST mode. " +
+                          StrataAfterBestOption().ignoreMessage());
+    }
+
+    if (params.custom.empty() && !params.customDynamicSelection) {
+        logger.logWarning("Turning off dynamic selection only has effect when "
+                          "a custom search scheme is used. " +
+                          NoDynamicSelectionWithCustomOption().ignoreMessage());
+    }
+
+    if (!params.custom.empty()) {
+        // Check the last character of the path
+        char lastChar = params.custom.back();
+
+#ifdef _WIN32
+        // On Windows, check for backslash or forward slash
+        if (lastChar != '\\' && lastChar != '/') {
+            params.custom += '\\';
+        }
+#else
+        // On Unix-like systems, check for forward slash
+        if (lastChar != '/') {
+            params.custom += '/';
+        }
+#endif
+    }
+
+    if (params.mMode == BEST) {
+        length_t maxValue;
+        std::string metric = "";
+        if (params.metric == EDIT) {
+            maxValue = std::min(MAX_K_EDIT, MAX_K);
+            metric = "edit";
+        } else {
+            maxValue = MAX_K;
+            metric = "hamming";
+        }
+        if (params.strataAfterBest > maxValue) {
+            params.strataAfterBest = maxValue;
+            logger.logWarning("Columba only supports up to " +
+                              std::to_string(maxValue) + " errors for " +
+                              metric +
+                              " distance. Setting strata after best to " +
+                              std::to_string(maxValue));
         }
     }
 
@@ -788,12 +920,14 @@ Parameters Parameters::processOptionalArguments(int argc, char** argv) {
            << " is higher than the number of threads "
               "available: "
            << std::thread::hardware_concurrency()
-           << ". Setting number of threads to maximum";
+           << ". Setting number of threads to "
+           << std::thread::hardware_concurrency();
         logger.logWarning(ss);
         params.nThreads = std::thread::hardware_concurrency();
     }
 
     if (params.secondReadsFile.empty()) {
+        // single-end reads
         if (params.discordantAllowed) {
             logger.logWarning("Discordant pairs does not apply to single-end "
                               "alignment. " +
@@ -805,22 +939,6 @@ Parameters Parameters::processOptionalArguments(int argc, char** argv) {
                 "Paired-end parameters are never inferred for "
                 "single-end alignment. " +
                 NotInferPairedEndParametersOption().ignoreMessage());
-        }
-    } else {
-        // paired-end reads
-        if (params.XATag) {
-            logger.logWarning("XA tag is not supported for paired-end reads. " +
-                              XATagOption().ignoreMessage());
-            params.XATag = false;
-        }
-        if (!params.outputIsSAM) {
-            params.outputFile =
-                params.outputFile.substr(0, params.outputFile.size() - 4) +
-                ".sam";
-            logger.logWarning("RHS output is not supported for paired-end "
-                              "reads. Renaming output file to " +
-                              params.outputFile);
-            params.outputIsSAM = true;
         }
 
         if (!params.outputIsSAM) {
@@ -838,8 +956,35 @@ Parameters Parameters::processOptionalArguments(int argc, char** argv) {
             }
 #endif
         }
-    }
+    } else {
+        // paired-end reads
+        if (params.XATag) {
+            logger.logWarning("XA tag is not supported for paired-end reads. " +
+                              XATagOption().ignoreMessage());
+            params.XATag = false;
+        }
+        if (!params.outputIsSAM) {
 
+            // check if last 4 characers are .rhs
+            if (params.outputFile.size() > 4 &&
+                params.outputFile.substr(params.outputFile.size() - 4) ==
+                    ".rhs") {
+                params.outputFile =
+                    params.outputFile.substr(0, params.outputFile.size() - 4) +
+                    ".sam";
+                logger.logWarning("RHS output is not supported for paired-end "
+                                  "reads. Renaming output file to " +
+                                  params.outputFile);
+            } else {
+                params.outputFile = params.outputFile + ".sam";
+                logger.logWarning("Unknown output format. Renaming output file "
+                                  "to " +
+                                  params.outputFile);
+            }
+
+            params.outputIsSAM = true;
+        }
+    }
     return params;
 }
 
@@ -851,11 +996,16 @@ Parameters::createStrategy(IndexInterface& index) const {
         strategy.reset(new MultipleSchemesStrategy(
             index, dynamicSelectionPath, pStrategy, metric, mMode, sMode));
     } else if (!custom.empty()) {
-        DynamicCustomStrategy* customStrategy =
-            DynamicCustomStrategy::createDynamicCustomSearchStrategy(
-                index, custom, pStrategy, metric, mMode, sMode);
+        if (customDynamicSelection) {
+            DynamicCustomStrategy* customStrategy =
+                DynamicCustomStrategy::createDynamicCustomSearchStrategy(
+                    index, custom, pStrategy, metric, mMode, sMode);
 
-        strategy.reset(customStrategy);
+            strategy.reset(customStrategy);
+        } else {
+            strategy.reset(new CustomSearchStrategy(index, custom, pStrategy,
+                                                    metric, mMode, sMode));
+        }
 
         if (mMode == ALL) {
             if (!strategy->supportsDistanceScore(maxDistance)) {
@@ -923,6 +1073,7 @@ Parameters::createStrategy(IndexInterface& index) const {
     strategy->setUnmappedSam(!noUnmappedRecord);
     strategy->setXATag(XATag);
     strategy->setSamOutput(outputIsSAM);
+    strategy->setStrataAfterBest(strataAfterBest);
 
     return strategy;
 }

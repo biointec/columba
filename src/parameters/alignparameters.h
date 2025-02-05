@@ -37,6 +37,8 @@ struct Parameters : public ParametersInterface {
     std::string dynamicSelectionPath =
         ""; // path to custom search scheme with dynamic selection (overrides
             // default search scheme)
+    bool customDynamicSelection = true; // use dynamic selection with custom
+                                        // search scheme
 
     // Input output parameters
     std::string firstReadsFile = "";  // path to first reads file
@@ -57,6 +59,8 @@ struct Parameters : public ParametersInterface {
                               // seeds during partitioning)
     length_t minIdentity =
         95; // The minimum identity for alignments in BEST mode
+    length_t strataAfterBest = 0; // the number of strata above the best stratum
+                                  // to explore in BEST mode
 
     // Non-bmove parameters
 #ifndef RUN_LENGTH_COMPRESSION

@@ -41,9 +41,16 @@ class Read {
      * and replacing all non-ACGT characters with N.
      */
     void cleanUpRecord() {
-        // remove the @ or > and remove everything after space in seqID
-        // seqID.erase(seqID.find(' '));
+        // Remove everything after the first space in seqID, if space exists
+        size_t spacePos = seqID.find(' ');
+        if (spacePos != std::string::npos) {
+            seqID.erase(spacePos);
+        }
+
+        // Remove the first character (@ or >)
         seqID = seqID.substr(1);
+
+        // Replace all non-ACGT characters with N
         replaceNonACTGWithN();
     }
 
