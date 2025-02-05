@@ -1,0 +1,6 @@
+[submodule "external/Big-BWT"]
+	path = external/Big-BWT
+	url = https://gitlab.com/manzai/Big-BWT.git
+[submodule "external/libdivsufsort"]
+	path = external/libdivsufsort
+	url = https://github.com/y-256/libdivsufsort.git
