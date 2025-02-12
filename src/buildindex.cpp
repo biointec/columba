@@ -537,7 +537,6 @@ void createSuffixArrayDivsufsort64(const string& T, vector<uint64_t>& SA) {
 
     logger.logDeveloper("Divsufsort successful");
 }
-
 #endif
 
 /**
@@ -768,6 +767,8 @@ void createSuffixArrayAndBWT(const string& T, vector<length_t>& SA,
     createSAWithSanityCheck(SA, T);
     generateBWT(T, SA, BWT);
 }
+
+
 
 #ifdef RUN_LENGTH_COMPRESSION
 // ============================================================================
@@ -1554,6 +1555,8 @@ void replaceSentinel(std::string& str) {
     }
 }
 
+#endif // BIG_BWT_USABLE
+
 void processSamplesAndPreds(const string& baseFN,
                             const vector<length_t>& samplesFirst,
                             const vector<length_t>& samplesLast,
@@ -1670,6 +1673,8 @@ void createIndex(string& T, const BuildParameters& params,
         revBWT.clear();
     }
 }
+
+#ifdef BIG_BWT_USABLE
 
 void createIndexPFP(const string& baseFN) {
 
@@ -1878,6 +1883,53 @@ int preprocessingOnly(const BuildParameters& params) {
 // FUNCTIONALITY FOR VANILLA
 // ============================================================================
 
+/**
+ * @brief Write the sparse suffix array with a given sparseness factor.
+ * @param baseFN The base filename.
+ * @param SA The suffix array.
+ * @param saSF The sparseness factor.
+ */
+void writeSA(const string& baseFN, const vector<length_t>& SA, length_t saSF) {
+    SparseSuffixArray sparseSA(SA, saSF);
+    sparseSA.write(baseFN);
+    logger.logInfo("Wrote sparse suffix array with factor " +
+                   std::to_string(saSF));
+}
+
+/**
+ * @brief Write the sparse suffix array with all sparseness factors.
+ * @param baseFN The base filename.
+ * @param SA The suffix array.
+ */
+void writeSA(const string& baseFN, const vector<length_t>& SA) {
+    for (int saSF = 1; saSF <= 128; saSF *= 2) {
+        writeSA(baseFN, SA, saSF);
+    }
+}
+
+/**
+ * @brief Create the suffix array and BWT and write the sparse suffix array with
+ * the sparsenessfactor defined in the BuildParameters.
+ * @param T The text.
+ * @param SA The suffix array. (output)
+ * @param BWT The BWT. (output)
+ * @param params The build parameters.
+ */
+void createSuffixArrayAndBWTAndWriteSparseSA(const string& T,
+                                             vector<length_t>& SA, string& BWT,
+                                             const BuildParameters& params) {
+    createSAWithSanityCheck(SA, T);
+
+    // create sparse suffix arrays
+    if (params.allSparsenessFactors) {
+        writeSA(params.baseFN, SA);
+    } else {
+        writeSA(params.baseFN, SA, params.sparsenessFactor);
+    }
+
+    generateBWT(T, SA, BWT);
+}
+
 void writeBWT(const Alphabet<ALPHABET>& sigma, const string& baseFN,
               string& BWT) {
 
@@ -1888,19 +1940,6 @@ void writeBWT(const Alphabet<ALPHABET>& sigma, const string& baseFN,
     eBWT.write(baseFN + ".bwt");
 
     logger.logInfo("Wrote file " + baseFN + ".bwt");
-}
-
-void writeSA(const string& baseFN, const vector<length_t>& SA, length_t saSF) {
-    SparseSuffixArray sparseSA(SA, saSF);
-    sparseSA.write(baseFN);
-    logger.logInfo("Wrote sparse suffix array with factor " +
-                   std::to_string(saSF));
-}
-
-void writeSA(const string& baseFN, const vector<length_t>& SA) {
-    for (int saSF = 1; saSF <= 128; saSF *= 2) {
-        writeSA(baseFN, SA, saSF);
-    }
 }
 
 void writeBWTBitvectors(const string& baseFN, const string& BWT,
@@ -1923,17 +1962,10 @@ void createIndex(string& T, const BuildParameters& params,
     {
         vector<length_t> SA;
         string BWT;
-        createSuffixArrayAndBWT(T, SA, BWT);
-        writeBWT(sigma, baseFN, BWT);
-
-        // create sparse suffix arrays
-        if (params.allSparsenessFactors) {
-            writeSA(baseFN, SA);
-        } else {
-            writeSA(baseFN, SA, params.sparsenessFactor);
-        }
+        createSuffixArrayAndBWTAndWriteSparseSA(T, SA, BWT, params);
         SA.clear();
         vector<length_t>().swap(SA);
+        writeBWT(sigma, baseFN, BWT);
 
         // create succinct BWT bitvector table
         writeBWTBitvectors(baseFN, BWT, sigma, false);
