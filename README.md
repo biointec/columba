@@ -18,7 +18,7 @@ Finally, [contact information](#contact) and [license details](#license-and-depe
 - Columba can handle any valid search scheme, so if new search schemes are discovered no update is needed. See [custom search schemes](./further_info/advanced_options/README.md#custom-search-schemes) below.
 - Columba supports a dynamic selection of search schemes, where the search scheme best suited for the current read and reference text is chosen, resulting in faster runtimes!
 - Columba supports dynamic partitioning of the read, boosting the performance!
-- Columba Vanilla comes with tunable in-text verification, which improves runtimes significantly. More info [here](#advanced-options).
+- Columba Vanilla comes with tunable in-text verification, which improves runtimes significantly. More info [here](./further_info/advanced_options/README.md#advanced-options).
 
 ## Choosing the Right Columba Flavor
 
@@ -413,7 +413,7 @@ Note that this slows down the runtime.
 For advanced users who want to experiment with Columba's functionality some other options are available.
 Note that the default settings have been carefully selected to bring the best performance.
 
-You can find more info about these settings, as well as on the use of custom search schemes [here](further-info/advanced_options/README.md).
+You can find more info about these settings, as well as on the use of custom search schemes [here](./further_info/advanced_options/README.md).
 
 ## Result reproduction
 
