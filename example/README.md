@@ -112,7 +112,7 @@ Reports all best paired matches with at least 95% identity for paired-end reads.
 #### **Paired-End All Matches (-a all flag, Allowing up to 2 Edit Distance Errors with -e flag)**
 
 ```bash
-./columba -r chrom19_index -f SRR17981962_1_sampled.fastq -F SRR17981962_2_sampled.fastq -a all -e 2
+./columba -r chrom19_index -f read_files/SRR17981962_1_sampled.fastq -F read_files/SRR17981962_2_sampled.fastq -a all -e 2
 ```
 
 Reports all paired matches with at most two errors. If no valid paired match could be found the reads are treated as single-end reads.
