@@ -1918,7 +1918,7 @@ class Occurrences {
      */
     void addTextOcc(const Range& range, const length_t& score,
                     std::string&& CIGAR, Strand strand, PairStatus pairStatus) {
-        inTextOcc.emplace_back(range, score, move(CIGAR), strand, pairStatus);
+        inTextOcc.emplace_back(range, score, std::move(CIGAR), strand, pairStatus);
     }
 
     /**

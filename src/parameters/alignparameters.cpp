@@ -8,6 +8,7 @@
 #include <vector>
 
 #ifdef _WIN32
+#include <sys/stat.h>
 #include <direct.h>
 #define stat _stat
 #endif

@@ -318,7 +318,7 @@ void Reader::readerThread() {
                         targetChunkSize *= multFactor;
                         targetChunkSize = (targetChunkSize / 64) * 64;
                         targetChunkSize =
-                            max(targetChunkSize, 1ul); // Ensure it's at least 1
+                            max(targetChunkSize, (size_t)1); // Ensure it's at least 1
                         targetBlockSize =
                             targetChunkSize * numberOfWorkerThreads;
                         change = targetChunkSize != prevSize;

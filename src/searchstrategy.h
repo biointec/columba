@@ -2095,8 +2095,7 @@ class CustomSearchStrategy : public SearchStrategy {
   private:
     std::vector<std::vector<Search>>
         schemePerED; // the search schemes for each distance score,
-    std::vector<bool>
-        supportsMaxScore; // if a particular distance score is supported
+  std::array<bool, MAX_K> supportsMaxScore; // if a particular distance score is supported
 
     // helpers for static partitioning
     std::vector<std::vector<double>>
@@ -2273,7 +2272,6 @@ class CustomSearchStrategy : public SearchStrategy {
 
         // resize and fill the vectors
         schemePerED.resize(MAX_K);
-        supportsMaxScore.resize(MAX_K, false);
         staticPositions.resize(MAX_K);
         beginsPointer.resize(MAX_K, &CustomSearchStrategy::getBeginsDefault);
         seedingPositions.resize(MAX_K);
