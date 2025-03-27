@@ -1,6 +1,6 @@
 # Example instructions
 
-This document quickly explains how to run Columba 2.0 on a test dataset. The test dataset includes the following files:
+This document quickly explains how to run Columba 2.0 on a test dataset on a Unix-like system (Linux/macOS). The test dataset includes the following files:
 
 - **Reference Files:**  
   `HG00096.1.19.fasta`
