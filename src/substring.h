@@ -1,6 +1,6 @@
 /******************************************************************************
- *  Columba 1.2: Approximate Pattern Matching using Search Schemes            *
- *  Copyright (C) 2020-2023 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Columba: Approximate Pattern Matching using Search Schemes                *
+ *  Copyright (C) 2020-2024 - Luca Renders <luca.renders@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -20,23 +20,17 @@
 #ifndef SUBSTRING_H
 #define SUBSTRING_H
 
+#include "definitions.h"
+
 #include <string>
-
-// ============================================================================
-// ENUMS
-// ============================================================================
-
-/**
- * An enum for the direction of the search
- */
-enum Direction { FORWARD, BACKWARD };
-
-#include "wordlength.h"
 
 // ============================================================================
 // CLASS SUBSTRING
 // ============================================================================
 
+/**
+ * A class that represents a substring of a string.
+ */
 class Substring {
   private:
     const std::string* text; // pointer to the string this is a substring of
@@ -45,113 +39,147 @@ class Substring {
         endIndex; // the endIndex of this substring in the text (non-inclusive)
     Direction d;  // The direction of this substring
 
+    // function pointer for the [] operator depending on d
+    using AccessorFunc = char (Substring::*)(length_t) const;
+
+    AccessorFunc accessor;
+
+    /**
+     * Accessor if the direction is backward
+     * @param i the index of the character to get
+     */
+    inline char reverseAccessor(length_t i) const {
+        return *(text->data() + endIndex - i - 1);
+    }
+
   public:
     /**
      * Constructor, the start and end index default of 0 and the size of the
      * text
-     * @param t, the text to point to
-     * @param dir, the direction (defaults to FORWARD)
+     * @param t the text to point to
+     * @param dir the direction (defaults to FORWARD)
      */
     Substring(const std::string& t, Direction dir = FORWARD)
-        : text(&t), startIndex(0), endIndex(t.size()), d(dir) {
+        : text(&t), startIndex(0), endIndex(t.size()), d(dir),
+          accessor(d == FORWARD ? &Substring::forwardAccessor
+                                : &Substring::reverseAccessor) {
     }
 
     /**
      * Constructor, the start and end index default of 0 and the size of the
      * text
-     * @param t, the text to point to
-     * @param dir, the direction (defaults to FORWARD)
+     * @param t the text to point to
+     * @param dir the direction (defaults to FORWARD)
      */
     Substring(const std::string* t, Direction dir = FORWARD)
-        : text(t), startIndex(0), endIndex(t->size()), d(dir) {
+        : text(t), startIndex(0), endIndex(t->size()), d(dir),
+          accessor(d == FORWARD ? &Substring::forwardAccessor
+                                : &Substring::reverseAccessor) {
     }
 
     /**
      * Constructor, the direction defaults to FORWARD
-     * @param t, the text to point to
-     * @param start, the start index of this substring in t
-     * @param end, the end index of this substring in t (non-inclusive)
-     * @param dir, the direction (defaults to FORWARD)
+     * @param t the text to point to
+     * @param start the start index of this substring in t
+     * @param end the end index of this substring in t (non-inclusive)
+     * @param dir the direction (defaults to FORWARD)
      */
     Substring(const std::string* t, length_t start, length_t end,
               Direction dir = FORWARD)
-        : text(t), startIndex(start), endIndex(end), d(dir) {
+        : text(t), startIndex(start), endIndex(end), d(dir),
+          accessor(d == FORWARD ? &Substring::forwardAccessor
+                                : &Substring::reverseAccessor) {
         check();
     }
 
     /**
      * Constructs a substring of the text another substring points to
-     * @param s, pointer to the other substring
-     * @param start, the start index of this new substring in the original text
-     * @param end, the end index of this new stubstring
+     * @param s pointer to the other substring
+     * @param start the start index of this new substring in the original text
+     * @param end the end index of this new substring
      */
     Substring(const Substring* s, length_t start, length_t end)
-        : text(s->text), startIndex(start), endIndex(end), d(s->d) {
+        : text(s->text), startIndex(start), endIndex(end), d(s->d),
+          accessor(d == FORWARD ? &Substring::forwardAccessor
+                                : &Substring::reverseAccessor) {
         check();
     }
 
     /**
      * Constructs a substring of the text another substring points and sets the
      * direction
-     * @param s, pointer to the other substring
-     * @param start, the start index of this new substring in the original text
-     * @param end, the end index of this new stubstring
+     * @param s pointer to the other substring
+     * @param start the start index of this new substring in the original text
+     * @param end the end index of this new substring
+     * @param dir the direction of this new substring
      */
     Substring(const Substring* s, length_t start, length_t end, Direction dir)
-        : text(s->text), startIndex(start), endIndex(end), d(dir) {
+        : text(s->text), startIndex(start), endIndex(end), d(dir),
+          accessor(d == FORWARD ? &Substring::forwardAccessor
+                                : &Substring::reverseAccessor) {
         check();
     }
     /**
      * Constructs a substring of the text another substring points to
-     * @param s, the other substring
-     * @param start, the start index of this new substring in the original text
-     * @param end, the end index of this new stubstring
+     * @param s the other substring
+     * @param start the start index of this new substring in the original text
+     * @param end the end index of this new substring
      */
     Substring(const Substring& s, length_t start, length_t end)
-        : text(s.text), startIndex(start), endIndex(end), d(s.d) {
+        : text(s.text), startIndex(start), endIndex(end), d(s.d),
+          accessor(d == FORWARD ? &Substring::forwardAccessor
+                                : &Substring::reverseAccessor) {
         check();
     }
 
     /**
      * Constructs a substring of the text another substring points and sets the
-     * @param s, the other substring
-     * @param start, the start index of this new substring in the original text
-     * @param end, the end index of this new stubstring
+     * @param s the other substring
+     * @param start the start index of this new substring in the original text
+     * @param end the end index of this new substring
+     * @param dir the direction of this new substring
      */
     Substring(const Substring& s, length_t start, length_t end, Direction dir)
-        : text(s.text), startIndex(start), endIndex(end), d(dir) {
+        : text(s.text), startIndex(start), endIndex(end), d(dir),
+          accessor(d == FORWARD ? &Substring::forwardAccessor
+                                : &Substring::reverseAccessor) {
         check();
     }
 
     /**
      * Set the direction of this substring
-     * @param nd, the new direction
+     * @param nd the new direction
      */
     void setDirection(Direction nd) {
         d = nd;
+        accessor = (d == FORWARD ? &Substring::forwardAccessor
+                                 : &Substring::reverseAccessor);
     }
 
     /**
-     * Creates a substring of a substring, skipping the first skip characters
-     * (relative to the direction)
-     * @param skip, the number of characters to skip
+     * Accessor if the direction is forward
+     * @param i the index of the character to get
      */
-    const Substring getSubPiece(length_t skip) const {
-        if (d == FORWARD) {
-            return Substring(this, startIndex + skip, endIndex);
-        } else {
-            return Substring(this, startIndex, endIndex - skip);
-        }
+    inline char forwardAccessor(length_t i) const {
+        return *(text->data() + startIndex + i);
     }
 
     /**
-     * Get the character at index i of this substring
+     * Get the direction of this substring
+     */
+    Direction getDirection() const {
+        return d;
+    }
+
+    /**
+     * Get the character at index i of this substring. Only use this if it is
+     * unsure if the direction will be backwards of forwards. If direction is
+     * known, directly use accessors.
      * @param i the index to get the character from
      * @returns the character at index i
      */
     char operator[](length_t i) const {
-        return (d == FORWARD) ? text->at(startIndex + i)
-                              : text->at(endIndex - i - 1);
+        return (this->*accessor)(i);
     }
 
     /**
@@ -209,6 +237,7 @@ class Substring {
         this->startIndex = other.begin();
         this->endIndex = other.end();
         this->d = other.d;
+        this->accessor = other.accessor;
 
         return *this;
     }
@@ -238,6 +267,39 @@ class Substring {
 
     void decrementBegin() {
         startIndex--;
+    }
+
+    /**
+     * Check if this substring contains an N
+     */
+    bool containsN() const {
+        for (length_t i = startIndex; i < endIndex; i++) {
+            if (text->at(i) == 'N') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * @brief Checks if this substring equals a given string
+     * @param s the string to compare to
+     * @returns true if the substring equals the string
+     */
+    bool equals(const std::string& s) const {
+        if (s.size() != size()) {
+            return false;
+        }
+        for (length_t i = 0; i < size(); i++) {
+            if ((*this)[i] != s[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    const std::string& getText() const {
+        return *text;
     }
 };
 

@@ -24,7 +24,7 @@ This Python script is designed to check the validity of a search scheme specifie
 
 ## File Format for Search Scheme
 
-The search scheme file  must adhere to the following format:
+The search scheme file must adhere to the following format:
 
 - Each line represents a single search definition, with three lists enclosed in curly braces. The lists are separated by whitespace.
 - Each list should contain a comma-separated list of integers.
@@ -36,7 +36,7 @@ The search scheme file  must adhere to the following format:
 
 Example of a valid search definition line:
 
-```plaintext
+```
 {0,1,2,3} {0,0,0,1} {0,1,3,3}
 ```
 
@@ -44,7 +44,7 @@ Example of a valid search definition line:
 
 Suppose you have a search scheme file `search_scheme.txt` for `k = 2` with the following content:
 
-```plaintext
+```
 {0,1,2,3} {0,0,0,2} {0,1,2,2}
 {1,2,3,0} {0,0,1,1} {0,1,1,2}
 {2,3,1,0} {0,0,0,0} {0,0,2,2}

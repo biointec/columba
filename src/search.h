@@ -1,6 +1,7 @@
 /******************************************************************************
- *  Columba 1.2: Approximate Pattern Matching using Search Schemes            *
- *  Copyright (C) 2020-2023 - Luca Renders <luca.renders@ugent.be> and        *
+ *  Columba: Approximate Pattern Matching using Search Schemes                *
+ *  Copyright (C) 2020-2024 - Luca Renders <luca.renders@ugent.be> and        *
+ *                            Lore Depuydt <lore.depuydt@ugent.be> and        *
  *                            Jan Fostier <jan.fostier@ugent.be>              *
  *                                                                            *
  *  This program is free software: you can redistribute it and/or modify      *
@@ -20,13 +21,22 @@
 #ifndef SEARCH_H
 #define SEARCH_H
 
-#include "fmindexhelpers.h"
-#include <algorithm>
-#include <fstream> // used for reading in files
-#include <iostream>
-#include <numeric>
-#include <sstream>
-#include <vector>
+#include "definitions.h" // for length_t, Direction, BACKWARD, FORWARD
+#include "substring.h"   // for Substring
+
+#include <algorithm> // for copy, max, any_of, min_element
+#include <cassert>   // for assert
+#include <cmath>     // for pow
+#include <cstdint>   // for uint16_t
+#include <fstream>   // for basic_istream, stringstream, ifstream, ostream
+#include <iterator>  // for distance
+#include <memory>    // for allocator, allocator_traits<>::value_type
+#include <numeric>   // for accumulate
+#include <sstream>   // for stringstream
+#include <stdexcept> // for runtime_error
+#include <string>    // for string, operator+, char_traits, basic_string
+#include <utility>   // for pair, make_pair
+#include <vector>    // for vector, _Bit_iterator
 
 #define Distribution std::vector<int>
 
@@ -48,6 +58,7 @@ class Search {
     std::vector<length_t> U;     // the vector with upper bounds
     std::vector<length_t> order; // the vector with the order of the parts
     length_t sIdx;               // the index of the search
+
   private:
     std::vector<Direction> directions; // the directions of each phase
     std::vector<bool>
@@ -56,6 +67,10 @@ class Search {
     std::vector<std::pair<length_t, length_t>>
         lowestAndHighestPartsProcessedBefore; // The lowest and highest parts
                                               // processed before each phase
+    bool unidirectionalBackwards = false;     // flag to indicate unidirectional
+                                              // backwards search
+    length_t uniDirectionalBackwardsIndex; // the index from which the search is
+                                           // only bidirectional backwards
 
     /**
      * @brief Constructor for the Search class.
@@ -74,13 +89,15 @@ class Search {
     Search(std::vector<length_t>& order, std::vector<length_t>& lowerBounds,
            std::vector<length_t>& upperBounds,
            std::vector<Direction>& directions, std::vector<bool>& dSwitch,
-           std::vector<std::pair<length_t, length_t>>
+           const std::vector<std::pair<length_t, length_t>>&
                lowestAndHighestPartsProcessedBefore,
-           length_t idx)
+           length_t idx, bool uniBackwards, length_t uniBackwardsIndex)
         : L(lowerBounds), U(upperBounds), order(order), sIdx(idx),
           directions(directions), directionSwitch(dSwitch),
           lowestAndHighestPartsProcessedBefore(
-              lowestAndHighestPartsProcessedBefore) {
+              lowestAndHighestPartsProcessedBefore),
+          unidirectionalBackwards(uniBackwards),
+          uniDirectionalBackwardsIndex(uniBackwardsIndex) {
     }
 
   public:
@@ -109,6 +126,8 @@ class Search {
         // compute the directions
         std::vector<Direction> directions;
         directions.reserve(order.size());
+        // set the direction of the first part (copy the direction of second
+        // part as first part's direction could be either way)
         directions.push_back((order[1] > order[0]) ? FORWARD : BACKWARD);
 
         for (length_t i = 1; i < order.size(); i++) {
@@ -116,14 +135,13 @@ class Search {
             directions.push_back(d);
         }
 
-        // compute the directionswitches
+        // compute the direction switches
         std::vector<bool> directionSwitch;
         directionSwitch.reserve(order.size());
-        // first partition is not a swithc
+        // first partition is not a switch
         directionSwitch.push_back(false);
 
         // second partition is never a switch
-        // TODO check in case of Kianfar
         directionSwitch.push_back(false);
 
         // add the other partitions
@@ -150,9 +168,42 @@ class Search {
             }
         }
 
+        // check if unidirectional backwards search
+        bool uniBackwards = (order[0] == order.size() - 1);
+        length_t uniBackwardsIndex = order.size(); // initialize on never
+
+        if (order.back() != 0) {
+            uniBackwardsIndex = order.size(); // never uni-directional backwards
+        } else if (uniBackwards) {
+            uniBackwardsIndex = 0; // always unidirectional backwards
+        } else {
+            // find the index from which the search is only bidirectional
+            // backwards this is the part just after the last part has been
+            // processed
+            for (length_t idx = 0; idx < order.size(); idx++) {
+                if (order[idx] == order.size() - 1) {
+                    uniBackwardsIndex = idx + 1;
+                    break;
+                }
+            }
+        }
+
         return Search(order, lowerBounds, upperBounds, directions,
                       directionSwitch, lowestAndHighestPartsProcessedBefore,
-                      sIdx);
+                      sIdx, uniBackwards, uniBackwardsIndex);
+    }
+
+    /**
+     * @brief Static method to create a Search object with a lower bound.
+     * @param originalSearch the original search
+     * @param minD the minimal allowed distance (the last lower bound of the
+     * search will be set to at least this value)
+     */
+    static Search makeSearchWithLowerBound(const Search& originalSearch,
+                                           length_t minD) {
+        Search s(originalSearch);
+        s.setMinED(minD);
+        return s;
     }
 
     /**
@@ -410,9 +461,40 @@ class Search {
 
         return true;
     }
+
+    /**
+     * @brief Sets the minimal allowed distance at the end of the search.
+     * @param minED the minimal allowed distance
+     */
+    void setMinED(length_t minED) {
+        assert(minED <= getMaxED());
+        L.back() = std::max(L.back(), minED);
+    }
+
+    /**
+     * Is the search unidirectional backwards from a certain index until the
+     * end?
+     * @param idx the index from which to check
+     */
+    bool isUnidirectionalBackwards(length_t idx) const {
+        return unidirectionalBackwards || idx >= uniDirectionalBackwardsIndex;
+    }
+
+    /**
+     * Create a search that is a copy of this search but with mirrored
+     * pi-strings
+     * @return the search with mirrored pi-strings
+     */
+    Search mirrorPiStrings() const {
+        std::vector<length_t> mirroredOrder = order;
+        for (length_t i = 0; i < order.size(); i++) {
+            mirroredOrder[i] = order.size() - 1 - order[i];
+        }
+        return Search::makeSearch(mirroredOrder, L, U, sIdx);
+    }
 };
 /**
- * Operator overloading. Outputs the search to theoutput stream
+ * Operator overloading. Outputs the search to the output stream
  * @param os, the output stream
  * @param obj, the search to print
  */
@@ -567,37 +649,6 @@ class SearchScheme {
         }
     }
 
-    /**
-     * @brief Static method to generate all error distributions with a given
-     * number of parts and errors.
-     *
-     * This method generates error distributions with a specified number of
-     * parts and allowed errors.
-     *
-     * @param P The number of parts in the error distributions.
-     * @param K The number of allowed errors.
-     * @param distributions A vector to store the generated error distributions.
-     */
-    static void
-    genErrorDistributions(int P, int K,
-                          std::vector<Distribution>& distributions) {
-        Distribution distribution(P, 0);
-
-        for (int i = 0; i < pow(K + 1, P); i++) {
-            int sum =
-                std::accumulate(distribution.begin(), distribution.end(), 0);
-            if (sum <= K)
-                distributions.push_back(distribution);
-
-            for (int j = 0; j < P; j++) {
-                distribution[j]++;
-                if (distribution[j] != K + 1)
-                    break;
-                distribution[j] = 0;
-            }
-        }
-    }
-
   public:
     /**
      * @brief Constructor for the SearchScheme class.
@@ -640,6 +691,9 @@ class SearchScheme {
         std::vector<Search> rSearches;
         std::string line;
         while (std::getline(stream_searches, line)) {
+            if (line.empty()) {
+                continue;
+            }
             try {
                 rSearches.push_back(makeSearch(line, sIdx++));
             } catch (const std::runtime_error& e) {
@@ -682,6 +736,24 @@ class SearchScheme {
      */
     uint16_t getNumParts() const {
         return searches.front().getNumParts();
+    }
+
+    /**
+     * @brief Mirror the pi-strings of all searches in the scheme
+     * @return the scheme with mirrored pi-strings
+     */
+    SearchScheme mirrorPiStrings() const {
+        std::vector<Search> reversedSearches;
+        reversedSearches.reserve(searches.size());
+        std::transform(searches.begin(), searches.end(),
+                       std::back_inserter(reversedSearches),
+                       [](const Search& s) { return s.mirrorPiStrings(); });
+
+        return SearchScheme(reversedSearches, k);
+    }
+
+    unsigned int getK() const {
+        return k;
     }
 };
 #endif

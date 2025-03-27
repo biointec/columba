@@ -1,18 +1,34 @@
-# Columba
+# Columba 2.0
+
+<!-- TOC depthFrom:4 -->
 
 Fast Approximate Pattern Matching using Search Schemes
 
 Columba is a powerful open-source read-mapper developed to significantly enhance the performance of lossless approximate pattern matching. This README provides an overview of the [key features and benefits](#key-features-and-benefits) of Columba, along with instructions for [installation](#installation), [usage](#usage), [result reproduction](#result-reproduction) and [citation](#citation).
-Finally, [contact information](#contact) is provided.
+Finally, [contact information](#contact) and [license details](#license-and-dependencies) are provided.
 
 ## Key features and benefits
 
-- Columba is a **lossless** read-mapper, meaning that **all** occurrences up to the provided distance are found. Both the edit distance and the hamming distance are supported.
-- Columba can handle any valid search scheme, so if new search schemes are discovered no update is needed. See [custom search schemes](#custom-search-schemes) below.
-- Columba supports a dynamic selection of search schemes, where the search scheme best suited for the current read and reference text is chosen, resulting in faster runtimes! More info [here](#dynamic-selection---multiple-search-schemes).
-- Columba supports dynamic partitioning of the read, boosting the performance!
-- Columba comes with tunable in-text verification, which improves runtimes significantly. More info [here](#in-text-verification).
+- Columba is a **lossless** read-mapper, meaning that **all** occurrences up to the provided distance or **all-best** occurrences with the minimum identity are found. Both the edit distance and the hamming distance are supported.
+- Columba comes in two flavors: Vanilla and RLC. Vanilla is based on the bidirectional FM Index and is faster. RLC is based on the b-move structure and is optimized for memory usage by run-length-compressing the index.
 - Columba is **fast**, outperforming other lossless aligners, thanks to all kinds of algorithmic tricks like an interleaved bit-vector representation and redundancy avoidance for the edit distance metric.
+- Columba outputs to either SAM format or a custom read hit summary if the position in the genome is not relevant.Gzipped variations are supported.
+- Columba Vanilla is supported on both Unix and Windows systems!
+- Multi-threading and paired-end alignment are supported out of the box.
+- Columba can handle any valid search scheme, so if new search schemes are discovered no update is needed. See [custom search schemes](./further_info/advanced_options/README.md#custom-search-schemes) below.
+- Columba supports a dynamic selection of search schemes, where the search scheme best suited for the current read and reference text is chosen, resulting in faster runtimes!
+- Columba supports dynamic partitioning of the read, boosting the performance!
+- Columba Vanilla comes with tunable in-text verification, which improves runtimes significantly. More info [here](./further_info/advanced_options/README.md#advanced-options).
+
+## Choosing the Right Columba Flavor
+
+When selecting the appropriate Columba flavor for your needs, consider the following:
+
+- **Operating System Compatibility**: If you are using a Windows system, Columba Vanilla is your only option.
+- **Memory and Reference Text Considerations**:
+  - _Columba Vanilla_ loads the entire reference text (or combined reference texts) and the full FM Index into memory. It offers superior speed, making it ideal if memory usage is not a concern or if your reference text is not too large. Loading the reference text allows for the calculation of CIGAR strings.
+  - _Columba RLC_, however, employs a run-length compressed index and does not require loading the reference text into memory. This makes it a better choice for handling large pan-genomes or when memory is limited but it comes with slower execution time and no calculation of CIGAR strings.
+- **Accuracy**: Columba RLC does not perform in-text verification, which may lead to an overestimation of the edit distance at the edge of certain reference sequences in rare cases.
 
 ## Installation
 
@@ -20,461 +36,414 @@ The following instructions will get you a copy of the project up and running on 
 
 ### Prerequisites
 
-This package requires a number of packages to be install on your system. Required: CMake (3.0 or higher); Google's Sparsehash; gcc (tested on 8.3.0 and more recent compilers).
+This package requires CMake (3.14 or higher) and a compiler.
+For Unix systems, the recommended compiler is GCC (tested on 8.3.0 and more recent versions).
+For Windows systems, we recommend the use of [Clang installed via MSYS2](https://packages.msys2.org/package/mingw-w64-x86_64-clang).
+Click [here](https://www.msys2.org/) for more info on MSYS2.
+It is recommended that you also install CMake and Ninja via MSYS2.
 
-How to install these packages:
+**Note for Windows users:** Do not use the mingw64 compiler as long as [this bug](https://github.com/msys2/MINGW-packages/issues/2519) related to thread_local variables is not fixed. Using this compiler with the bug will result in a segmentation fault when the processing threads are destroyed.
 
-As a root, execute the following commands:
+To make use of gzipped files, ensure that you have the [`zlib` library](https://zlib.net/) installed.
 
-on Redhat / Fedora distributions
+#### Extra Prerequisite RLC
+
+Columba RLC needs the [SDSL-lite library](https://github.com/simongog/sdsl-lite).
+You can follow their install instructions to install it on your system.
+
+**WARNING** SDSL-lite installs a version of google test that might be incompatible (see [issue](https://github.com/simongog/sdsl-lite/issues/458)). You can safely delete the google test files added by SDSL in the lib/ (libgtest.a and libgtest_main.a) and include/ (gtest/) directories.
+
+### Installing Columba Vanilla
+
+The installation is now simple. First, clone Columba from the GitHub address.
 
 ```bash
-yum install cmake
-yum install sparsehash-devel
-```
-
-on Ubuntu / Debian distributions
-
-```bash
-apt-get install cmake
-apt-get install libsparsehash-dev
-```  
-
-### Installing Columba
-
-The installation is now simple. First, clone columba from the Github address
-
-```terminal
     git clone "https://github.com/biointec/columba.git"
 ```
 
-From this directory, run the following commands to install columba:
+From this directory, run the following commands to install Columba Vanilla:
+
+For Unix-like systems (Linux, macOS):
+
+```bash
+bash build_script.sh Vanilla
+```
+
+This will install the executables in `build_Vanilla`.
+
+For Windows:
 
 ```bash
 mkdir build
 cd build
 cmake ..
-make 
+ninja
 ```
 
----
-**NOTE!**
-
-If your reference genome is longer than 4.29M characters, you need to compile Columba in 64-bit mode. To do so use these commands instead:
+Users of Unix-like systems can also opt to use `cmake` and `make` commands like:
 
 ```bash
 mkdir build
 cd build
-cmake -DTHIRTY_TWO=OFF ..
-make 
+cmake ..
+make
 ```
+
+### Installing Columba RLC
+
+The installation for Columba RLC is completely analogous to Columba Vanilla ([provided SDSL is already installed](#extra-prerequisite-rlc)).
+
+For Unix-like systems.
+
+```bash
+bash build_script.sh RLC
+```
+
+For users that work directly with CMake, the only difference is that you must add `-DRUN_LENGTH_COMPRESSION=ON` to the CMake command.
+However, currently Columba RLC is not compatible with Windows as it requires SDSL.
+
+If you have installed SDSL to a non-standard location, you can point CMake to the installation location by adding `-DSDSL_INCLUDE_DIR=<path-to-sdsl>/` and `-DSDSL_LIBRARY=<path-to-sdsl-lib>` to the CMake command.
+
+Currently, the build script does allow you to set the SDSL CMake installation directory.
+
+### Installing Both Flavors
+
+We provide a script that installs both flavors to two separate directories.
+To do this, you must first clone the repository, as detailed above, and then, from the top directory in the repository run `bash build_both_flavors_default.sh`.
+This will install columba and columba_build in directories build_Vanilla and build_RLC.
+
+### Compiler options
+
+#### Word-size
+
+By default, Columba Vanilla uses 32-bit integers for the suffix array and positions in the text.
+However, if your reference genome (or concatenation of genomes) is longer than 4.29 billion characters this will no longer fit.
+In that case, you need to let the compiler know that you want 64-bit integers.
+You can do this by using:
+
+```bash
+bash build_script.sh Vanilla 64
+```
+
+For users who work directly with CMake by adding `-DTHIRTY_TWO=OFF`to the `cmake` command.
+
+Columba RLC uses 64-bit integers by default.
+Similarly, you can opt to use 32-bit integers by using:
+
+```bash
+bash build_script.sh RLC 32
+```
+
+For users who work directly with CMake, you can do this by adding `-DTHIRTY_TWO=ON`to the CMake command.
 
 ---
 
 ## Usage
 
-Columba aligns reads to a bidirectional FM-index. To do this you need to build the FM-index based on the input data. Currently we only support input data with an alphabet of length 5 (e.g. for DNA A, C, G, T + $).
+For a quick start you can follow the [example instructions](./example/README.md) with a test dataset.
+
+Columba aligns reads to a bidirectional FM Index or the bidirectional move structure (b-move).
+To do this you need to build the index based on the input data.
+Currently, we only support input data with an alphabet of length 5 (e.g. for DNA A, C, G, T + $).
+If your input data has other characters they will be replaced by a random character chosen from A, C, G and T.
 
 ### Building the index
 
-To build the bidirectional FM-index the text and the suffix arrays of the text and reverse text are required.
-To reverse a text you can use the commando `rev`:
+To build the bidirectional FM-index from your reference genome (or collection of genomes), you need FASTA files (or gzipped (.gz) variations thereof), where each sequence has a unique identifier.
+You can use more than one FASTA file, but the identifiers must be unique over all files.
+To build the index use this command from the directory where you built Columba (normally this is the build/ directory):
 
 ```bash
-rev [basefile].txt > [basefile].rev.txt
+./columba_build -r <reference_base_name> -f <list_of_FASTA_files>
 ```
 
-This commando will create the reverse text and store it in `[basefile].rev.txt`
-We recommend the use of [radixSA64](https://github.com/mariusmni/radixSA64) for building the suffix arrays.
+or
 
 ```bash
-# make SA for original text
-[pathToRadixSA]/radixSA [basefile].txt [basefile].sa
-# make SA for reversed text
-[pathToRadixSA]/radixSA [basefile].rev.txt [basefile].rev.sa
+./columba_build -r <reference_base_name> -F <file_with_paths>
 ```
 
-To build the FM-index run the following command in the `build` folder.
+where `<list_of_FASTA_files>` is a space separated list of FASTA input files, `<reference_base_name>` is the basename of the index files to write and `<file_with_paths>` is a text file where each line is a path to a FASTA input file.`Note that you can also combine the`-f`and`-F` flags.
+
+**Warning** All paths cannot contain any spaces!
+
+This will create all necessary files in the same directory.
+Note that the build process may take some time.
+
+To find info on all options use:
+
+```console
+./columba_build --help
+```
+
+#### Backward compatibility
+
+Columba's alignment mode is not guaranteed to be compatible with indexes that were built using an older version.
+Consider rebuilding your index.
+
+#### Vanilla option: suffix array sparseness
+
+By default in Columba Vanilla, the suffix array is sampled with a sparseness factor of 4.
+This has proven to be a good mix between memory and runtime requirements.
+However, in Columba Vanilla you can choose which sparseness factor you would like to use (as long as it is a power of two), by adding `-s <factor>`to the build command.
+Note that choosing a smaller sparseness factor can speed up Columba, but it will also increase the memory footprint.
+
+You can also use `-a` instead of `-s` to create all sampled versions with sparseness factors 1 to 128.
+If you choose to use another sparseness factor, you should pass it to the aligner with the `-s` flag.
+For more information see the info on [Advanced options](./further_info/advanced_options/README.md).
+
+#### RLC options
+
+Columba RLC has two build modes.
+The first mode is analogous to Vanilla mode and uses `n*8` more memory than the second mode, with `n` the length of the (concatenation of) reference text(s).
+The second mode uses prefix-free parsing and makes use of [Big-BWT](https://gitlab.com/manzai/Big-BWT).
+Note that this mode requires python 3.8 (or greater) and package psutil to be installed on your system.
+To use the second mode, run
 
 ```bash
-./columba-build [basefile]
+bash columba_build_pfp.sh -r <reference_base_name> -f <list_of_FASTA_files> [-w <ws>] [-p <mod>]
 ```
 
-#### Example 1
-
-After installing columba, the columba directory should look like this:
-
-```plaintext
-    .
-    ├── cmake
-    ├── build
-    ├── search_schemes
-    └── src
-```
-
-In this example we will build the FM index for the 21st chromosome of the human genome. In order to do this we will create an `example` folder.
-    To create this folder navigate to the columba folder. Here enter the following command
+or
 
 ```bash
-mkdir example
+bash columba_build_pfp.sh -r <reference_base_name> -F <file_with_paths> [-w <ws>] [-p <mod>]
 ```
 
-To this new directory, copy the example file found [here](https://github.com/biointec/columba/releases/download/v1.0/genome.hs.chr_21.txt). This is the 21st chromosome of the human genome where all non-ACGT character were removed. A sentinel character was also appended to this file.
+from your build folder.
 
-Reverse the text using the `rev` command:
+- `-w <ws>`: (Optional) Window size for Big-BWT. If this option is **unset**, Big-BWT will use its **default window size**.
+- `-p <mod>`: (Optional) Mod value for Big-BWT. If this option is **unset**, Big-BWT will use its **default mod value**.
 
-```bash
-rev genome.hs.chr_21.txt > genome.hs.chr_21.rev.txt
-```
+**Note**:  
+If you encounter hash collisions during Big-BWT processing, try increasing the window size (`-w`) and/or the mod value (`-p`) to resolve the issue.
 
-After reversing the text your directory structure should look like:
+**Warning**: The PLCP phase of the build algorithm can take a long time without updates on your screen.
+This does not mean the program has halted.
 
-```plaintext
-    .
-    ├── cmake
-    ├── build
-    ├── example
-    |   ├── genome.hs.chr_21.rev.txt
-    |   └── genome.hs.chr_21.txt
-    ├── search_schemes
-    └── src
-```
+##### Seeded replacement
 
-Now we need to create the suffix arrays. To do this enter the following commands:
+Columba RLC achieves better memory usage by run-length compressing the index.
+However, if your text contains blocks of many non-ACGT characters, they will be randomly replaced.
+This introduces a lot of randomness which significantly hurts the efficiency of run-length compressing.
+To combat this, seeded replacement can be used.
+This ensures that a replacement is always taken from a seed.
+You can set the seed length by adding `-l <seed_length>` to the build command.
 
-```bash
-# make SA for original text
-[pathToRadixSA64]/radixSA64 genome.hs.chr_21.txt genome.hs.chr_21.sa
-# make SA for reversed text
-[pathToRadixSA64]/radixSA64 genome.hs.chr_21.rev.txt genome.hs.chr_21.rev.sa
-```
-
-Where `[pathToRadixSA64]` is the path to where you installed radixSA64.
-
-After this operation your directory structure will look like:
-
-```plaintext
-    .
-    ├── cmake
-    ├── build
-    ├── example
-    |   ├── genome.hs.chr_21.rev.sa
-    |   ├── genome.hs.chr_21.rev.txt
-    |   ├── genome.hs.chr_21.sa    
-    |   └── genome.hs.chr_21.txt
-    ├── search_schemes
-    └── src
-```
-
-Finally, everything is in place to build the FM-index!
-To build the FM-index, navigate to the `build` folder and run the following command:
-
-```bash
-./columba-build ../example/genome.hs.chr_21
-```
-
-The index files are then written to the same folder. Your directory structure will now look like:
-
-```plaintext
-    .
-    ├── cmake
-    ├── build
-    ├── example 
-    |   ├── genome.hs.chr_21.brt
-    |   ├── genome.hs.chr_21.bwt
-    |   ├── genome.hs.chr_21.cct
-    |   ├── genome.hs.chr_21.rev.brt   
-    |   ├── genome.hs.chr_21.rev.sa
-    |   ├── genome.hs.chr_21.rev.txt
-    |   ├── genome.hs.chr_21.sa
-    |   ├── genome.hs.chr_21.sa.1 
-    |   ├── genome.hs.chr_21.sa.128 
-    |   ├── genome.hs.chr_21.sa.16      
-    |   ├── genome.hs.chr_21.sa.2
-    |   ├── genome.hs.chr_21.sa.32
-    |   ├── genome.hs.chr_21.sa.4   
-    |   ├── genome.hs.chr_21.sa.64
-    |   ├── genome.hs.chr_21.sa.8
-    |   ├── genome.hs.chr_21.sa.bv.1  
-    |   ├── genome.hs.chr_21.sa.bv.128
-    |   ├── genome.hs.chr_21.sa.bv.16
-    |   ├── genome.hs.chr_21.sa.bv.2
-    |   ├── genome.hs.chr_21.sa.bv.32
-    |   ├── genome.hs.chr_21.sa.bv.4
-    |   ├── genome.hs.chr_21.sa.bv.64
-    |   ├── genome.hs.chr_21.sa.bv.8
-    |   └── genome.hs.chr_21.txt
-    ├── search_schemes
-    └── src
-```
-
-Congratulations! You have used columba to build the FM-index of the 21st chromosome of the human genome!
-
-Note that the suffix array is created with different sparseness factors. This gives the user the option to choose any sparseness factor, depending on the amount of available RAM.
-
----
-**CAUTION!**
-
-If you have used an older version of Columba to build your index files you will have to rerun the build process to work with the newest version (and vice versa)!
-
----
+Columba Vanilla does not use seeded replacement by default (`-l 0`).
+Columba RLC does use seeded replacement by default (`-l 100`).
 
 ### Using the index
 
-This section explains how to use a built index for a reference genome. First a general overview is given.
-Finally, the details on how to use [custom search schemes](#custom-search-schemes) and [dynamic selection of search schemes](#dynamic-selection---multiple-search-schemes) are provided.
+This section explains how to use a built index for a reference genome. First, a general overview is given with a minimal example.
+Later the options for the aligner are explored.
 
-Columba can align reads in a fasta (`.FASTA`, `.fasta`, `.fa`) or fastq (`.fq`, `.fastq`) format.
-To align your reads use the following format:
-
-```bash
-./columba [options] basefile readfile.[ext]
-```
-
-options:
-
-```plaintext
- [options]
-  -e  --max-ed          maximum edit distance [default = 0]
-  -s  --sa-sparseness   suffix array sparseness factor [default = 1]
-  -p  --partitioning    Add flag to do uniform/static/dynamic partitioning [default = dynamic]
-  -m   --metric         Add flag to set distance metric (editnaive/editopt/hamming) [default = editopt]
-  -i  --in-text         The tipping point for in-text verification [default = 5]
-  -ks --kmer-size       The size of the seeds for dynamic partitioning [default = 10]
-  -o  --output          The name of the outputfile. This file will be in .sam format. [default = ColumbaOutput.sam]
-  -ss --search-scheme   Choose the search scheme
-  options:
-        kuch1           Kucherov k + 1
-        kuch2           Kucherov k + 2
-        kianfar         Optimal Kianfar scheme
-        manbest         Manual best improvement for kianfar scheme (only for ed = 4)
-        pigeon          Pigeon hole scheme
-        01*0            01*0 search scheme
-        custom          custom search scheme, the next parameter should be a path to the folder containing this search scheme
-        multiple        multiple search scheme, the next parameter should be a path to the folder containing the different search schemes to choose from with dynamic selection.
-
-[ext]
-        one of the following: fq, fastq, FASTA, fasta, fa
-Following input files are required:
-        <base filename>.txt: input text T
-        <base filename>.cct: character counts table
-        <base filename>.sa.[saSF]: suffix array sample every [saSF] elements
-        <base filename>.bwt: BWT of T
-        <base filename>.brt: Prefix occurrence table of T
-        <base filename>.rev.brt: Prefix occurrence table of the reverse of T
-    
-```
-
-The number of nodes, duration, and number of reported/unique matches will be printed to stdout, as well as the number of matches found entirely in the index, the number of unique matches found via in-text verification, the number of started and failed in-text verification procedures and the number of searches that started in the index.
-The matches will be written in SAM format to the given output file (default = ColumbaOutput.sam).
-
-#### Example 2
-
-Consider the final directory structure from [example 1](#example-1).
-Copy this [file](https://github.com/biointec/columba/releases/download/v1.0/genome.hs.chr_21.reads.fasta) to this directory.
-This file contains 100 000 reads of length 100 all sampled from the reference text. Thus, each read will have at least one exact occurrence.
-If you want to align these reads using the Pigeonhole scheme with k = 3 and using the edit distance and optimal static partitioning to our reference text, run the following command in the `build` folder:
+Columba can align reads in a FASTA (`.FASTA`, `.fasta`, `.fa`, `.fna`) or FASTQ (`.fq`, `.fastq`) format (or .gz variations thereof).
+A minimal working example to align your reads is shown below, where `reference_base_name` is the reference base name used while constructing the index, and `read_file`is the path to a file with the reads you want to align.
 
 ```bash
-./columba -e 3 -ss pigeon -m editopt -p static -o ../example/output.sam ../example/genome.hs.chr_21 ../example/genome.hs.chr_21.reads.fasta
+./columba <options> -r <reference_base_name> -f <read_file>
 ```
 
-After this operation your directory structure will look like:
+This will align the reads to the reference genome(s) and output the alignments in SAM format to ColumbaOutput.sam.
 
-```plaintext
-    .
-    ├── cmake
-    ├── build
-    ├── example 
-    |   ├── genome.hs.chr_21.brt
-    |   ├── genome.hs.chr_21.bwt
-    |   ├── genome.hs.chr_21.cct    
-    |   ├── genome.hs.chr_21.reads.fasta
-    |   ├── genome.hs.chr_21.rev.brt   
-    |   ├── genome.hs.chr_21.rev.sa
-    |   ├── genome.hs.chr_21.rev.txt
-    |   ├── genome.hs.chr_21.sa
-    |   ├── genome.hs.chr_21.sa.1    
-    |   ├── genome.hs.chr_21.sa.2
-    |   ├── genome.hs.chr_21.sa.4   
-    |   ├── genome.hs.chr_21.sa.8
-    |   ├── genome.hs.chr_21.sa.16    
-    |   ├── genome.hs.chr_21.sa.32
-    |   ├── genome.hs.chr_21.sa.64
-    |   ├── genome.hs.chr_21.sa.128
-    |   ├── genome.hs.chr_21.txt
-    |   └── output.sam
-    └── src
+In the following sections, the optional arguments for Columba are discussed.
+After each section, a summary of the options is listed.
+
+To find info on all options use:
+
+```console
+./columba --help
 ```
 
-The results can be found in `output.sam`.
+#### Alignment options
 
-To align the reads with maximal hamming distance 2, dynamic partitioning, in-text verification at 5, and the Kucherov K + 1 search scheme run
+##### Parallelization
+
+Columba can align reads in parallel.
+You can choose how many threads are used by using the `-t` or `--threads` option.
+
+```console
+-t, --threads           INT   The number of threads to be used. Default is 1.
+```
+
+##### Alignment mode
+
+Columba supports two alignment modes: `all` and `best`.
+
+The default mode is `best`.
+In this mode, all alignments with the best score (edit or hamming distance) are reported for which the minimum identity between the read and the reference sequence is at least some value.
+By default, this value is 95%.
+You can set this value by using the `-I` flag.
+Additionally, you can use the `-x` option to set how many strata after the best score must be explored.
+In that case, all occurrences with a score `<= b + x`, where `b` is the score of the best alignment, will be reported.
+By default the value of `x` is `0`.
+
+The other mode is `all` which can be set by adding `-a all` or `--align-mode all` as an option.
+In this mode, all alignments up to some edit distance are reported.
+By default, this value is 0.
+You can set the value by using the `-e` flag.
+`all` mode is generally slower than `best` mode.
+Note that Columba can currently only handle up to 13 errors per alignment.
+
+Below you can find a summary of the relevant parameters for alignment mode:
+
+```console
+  -a, --align-mode        STR   Alignment mode to use. Options are: all, best. Default is best.
+  -I, --minIdentity       INT   The minimum identity for alignments in BEST mode. Default is 95.
+  -e, --max-distance      STR   The maximum allowed distance (for ALL mode). Default is 0.
+  -x, --strata-after-best INT   The number of strata above the best stratum to explore in BEST mode.
+                                Default is 0.
+```
+
+##### Distance Metric
+
+Columba supports both the Hamming distance and the edit distance.
+The Hamming distance will only allow for substitutions, while the edit distance also considers indels.
+Note that the edit distance is slower.
+You can choose which one to use by using the `-m` or `--metric` option.
+By default the edit distance metric is used.
+
+```console
+  -m, --metric            STR   Distance metric to use. Options are: edit, hamming. Default is edit.
+```
+
+##### Paired end alignment
+
+Columba supports paired-end alignment.
+To do paired end alignment run:
 
 ```bash
-./columba -m hamming -e 2 -ss kuch1 -p dynamic -i 5 -o output2.sam ../example/genome.hs.chr_21 ../example/genome.hs.chr_21.reads.fasta
+./columba <options> -r base -f <read_file_1> -F <read_file_2>
 ```
 
-The results are in file `output2.Sam`.
+If you have a single interleaved reads file, you can de-interleave them using [this one-line script](https://gist.github.com/nathanhaigh/4544979).
 
-Congratulations! You are now able to use Columba to align reads to the 21st chromosome of the human genome!
+By default, the orientation of the pairs and the fragment size are inferred.
+Currently, in a pan-genome context, only pairs of reads that unambiguously to a sequence in the first FASTA file on which the reference is built are considered for inferring the orientation and fragment size.
+If this is not the behavior you want, we advise turning inference off using the `-nI` or `--no-inferring`flag
+and setting the orientation and minimum and fragment sizes via the `-O` (`--orientation`), `-X` (`--max-insert-size`) and `-N` (`--min-insert-size`) options.
 
-### In-text verification
+The options for paired-end alignment are listed below:
 
-To speed up the read-mapper, we introduced in-text verification in Columba 1.1. Using this technique the potential in-index matches are looked up using the suffix array and verified directly in the text if the number of potential in-index matches falls below or equals some threshold `t`. This can reduce runtimes by  up to 50%!
-
-We advise to use a threshold of 5.
-However, if you need to use a very sparse suffix array due to memory constraints, a lower value could perform better.
-
-### Custom Search Schemes
-
-The search scheme can either be one of the hardcoded search schemes present in Columba or you can provide a custom search scheme. In the [search_schemes](./search_schemes/) folder a number of search schemes is already present. Including the search schemes created by Hato.
-
-To make your own search scheme you need to create a folder containing at least a file called `name.txt`, which contains the name of your search scheme on the first line.
-For every maximum edit/hamming distance a subfolder should be present, which contains at least the file `searches.txt`. In this file the searches of your scheme are written line per line. Each line contains of three space-separated arrays: pi, L and U. Each array is written between curly braces {} and the values are comma-separated.
-
----
-**NOTE!**
-
-The pi array should be zero-based! The connectivity property should always be satisfied. The L and U array cannot decrease. All error distributions should be covered! To check if your search scheme is valid you can use a python script provided [in this directory](./validitychecker/).
-
----
-
-#### Static Partitioning
-
-If you want to provide optimal static partitioning you can create a file named `static_partitioning.txt` in the folder of the maximum edit/hamming distance this partitioning is for. This file should contain one line with percentages (values between 0 and 1) separated by spaces. The ith percentage corresponds to the starting position (relative to the size of the pattern) of the (i + 1)th part (again this is zero based). The starting position of the first part is always zero and should **not** be provided.
-
-#### Dynamic Partitioning
-
-Similarly, to provide values for dynamic partitioning you can create a file called `dynamic_partitioning.txt`. This file should contain two lines. The first line are percentages (again between 0 and 1) that correspond to the seeding positions, relative to the size of the pattern, of all parts, except the first and last part.
-The second line should contain space-separated integers corresponding to the weights of each part.
-
-#### Folder Structure Example
-
-Consider a search scheme which supports maximal edit/hamming distances 1, 2 and 4. For distance 1 no static or dynamic partitioning values are known. For distance 2 only static partitioning values are known and for distance 4 both static and dynamic partitioning values are known. The folder structure of this search scheme should look like this:
-
-```plaintext
-    .
-    ├── 1
-    |   ├── searches.txt
-    ├── 2 
-    |   ├── searches.txt
-    |   ├── static_partitioning.txt
-    ├── 4
-    |   ├── dynamic_partitioning.txt
-    |   ├── searches.txt
-    |   ├── static_partitioning.txt
-    └── name.txt
+```console
+    -F, --second-reads-file STR     Path to the second reads file (optional). If this is set Columba
+                                    will use paired-end alignment.
+    -nI, --no-inferring              Do not infer paired-end parameters. Do not infer the paired end
+                                    parameters. By default the parameters are inferred. If this option
+                                    is set the values provided by -O (default FR), -X (default 500) and
+                                    -N (default 0) are used.
+    -O, --orientation       STR     Orientation of the paired end reads. Options are: fr, rf, ff.
+                                    Default is fr.
+    -X, --max-insert-size   INT     The maximum insert size for paired end reads. Default is 500.
+    -N, --min-insert-size   INT     The minimum insert size for paired end reads. Default is 0.
+    -D, --discordant        INT     Allow discordant alignments. Optionally you can provide the maximal
+                                    number of discordant alignments per pair to allow. Default is 100000.
 ```
 
-#### Example `searches.txt`
+By default, only pairs for which both reads map to the same reference sequence for which the orientation is correct and for which the insert size is between the minimum and maximum insert size (either inferred or given) are reported.
+If you are interested in discordant alignment, i.e. alignments with the wrong orientation or insert size or pairs that do not map to the same sequence, you can add the `-D` (`--discordant`) flag.
+If no concordant pair can be found the discordant pairs are reported (up to 100 000 per read pair).
+Note that this option slows down Columba.
 
-Consider the pigeon hole search scheme for maximum edit distance 4. The `searches.txt` file should look like:
+#### Output options
 
-```plaintext
-{0,1,2,3,4} {0,0,0,0,0} {0,4,4,4,4}
-{1,2,3,4,0} {0,0,0,0,0} {0,4,4,4,4}
-{2,3,4,1,0} {0,0,0,0,0} {0,4,4,4,4}
-{3,4,2,1,0} {0,0,0,0,0} {0,4,4,4,4}
-{4,3,2,1,0} {0,0,0,0,0} {0,4,4,4,4}
+##### SAM format
+
+By default Columba outputs in SAM format to ColumbaOutput.sam.
+You can specify another output file by using the `-o` (`--output-file`) option.
+By default, each separate alignment of a single read has its own SAM record.
+In single-end alignment, you can choose to have all alignments of the same read in one record by using the XA tag.
+You can set this by using the `-XA` (`--XA-tag`) flag.
+
+Unmapped reads are given a SAM record with the unmapped flag set.
+If you are not interested in unmapped records, you can choose to suppress them with the `-nU` (`--no-unmapped`) flag.
+This option can slightly improve Columba's runtime.
+
+In Columba Vanilla, each SAM record has a CIGAR string.
+The calculation of this string takes some time.
+If you are not interested in the CIGAR string you can suppress its calculation using the `-nC` (`--no-cigar`)flag.
+Columba RLC does not output CIGAR strings and instead places an asterisk (\*) in the corresponding column.
+
+##### Read Hit Summary (RHS) format
+
+Columba offers a second custom output format called Read Hit Summary (RHS).
+This mode can be useful if you are interested in which reference sequences are a hit and not necessarily where in that sequence the match is found.
+Currently, this mode is only supported in single-end alignment.
+
+The output file consists of two columns separated by tab characters.
+The first column is the read identifier and the second column is a semi-colon-separated list of all the hits.
+Each hit is represented as `(refSeq, distance)`, where ``refSeq` is the name of the reference sequence of the hit and distance is the edit or hamming distance to the read.
+
+To use the RHS output format use the `-o` flag to redirect the output to a file with the `rhs` extension.
+
+##### Compression
+
+If you have ZLIB installed on your device, Columba supports the output to gzipped files.
+To use this, just use `-o outputFile.sam.gz` or `-o outputFile.rhs.gz`.
+
+##### Logging
+
+Columba logs its progress to the console, you can choose to redirect this to a log file with the `-l` (`--log-file`) option.
+The logs contain timestamps and information about Columba's progress.
+
+##### Order of output file
+
+If you run the program with multiple threads, there is no guarantee that the order of reads in your reads file is the same as the order of reads in the output file.
+The only guarantee is that hits for the same read(pair) are in a contiguous block.
+However, if you want to keep the order, you can use the `-R`flag to force reordering.
+Note that this slows down the runtime.
+
+##### Output Options Summary
+
+```console
+  -nU, --no-unmapped             Do not output unmapped reads.
+  -nC, --no-CIGAR                Do not output CIGAR strings for SAM format. (only in Vanilla)
+  -XA, --XA-tag                  Output secondary alignments in XA tag for SAM format.
+  -o, --output-file       STR   Path to the output file. Should be .sam or .rhs.
+                                Default is ColumbaOutput.sam.
+  -l, --log-file          STR   Path to the log file. Default is stdout.
+  -R, --reorder                 Guarantees that output SAM or RHS records are printed in the order
+                                corresponding to the order of reads in the original file. Setting
+                                this will cause Columba to be somewhat slower and use somewhat more
+                                memory.
 ```
 
-#### Other examples
+#### Advanced Options
 
-In the [`search_schemes` directory](./search_schemes), a number of search schemes are available as custom search schemes.
+For advanced users who want to experiment with Columba's functionality some other options are available.
+Note that the default settings have been carefully selected to bring the best performance.
 
-### Dynamic Selection - Multiple Search Schemes
-
-To use dynamic selection you can provide a set of search schemes to be used.
-For this you need to create a folder with a file called `name.txt` in it and for all values of `k`, where you want to provide multiple search schemes you need to create a directory.
-The files in these subdirectory are named `scheme<x>.txt`, where `<x>` is the number of the search scheme (starting from 1).
-Each file contains the searches from one of the search schemes and the file needs to be structured like the `searches.txt` file of a custom search strategy (see [above](#custom-search-schemes)).
-
-#### Example Folder Structure
-
-Consider a strategy where multiple search schemes are used which supports maximal edit/hamming distances  2, 4 and 6. For these values of `k` there exist respectively 2, 3 and 4 search schemes. The folder structure then should look like this:
-
-```plaintext
-    .
-    ├── 2
-    |   ├── scheme1.txt
-    |   ├── scheme2.txt
-    ├── 4 
-    |   ├── scheme1.txt
-    |   ├── scheme2.txt
-    |   ├── scheme3.txt
-    ├── 6
-    |   ├── scheme1.txt
-    |   ├── scheme2.txt
-    |   ├── scheme3.txt
-    |   ├── scheme4.txt
-    └── name.txt
-```
-
-#### MinU search schemes
-
-The minU search schemes, introduced in our paper "Automated design of efficient search schemes for lossless approximate pattern matching" are available [here](./search_schemes/multiple_opt).
-In this directory there are folders made for dynamic selection for even values of `k`. It also contains a subdirectory `individual_schemes`, where each (co-)optimal scheme is presented.
+You can find more info about these settings, as well as on the use of custom search schemes [here](./further_info/advanced_options/README.md).
 
 ## Result reproduction
 
-To reproduce the results presented in our papers please refer to [these instructions](./result_reproduction/README.md).
+To reproduce the results presented in our papers please refer to [these instructions](./further_info/result_reproduction/README.md).
 
 ## Citation
 
-Columba was first introduced in our [paper](https://doi.org/10.1016/j.isci.2021.102687). If you find this code useful in your research, please cite:
+Please cite our work if you find this code useful in your research!
 
-```bibtex
-@article{RENDERS2021102687,
-title = {Dynamic partitioning of search patterns for approximate pattern matching using search schemes},
-journal = {iScience},
-volume = {24},
-number = {7},
-pages = {102687},
-year = {2021},
-issn = {2589-0042},
-doi = {https://doi.org/10.1016/j.isci.2021.102687},
-url = {https://www.sciencedirect.com/science/article/pii/S2589004221006556},
-author = {Luca Renders and Kathleen Marchal and Jan Fostier},
-keywords = {Algorithms, Bioinformatics, Computer science, High-performance computing in bioinformatics},
-```
+- [Renders, Luca, Kathleen Marchal, and Jan Fostier. "Dynamic partitioning of search patterns for approximate pattern matching using search schemes." Iscience 24.7 (2021).](https://doi.org/10.1016/j.isci.2021.102687)
+- [Renders, Luca, Lore Depuydt, and Jan Fostier. "Approximate pattern matching using search schemes and in-text verification." International Work-Conference on Bioinformatics and Biomedical Engineering. Cham: Springer International Publishing, 2022.](https://doi.org/10.1007/978-3-031-07802-6_36)
+- [Renders, Luca, Lore Depuydt, Sven Rahmann, and Jan Fostier. "Automated Design of Efficient Search Schemes for Lossless Approximate Pattern Matching." International Conference on Research in Computational Molecular Biology. Cham: Springer Nature Switzerland, 2024.](https://doi.org/10.1007/978-1-0716-3989-4_11)
 
-Columba 1.1 was introduced in a [conference paper](https://doi.org/10.1007/978-3-031-07802-6_36). If you use version 1.1 in your research please cite both versions:
+If you use Columba RLC, please also cite the b-move paper:
 
-```bibtex
-@InProceedings{10.1007/978-3-031-07802-6_36,
-author="Renders, Luca
-and Depuydt, Lore
-and Fostier, Jan",
-editor="Rojas, Ignacio
-and Valenzuela, Olga
-and Rojas, Fernando
-and Herrera, Luis Javier
-and Ortu{\~{n}}o, Francisco",
-title="Approximate Pattern Matching Using Search Schemes and In-Text Verification",
-booktitle="Bioinformatics and Biomedical Engineering",
-year="2022",
-publisher="Springer International Publishing",
-address="Cham",
-pages="419--435",
-isbn="978-3-031-07802-6"
-}
-```
-
-Columba 1.2 was introduced in our newest paper "Automated design of efficient search schemes for lossless approximate pattern matching", accepted at RECOMB 2024.
-
-```bibtex
-@unpublished{renders2023,
-  author = {Renders, L. and Depuydt, L. and Rahmann, S. and Fostier, J.},
-  title = {Automated design of efficient search schemes for lossless approximate pattern matching},
-  year = {2023},
-  note = {Submitted to RECOMB 2024}
-}
-```
+- [Lore Depuydt, Luca Renders, Simon Van de Vyver, Lennart Veys, Travis Gagie, and Jan Fostier. "b-move: faster bidirectional character extensions in a run-length compressed index." 24th International Workshop on Algorithms in Bioinformatics (WABI 2024). Leibniz International Proceedings in Informatics (LIPIcs), 2024.](https://doi.org/10.4230/LIPIcs.WABI.2024.10)
 
 ## Contact
 
 Questions and suggestions can be directed to:
 
-- [Luca.Renders@UGent.be](mailto:Luca.Renders@UGent.be)
-- [Jan.Fostier@UGent.be](mailto:Jan.Fostier@UGent.be)
+- <Luca.Renders@UGent.be>
+- <Lore.Depuydt@UGent.be> (regarding the RLC version)
+- <Jan.Fostier@UGent.be>
+
+## License and Dependencies
+
+See the license file for information about Columba's license.
+Columba makes use of the [{fmt} library](https://github.com/fmtlib/fmt) and falls under the exception of its license.
+Columba also makes use of the [libsais](https://github.com/IlyaGrebnov/libsais), [divsufsort](https://github.com/y-256/libdivsufsort) and [parallel-hashmap](https://github.com/greg7mdp/parallel-hashmap) libraries. Libsais and parallel-hashmap fall under [Apache-2.0 license](./licenses_dependencies/Apache-2.0_LICENSE), which is included in the repository.
+Divsufsort falls under MIT license and [its license](./licenses_dependencies/divsufsort_MIT_LICENSE) is also included in the repository.
+Columba RLC with prefix-free parsing makes use of [Big-BWT](https://gitlab.com/manzai/Big-BWT).

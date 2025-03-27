@@ -1,5 +1,5 @@
 /******************************************************************************
- *   Copyright (C) 2014 - 2023 Jan Fostier (jan.fostier@ugent.be)             *
+ *   Copyright (C) 2014 - 2021 Jan Fostier (jan.fostier@ugent.be)             *
  *   This file is part of Detox                                               *
  *                                                                            *
  *   This program is free software; you can redistribute it and/or modify     *
@@ -18,13 +18,12 @@
 
 #include "util.h"
 
-#include <cassert>
-#include <cmath>
-#include <cstdlib>
-#include <ctime>
-#include <iomanip>
-#include <iostream>
-#include <sstream>
+#include <cassert>  // for assert
+#include <cstdint>  // for uint64_t
+#include <ctime>    // for size_t, ctime, time_t
+#include <iomanip>  // for operator<<, setprecision
+#include <iostream> // for cout
+#include <sstream>  // for ostringstream
 
 using namespace std;
 using namespace std::chrono;
