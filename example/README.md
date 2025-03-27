@@ -93,7 +93,7 @@ By default the alignments are written to `ColumbaOutput.sam` in this directory. 
 
 Reports all best matches with at least 95% identity for each read in the reads file.
 
-#### **Single-End All Matches (-a all flag, Allowing up to 2 Edit Distance Errors with -e flag)**
+### **Single-End All Matches (-a all flag, Allowing up to 2 Edit Distance Errors with -e flag)**
 
 ```bash
 ./columba -r chrom19_index -f read_files/SRR17981962_1_sampled.fastq -a all -e 2
@@ -109,7 +109,7 @@ Reports all occurrences of each read with up to 2 errors
 
 Reports all best paired matches with at least 95% identity for paired-end reads. If no paired match could be found the reads are treated as single end reads.
 
-#### **Paired-End All Matches (-a all flag, Allowing up to 2 Edit Distance Errors with -e flag)**
+### **Paired-End All Matches (-a all flag, Allowing up to 2 Edit Distance Errors with -e flag)**
 
 ```bash
 ./columba -r chrom19_index -f read_files/SRR17981962_1_sampled.fastq -F read_files/SRR17981962_2_sampled.fastq -a all -e 2
