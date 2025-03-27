@@ -1,9 +1,10 @@
-# Columba: Fast Approximate Pattern Matching with Optimized Search Schemes
+# Columba 2.0
 
 <!-- TOC depthFrom:4 -->
 
+Fast Approximate Pattern Matching using Search Schemes
+
 Columba is a powerful open-source read-mapper developed to significantly enhance the performance of lossless approximate pattern matching. This README provides an overview of the [key features and benefits](#key-features-and-benefits) of Columba, along with instructions for [installation](#installation), [usage](#usage), [result reproduction](#result-reproduction) and [citation](#citation).
-Additionally, [quick start instructions with an example](./example/README.md) are provided.
 Finally, [contact information](#contact) and [license details](#license-and-dependencies) are provided.
 
 ## Key features and benefits
@@ -75,7 +76,7 @@ For Windows:
 ```bash
 mkdir build
 cd build
-cmake ..
+cmake .. -G "Ninja"
 ninja
 ```
 
@@ -328,7 +329,7 @@ The options for paired-end alignment are listed below:
 ```console
     -F, --second-reads-file STR     Path to the second reads file (optional). If this is set Columba
                                     will use paired-end alignment.
-    -nI, --no-inferring              Do not infer paired-end parameters. Do not infer the paired end
+    -nI, --no-inferring             Do not infer paired-end parameters. Do not infer the paired end
                                     parameters. By default the parameters are inferred. If this option
                                     is set the values provided by -O (default FR), -X (default 500) and
                                     -N (default 0) are used.
@@ -396,9 +397,9 @@ Note that this slows down the runtime.
 ##### Output Options Summary
 
 ```console
-  -nU, --no-unmapped             Do not output unmapped reads.
-  -nC, --no-CIGAR                Do not output CIGAR strings for SAM format. (only in Vanilla)
-  -XA, --XA-tag                  Output secondary alignments in XA tag for SAM format.
+  -nU, --no-unmapped            Do not output unmapped reads.
+  -nC, --no-CIGAR               Do not output CIGAR strings for SAM format. (only in Vanilla)
+  -XA, --XA-tag                 Output secondary alignments in XA tag for SAM format.
   -o, --output-file       STR   Path to the output file. Should be .sam or .rhs.
                                 Default is ColumbaOutput.sam.
   -l, --log-file          STR   Path to the log file. Default is stdout.
