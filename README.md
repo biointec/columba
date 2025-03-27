@@ -1,10 +1,9 @@
-# Columba 2.0
+# Columba: Fast Approximate Pattern Matching with Optimized Search Schemes
 
 <!-- TOC depthFrom:4 -->
 
-Fast Approximate Pattern Matching using Search Schemes
-
 Columba is a powerful open-source read-mapper developed to significantly enhance the performance of lossless approximate pattern matching. This README provides an overview of the [key features and benefits](#key-features-and-benefits) of Columba, along with instructions for [installation](#installation), [usage](#usage), [result reproduction](#result-reproduction) and [citation](#citation).
+Additionally, [quick start instructions with an example](./example/README.md) are provided.
 Finally, [contact information](#contact) and [license details](#license-and-dependencies) are provided.
 
 ## Key features and benefits
