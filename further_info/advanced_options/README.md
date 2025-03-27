@@ -38,7 +38,7 @@ If the length of your reads divided by the maximum number of errors +1 is nearly
 Columba can handle any valid search scheme.
 The following section details how to point Columba to your search scheme.
 
-In the [search_schemes](../../search_schemes/) folder, several example search schemes are already present.
+In the [search_schemes](../..//search_schemes/) folder, several example search schemes are already present.
 
 To make a custom search scheme you need to create a folder containing at least a file called `name.txt`, which contains the name of your search scheme on the first line.
 For every maximum edit/hamming distance a subfolder should be present, which contains at least the file `searches.txt`.
@@ -47,6 +47,7 @@ Each line contains three space-separated arrays: $\pi$, L and U.
 Each array is written between curly braces {} and the values are comma-separated.
 
 ---
+
 `Note`
 
 The $\pi$ array should be zero-based! The connectivity property should always be satisfied.
@@ -79,10 +80,10 @@ For distance 1 no static or dynamic partitioning values are known.
 For distance 2 only static partitioning values are known and for distance 4 both static and dynamic partitioning values are known.
 The folder structure of this search scheme should look like this:
 
-``` .
+```.
     ├── 1
     |   ├── searches.txt
-    ├── 2 
+    ├── 2
     |   ├── searches.txt
     |   ├── static_partitioning.txt
     ├── 4
@@ -105,15 +106,15 @@ Each file contains the searches from one of the search schemes and the file need
 
 ### Example Folder Structure
 
-Consider a strategy where multiple search schemes are used that support maximal edit/hamming distances  2, 4 and 6.
+Consider a strategy where multiple search schemes are used that support maximal edit/hamming distances 2, 4 and 6.
 For these values of `k`, there exist respectively 2, 3 and 4 search schemes.
 The folder structure then should look like this:
 
-``` .
+```.
     ├── 2
     |   ├── scheme1.txt
     |   ├── scheme2.txt
-    ├── 4 
+    ├── 4
     |   ├── scheme1.txt
     |   ├── scheme2.txt
     |   ├── scheme3.txt
@@ -131,27 +132,26 @@ You can find more examples in [this directory](../../search_schemes/multiple_opt
 
 ## PHIMOVE Compiler Option (for RLC Flavor Only)
 
-The `PHIMOVE` compiler option enables the use of $\phi$ move tables, a performance optimization for the RLC flavor. These move tables are similar to the LF move tables, which are always used in RLC. While $\phi$ move tables require slightly more memory, they can improve alignment performance, particularly when many occurrences are expected to be found.  
+The `PHIMOVE` compiler option enables the use of $\phi$ move tables, a performance optimization for the RLC flavor. These move tables are similar to the LF move tables, which are always used in RLC. While $\phi$ move tables require slightly more memory, they can improve alignment performance, particularly when many occurrences are expected to be found.
 
-This option is **only applicable for the RLC flavor**.  
+This option is **only applicable for the RLC flavor**.
 
-By default, `PHIMOVE` is **disabled**. If you would like to enable it for the RLC flavor, simply add the `PHIMOVE` flag as shown below:  
+By default, `PHIMOVE` is **disabled**. If you would like to enable it for the RLC flavor, simply add the `PHIMOVE` flag as shown below:
 
 ```bash
 bash build_script.sh RLC 64 PHIMOVE
-```  
+```
 
-or  
+or
 
 ```bash
 bash build_script.sh RLC 32 PHIMOVE
-```  
+```
 
-Alternatively, you can enable $\phi$ move tables when compiling the code directly by adding the `-DPHI_MOVE=ON` flag to CMake:  
+Alternatively, you can enable $\phi$ move tables when compiling the code directly by adding the `-DPHI_MOVE=ON` flag to CMake:
 
 ```bash
 cmake -DRUN_LENGTH_COMPRESSION=ON -DPHI_MOVE=ON ..
-```  
+```
 
 If you try to use the `PHIMOVE` flag with the Vanilla flavor, it will be ignored with a warning because $\phi$ move tables are exclusively designed for the RLC flavor.
-

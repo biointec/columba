@@ -42,7 +42,7 @@ For Windows systems, we recommend the use of [Clang installed via MSYS2](https:/
 Click [here](https://www.msys2.org/) for more info on MSYS2.
 It is recommended that you also install CMake and Ninja via MSYS2.
 
-**Note for Windows users:** Do not use the mingw64 compiler as long as [this bug](https://github.com/msys2/MINGW-packages/issues/2519) related to thread_local variables is not fixed. Using this compiler will result in a segmentation fault when the processing threads are destroyed.
+**Note for Windows users:** Do not use the mingw64 compiler as long as [this bug](https://github.com/msys2/MINGW-packages/issues/2519) related to thread_local variables is not fixed. Using this compiler with the bug will result in a segmentation fault when the processing threads are destroyed.
 
 To make use of gzipped files, ensure that you have the [`zlib` library](https://zlib.net/) installed.
 
@@ -55,11 +55,10 @@ You can follow their install instructions to install it on your system.
 
 ### Installing Columba Vanilla
 
-The installation is now simple. First, clone Columba from the GitHub address and checkout this beta-branch.
+The installation is now simple. First, clone Columba from the GitHub address.
 
 ```bash
     git clone "https://github.com/biointec/columba.git"
-    git checkout columba-2.0-beta
 ```
 
 From this directory, run the following commands to install Columba Vanilla:
@@ -125,8 +124,8 @@ You can do this by using:
 ```bash
 bash build_script.sh Vanilla 64
 ```
-For users who work directly with CMake by adding `-DTHIRTY_TWO=OFF`to the `cmake` command.
 
+For users who work directly with CMake by adding `-DTHIRTY_TWO=OFF`to the `cmake` command.
 
 Columba RLC uses 64-bit integers by default.
 Similarly, you can opt to use 32-bit integers by using:
@@ -140,6 +139,8 @@ For users who work directly with CMake, you can do this by adding `-DTHIRTY_TWO=
 ---
 
 ## Usage
+
+For a quick start you can follow the [example instructions](./example/README.md) with a test dataset.
 
 Columba aligns reads to a bidirectional FM Index or the bidirectional move structure (b-move).
 To do this you need to build the index based on the input data.
@@ -417,7 +418,7 @@ You can find more info about these settings, as well as on the use of custom sea
 
 ## Result reproduction
 
-To reproduce the results presented in our papers please refer to [these instructions](./result_reproduction/README.md).
+To reproduce the results presented in our papers please refer to [these instructions](./further_info/result_reproduction/README.md).
 
 ## Citation
 

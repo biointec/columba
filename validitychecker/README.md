@@ -1,6 +1,6 @@
 # Search Scheme Validator
 
-This Python script is designed to check the validity of a search scheme specified in a text file. A valid search scheme consists of a set of searches, where each error distribution for at most k errors and p parts is covered. 
+This Python script is designed to check the validity of a search scheme specified in a text file. A valid search scheme consists of a set of searches, where each error distribution for at most k errors and p parts is covered.
 
 ## Requirements
 
@@ -24,7 +24,7 @@ This Python script is designed to check the validity of a search scheme specifie
 
 ## File Format for Search Scheme
 
-The search scheme file  must adhere to the following format:
+The search scheme file must adhere to the following format:
 
 - Each line represents a single search definition, with three lists enclosed in curly braces. The lists are separated by whitespace.
 - Each list should contain a comma-separated list of integers.
@@ -39,8 +39,6 @@ Example of a valid search definition line:
 ```
 {0,1,2,3} {0,0,0,1} {0,1,3,3}
 ```
-
-
 
 ## Example
 
@@ -57,7 +55,6 @@ You can check its validity with the following command:
 ```bash
 python validitychecker.py search_scheme.txt 2
 ```
-
 
 ## Output
 
