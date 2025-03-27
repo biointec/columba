@@ -75,8 +75,8 @@ Run the following command from the build directory.
 ./columba_build -r chrom19_index -f reference_files/HG00096.1.19.fasta reference_files/HG00097.1.19.fasta
 ```
 
-This creates index files for the two reference files with the base name `chrom19_index`in our current directory.
-You can opt to create the index files in a different existing directory by providing /path/to/directory/name. This will create index files with base name `name`in `/path/to/directory`.
+This creates index files for the two reference files with the base name `chrom19_index` in our current directory.
+You can opt to create the index files in a different existing directory by providing /path/to/directory/name. This will create index files with base name `name` in `/path/to/directory`.
 
 ---
 
@@ -107,7 +107,7 @@ Reports all occurrences of each read with up to 2 errors
 ./columba -r chrom19_index -f read_files/SRR17981962_1_sampled.fastq -F read_files/SRR17981962_2_sampled.fastq
 ```
 
-Reports all best paired matches with at least 95% identity for paired-end reads. If no paired match could be found the reads are treated as single end reads. )
+Reports all best paired matches with at least 95% identity for paired-end reads. If no paired match could be found the reads are treated as single end reads.
 
 #### **Paired-End All Matches (-a all flag, Allowing up to 2 Edit Distance Errors with -e flag)**
 

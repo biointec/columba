@@ -69,7 +69,7 @@ The starting position of the first part is always zero and should **not** be pro
 ### Dynamic Partitioning
 
 Similarly, to provide values for dynamic partitioning you can create a file called `dynamic_partitioning.txt`.
-his file should contain two lines.
+This file should contain two lines.
 The first line consists of percentages (again between 0 and 1) that correspond to the seeding positions, relative to the size of the pattern, of all parts, except the first and last part.
 The second line should contain space-separated integers corresponding to the weights of each part.
 

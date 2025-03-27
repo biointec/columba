@@ -239,7 +239,7 @@ Note that for the minU schemes, the average value was reported over the co-optim
 To get the results with dynamic selection run:
 
 ```bash
-./columba -ss mutliple ../search_schemes/multiple_opt -e [k] -p uniform [base] [readsfile]
+./columba -ss multiple ../search_schemes/multiple_opt -e [k] -p uniform [base] [readsfile]
 ```
 
 ### Comparison with the State-of-the-art
