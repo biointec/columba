@@ -255,13 +255,9 @@ class Nucleotide {
     }
 
     static bool containsNonACGT(const std::string& str) {
-        for (char c : str) {
-            // Check if the character is not one of A, C, G, or T
-            if (!isACGT(c)) {
-                return true; // Found a non-ACGT character
-            }
-        }
-        return false; // All characters are A, C, G, or T
+        // use std::any_of to check if any character is not A, C, G, or T
+        return std::any_of(str.begin(), str.end(),
+                           [](char c) { return !isACGT(c); });
     }
 
     static bool isACGT(char c) {

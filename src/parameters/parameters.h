@@ -2,10 +2,12 @@
 #define OPTION_H
 
 #include "../logger.h"
+#include <algorithm> // for copy_if
 #include <cassert>
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <numeric> // for accumulate
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -230,7 +232,8 @@ class Option {
         return optionType;
     }
 
-    void printOption(size_t tagWidth, size_t typeWidth, size_t descWidth) {
+    void printOption(size_t tagWidth, size_t typeWidth,
+                     size_t descWidth) const {
         std::cout << std::left << std::setw(tagWidth) << getOptionTag()
                   << std::setw(typeWidth) << getOptionArgumentType();
 
@@ -331,11 +334,12 @@ struct ParametersInterface {
             std::vector<std::shared_ptr<Option>> toPrint;
             toPrint.reserve(options.size());
 
-            for (const auto& opt : options) {
-                if (opt->getOptionType() == (OptionType)i && opt->toPrint()) {
-                    toPrint.emplace_back(opt);
-                }
-            }
+            std::copy_if(options.begin(), options.end(),
+                         std::back_inserter(toPrint),
+                         [i](const std::shared_ptr<Option>& opt) {
+                             return opt->getOptionType() == (OptionType)i &&
+                                    opt->toPrint();
+                         });
 
             if (!toPrint.empty()) {
                 std::cout << optionTypeToString((OptionType)i) << " options:\n";
@@ -421,11 +425,12 @@ struct ParametersInterface {
         }
 
         if (!requiredOptions.empty()) {
-            std::string missingOptions = "";
-            for (const auto& o : requiredOptions) {
-                missingOptions += "\n\t" + o->getOptionTag() + " " +
-                                  o->getOptionDescription();
-            }
+            std::string missingOptions = std::accumulate(
+                requiredOptions.begin(), requiredOptions.end(), std::string(),
+                [](const std::string& acc, const Option* o) {
+                    return acc + "\n\t" + o->getOptionTag() + " " +
+                           o->getOptionDescription();
+                });
             throw std::runtime_error("Missing required options:" +
                                      missingOptions);
         }

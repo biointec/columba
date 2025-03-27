@@ -92,7 +92,8 @@ bool SequenceRecord::readFromFileFASTA(SeqFile& inputFile) {
     char c = inputFile.peekCharacter();
 
     if (c != '>')
-        throw ios::failure("File doesn't appear to be in Fasta format");
+        throw ios::failure("File " + inputFile.getFileName() +
+                           " doesn't appear to be in Fasta format");
     inputFile.getLine(seqID);
     if (!seqID.empty() && seqID.back() == '\n')
         seqID.pop_back();
@@ -217,7 +218,6 @@ Reader::Reader(const string& filename1, const string& filename2)
     : filename1(filename1), fileType1(UNKNOWN_FT), filename2(filename2),
       fileType2(UNKNOWN_FT), pairedEnd(!filename2.empty()) {
     // try to figure out the file format based on the ext
-    string ext;
 
     tie(fileType1, baseFilename1) = getFileType(filename1);
     if (fileType1 == UNKNOWN_FT) {
@@ -259,83 +259,92 @@ void Reader::readerThread() {
     if (pairedEnd)
         file2.open(filename2);
 
-    // recheck the chunksize every 8 blocks to start
-    size_t checkPoint = 8;
-    size_t blockCounter = 0;
+    try {
+        // recheck the chunksize every 8 blocks to start
+        size_t checkPoint = 8;
+        size_t blockCounter = 0;
 
-    while (file1.good()) {
-        // A) wait until an input block is available
-        unique_lock<mutex> inputLock(inputMutex);
-        inputReady.wait(inputLock, [this] { return !inputBlocks.empty(); });
+        while (file1.good()) {
+            // A) wait until an input block is available
+            unique_lock<mutex> inputLock(inputMutex);
+            inputReady.wait(inputLock, [this] { return !inputBlocks.empty(); });
 
-        // get the input block
-        ReadBlock block = std::move(inputBlocks.back());
-        inputBlocks.pop_back();
-        inputLock.unlock();
+            // get the input block
+            ReadBlock block = std::move(inputBlocks.back());
+            inputBlocks.pop_back();
+            inputLock.unlock();
 
-        block.setTargetChunkSize(targetChunkSize);
+            block.setTargetChunkSize(targetChunkSize);
 
-        // B) fill up the block (only this thread has access)
-        // no mutexes are held by this thread at this point
-        if (pairedEnd)
-            block.readFromFile(file1, file2, targetBlockSize, fastq1, fastq2);
-        else
-            block.readFromFile(file1, targetBlockSize, fastq1);
+            // B) fill up the block (only this thread has access)
+            // no mutexes are held by this thread at this point
+            if (pairedEnd)
+                block.readFromFile(file1, file2, targetBlockSize, fastq1,
+                                   fastq2);
+            else
+                block.readFromFile(file1, targetBlockSize, fastq1);
 
-        // empty block: end-of-file reached
-        if (block.empty())
-            break;
+            // empty block: end-of-file reached
+            if (block.empty())
+                break;
 
-        // C) push the record block onto the worker queue
-        unique_lock<mutex> workLock(workMutex);
-        workBlocks.push_back(std::move(block));
-        workLock.unlock();
-        workReady.notify_all();
+            // C) push the record block onto the worker queue
+            unique_lock<mutex> workLock(workMutex);
+            workBlocks.push_back(std::move(block));
+            workLock.unlock();
+            workReady.notify_all();
 
-        // D) check if recalculation of target chunk size is necessary
-        blockCounter++;
-        if (blockCounter >= checkPoint) {
-            // Acquire the processing time mutex
-            unique_lock<mutex> processLock(processMutex);
+            // D) check if recalculation of target chunk size is necessary
+            blockCounter++;
+            if (blockCounter >= checkPoint) {
+                // Acquire the processing time mutex
+                unique_lock<mutex> processLock(processMutex);
 
-            if (!processingTimes.empty()) {
-                std::chrono::microseconds averageProcessingTime =
-                    accumulate(processingTimes.begin(), processingTimes.end(),
-                               std::chrono::microseconds(0)) /
-                    processingTimes.size();
+                if (!processingTimes.empty()) {
+                    std::chrono::microseconds averageProcessingTime =
+                        accumulate(processingTimes.begin(),
+                                   processingTimes.end(),
+                                   std::chrono::microseconds(0)) /
+                        processingTimes.size();
 
-                // Determine if we need to adjust based on processing times
-                bool change = false;
-                auto prevSize = targetChunkSize;
+                    // Determine if we need to adjust based on processing times
+                    bool change = false;
+                    auto prevSize = targetChunkSize;
 
-                if (averageProcessingTime < lowEndProcessingTime ||
-                    averageProcessingTime > highEndProcessingTime) {
-                    int multFactor =
-                        (midProcessingTime / averageProcessingTime);
-                    targetChunkSize *= multFactor;
-                    targetChunkSize = (targetChunkSize / 64) * 64;
-                    targetChunkSize =
-                        max(targetChunkSize, 1ul); // Ensure it's at least 1
-                    targetBlockSize = targetChunkSize * numberOfWorkerThreads;
-                    change = targetChunkSize != prevSize;
+                    if (averageProcessingTime < lowEndProcessingTime ||
+                        averageProcessingTime > highEndProcessingTime) {
+                        int multFactor =
+                            (midProcessingTime / averageProcessingTime);
+                        targetChunkSize *= multFactor;
+                        targetChunkSize = (targetChunkSize / 64) * 64;
+                        targetChunkSize =
+                            max(targetChunkSize, 1ul); // Ensure it's at least 1
+                        targetBlockSize =
+                            targetChunkSize * numberOfWorkerThreads;
+                        change = targetChunkSize != prevSize;
+                    }
+
+                    // Adjust checkpoint size based on processing times
+                    if (change) {
+                        checkPoint =
+                            8; // Reset checkpoint if there was a change
+                        logger.logDeveloper(
+                            "New target chunk size based on processing time: " +
+                            to_string(targetChunkSize));
+                    } else if (checkPoint < 1024) {
+                        checkPoint *= 2; // Increase checkpoint size
+                        logger.logDeveloper("Check point increased to: " +
+                                            to_string(checkPoint));
+                    }
                 }
 
-                // Adjust checkpoint size based on processing times
-                if (change) {
-                    checkPoint = 8; // Reset checkpoint if there was a change
-                    logger.logDeveloper(
-                        "New target chunk size based on processing time: " +
-                        to_string(targetChunkSize));
-                } else if (checkPoint < 1024) {
-                    checkPoint *= 2; // Increase checkpoint size
-                    logger.logDeveloper("Check point increased to: " +
-                                        to_string(checkPoint));
-                }
+                processingTimes.clear(); // Clear processing times
+                blockCounter = 0;        // Reset block counter after processing
             }
-
-            processingTimes.clear(); // Clear processing times
-            blockCounter = 0;        // Reset block counter after processing
         }
+    } catch (...) {
+        logger.logDeveloper("Reader thread caught an exception");
+        exceptionPtr = current_exception();
     }
 
     file1.close();
@@ -397,10 +406,17 @@ void Reader::startReaderThread(size_t targetChunkSize, size_t numWorkThreads) {
 }
 
 void Reader::joinReaderThread() {
-    iThread.join();
+    if (iThread.joinable()) {
+        iThread.join();
+    }
 
     inputBlocks.clear();
     workBlocks.clear();
+
+    // Check if an exception was stored and rethrow it in the main thread
+    if (exceptionPtr) {
+        std::rethrow_exception(exceptionPtr);
+    }
 }
 
 // ============================================================================
@@ -412,8 +428,8 @@ OutputWriter::OutputWriter(const string& writeFile, const string& headerFile,
                            const SequencingMode& sequencingMode, bool reorder)
     : writeFile(writeFile), fileType(UNKNOWN_FT), reorder(reorder),
       headerFile(headerFile), commandLineParameters(commandLineParameters),
-      sMode(sequencingMode), lastLogTime(chrono::steady_clock::now()),
-      startTime(chrono::steady_clock::now()) {
+      sMode(sequencingMode), lastLogTime(chrono::high_resolution_clock::now()),
+      startTime(chrono::high_resolution_clock::now()) {
 
     // try to figure out the file format based on the ext
     string ext;
@@ -455,7 +471,9 @@ void OutputWriter::start(const size_t size, const size_t threads) {
 }
 
 void OutputWriter::joinWriterThread() {
-    wThread.join();
+    if (wThread.joinable()) {
+        wThread.join();
+    }
     outputChunks.clear();
 }
 
@@ -485,7 +503,7 @@ void OutputWriter::commitChunk(OutputChunk& chunk) {
 }
 
 void OutputWriter::logProcess(length_t processedRecords, bool alwaysLog) {
-    auto now = chrono::steady_clock::now();
+    auto now = chrono::high_resolution_clock::now();
     auto timeElapsedSinceLastLog =
         chrono::duration_cast<chrono::seconds>(now - lastLogTime);
 
@@ -559,10 +577,16 @@ void OutputWriter::writerThread() {
         {
             unique_lock<mutex> outputLock(outputMapMutex);
             outputReady.wait(outputLock, [this] {
-                return !outputChunks.empty() &&
-                       (!reorder ||
-                        (outputChunks.begin()->first == nextChunkID));
+                return (!outputChunks.empty() &&
+                        (!reorder ||
+                         (outputChunks.begin()->first == nextChunkID))) ||
+                       stopRequested;
             });
+
+            // If stopping is requested, break out of the loop
+            if (stopRequested) {
+                break;
+            }
 
             // get the output chunk
             chunk = std::move(outputChunks.begin()->second);

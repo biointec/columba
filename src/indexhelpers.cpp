@@ -88,24 +88,27 @@ void TextOcc::generateSAMSingleEnd(const string& seqID, const string& printSeq,
         );
 }
 
-void TextOcc::generateSAMSingleEndXA(const string& seqID,
-                                     const string& printSeq,
-                                     const string& printQual, length_t nHits,
-                                     const vector<TextOcc>& otherMatches,
-                                     const vector<string>& seqNames) {
+void TextOcc::generateSAMSingleEndXA(
+    const std::string& seqID, const std::string& printSeq,
+    const std::string& printQual, length_t nHits,
+    std::vector<TextOcc>::const_iterator otherMatchesBegin,
+    std::vector<TextOcc>::const_iterator otherMatchesEnd,
+    const std::vector<std::string>& seqNames) {
 
     generateSAMSingleEnd(seqID, printSeq, printQual, nHits, distance, true,
                          seqNames);
+    assert(outputLine.back() == '\n'); // generateSAMSingleEnd should add \n
     // remove \n from end of the line
     outputLine.pop_back();
     // add the X0 X1 and XA tag
     length_t x0 = nHits - 1; // number of co-optimal hits (nHits includes this)
-    length_t x1 = otherMatches.size() - x0; // number of suboptimal hits
+    // number of suboptimal hits
+    length_t x1 = std::distance(otherMatchesBegin, otherMatchesEnd) - x0;
 
-    // append the sam line
+    // Append the SAM line
     outputLine += fmt::format("\tX0:i:{}\tX1:i:{}\tXA:Z:", x0, x1);
-    for (const auto& m : otherMatches) {
-        outputLine += m.asXA(seqNames);
+    for (auto it = otherMatchesBegin; it != otherMatchesEnd; ++it) {
+        outputLine += it->asXA(seqNames); // Use the iterator to access elements
     }
     outputLine += "\n";
 }
@@ -385,10 +388,10 @@ void Counters::reportStatistics(const SequencingMode& sMode) const {
 
     ss << "Average no. nodes: "
        << counters[NODE_COUNTER] / (counters[NUMBER_OF_READS] * 1.0);
-    logger.logDeveloper(ss);
+    logger.logVerbose(ss);
 
     ss << "Total no. Nodes: " << counters[NODE_COUNTER];
-    logger.logDeveloper(ss);
+    logger.logVerbose(ss);
 
     if (sMode == SINGLE_END) {
         ss << "Average no. unique matches per read: "
@@ -402,11 +405,11 @@ void Counters::reportStatistics(const SequencingMode& sMode) const {
         ss << "Average no. matches per read "
            << counters[TOTAL_REPORTED_POSITIONS] /
                   (counters[NUMBER_OF_READS] * 1.0);
-        logger.logDeveloper(ss);
+        logger.logVerbose(ss);
 
         ss << "Total no. reported matches: "
            << counters[TOTAL_REPORTED_POSITIONS];
-        logger.logDeveloper(ss);
+        logger.logVerbose(ss);
 
         ss << "Mapped reads: " << counters[MAPPED_READS];
         logger.logInfo(ss);
@@ -463,11 +466,11 @@ void Counters::reportStatistics(const SequencingMode& sMode) const {
 // reports on in-text verification, not needed in RLC
 #ifndef RUN_LENGTH_COMPRESSION
     ss << "In text verification procedures " << counters[IN_TEXT_STARTED];
-    logger.logDeveloper(ss);
+    logger.logVerbose(ss);
 
     ss << "Failed in-text verifications procedures: "
        << counters[ABORTED_IN_TEXT_VERIF];
-    logger.logDeveloper(ss);
+    logger.logVerbose(ss);
 
     if (counters[IN_TEXT_STARTED] != 0) {
         ss << "Aborted in-text relative to started "
@@ -477,14 +480,14 @@ void Counters::reportStatistics(const SequencingMode& sMode) const {
         ss << "Aborted in-text relative to started: N/A (No in-text "
               "verifications started)";
     }
-    logger.logDeveloper(ss);
+    logger.logVerbose(ss);
 
     ss << "Immediate switch after first part: " << counters[IMMEDIATE_SWITCH];
-    logger.logDeveloper(ss);
+    logger.logVerbose(ss);
 
     ss << "Searches started (does not include immediate switches) : "
        << counters[SEARCH_STARTED];
-    logger.logDeveloper(ss);
+    logger.logVerbose(ss);
 #endif // end not RLC
 }
 
@@ -544,7 +547,7 @@ void InTextVerificationTask<WordType>::doTask(Counters& counters,
 
             // make an occurrence
             occ.addTextOcc(Range(refBegin + bestBegin, refBegin + refEnd),
-                           bestScore, cigar, strand, pairStatus);
+                           bestScore, std::move(cigar), strand, pairStatus);
         }
     }
 }

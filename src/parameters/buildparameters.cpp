@@ -1,5 +1,6 @@
 #include "buildparameters.h"
 #include "../logger.h"
+#include <algorithm>
 #include <array>
 #include <fstream>
 #include <string>
@@ -76,10 +77,13 @@ bool BuildParameters::validFastaExtension(std::string& fastaFile) {
 #endif
 
     if (!fastaExtension.empty()) {
-        for (const auto& ext : allowedExtensionsFasta) {
-            if (fastaExtension == ext) {
-                return true;
-            }
+
+        if (std::any_of(allowedExtensionsFasta.begin(),
+                        allowedExtensionsFasta.end(),
+                        [&fastaExtension](const std::string& ext) {
+                            return fastaExtension == ext;
+                        })) {
+            return true;
         }
     }
 
@@ -247,19 +251,18 @@ class SeedLengthOption : public BuildParameterOption {
 
     void process(const std::string& arg,
                  BuildParameters& params) const override {
-        length_t seedLength = params.seedLength;
         try {
-            seedLength = std::stoi(arg);
+            int seedLength = std::stoi(arg);
+            if (seedLength < 0) {
+                logger.logWarning("Seed length should be a positive integer." +
+                                  ignoreMessage());
+                seedLength = params.seedLength; // reset to default
+            }
+            params.seedLength = seedLength;
         } catch (...) {
             logger.logWarning("Seed length should be an integer." +
                               ignoreMessage());
         }
-        if (seedLength < 0) {
-            logger.logWarning("Seed length should be a positive integer." +
-                              ignoreMessage());
-            seedLength = params.seedLength;
-        }
-        params.seedLength = seedLength;
     }
 
     std::string getDescription() const override {

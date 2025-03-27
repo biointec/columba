@@ -123,7 +123,8 @@ void IndexInterface::readMetaAndCounts(const string& baseFile, bool verbose) {
 
     stringstream ss;
     if (verbose) {
-        ss << "Reading " << baseFile << ".cct" << "...";
+        ss << "Reading " << baseFile << ".cct"
+           << "...";
         logger.logInfo(ss);
     }
 
@@ -719,14 +720,14 @@ SeqNameFound IndexInterface::findSeqName(TextOcc& t, length_t& seqID,
     // TODO update cigar for soft clipping
     if (occ.textOccSize() > 0) {
         // get minimal element using operator<
-        const auto& textOccs = occ.getTextOccurrences();
-        t = *std::min_element(textOccs.begin(), textOccs.end());
+        auto& textOccs = occ.getTextOccurrencesMutable();
+        t = std::move(*std::min_element(textOccs.begin(), textOccs.end()));
     } else {
         // no match found with clipping
         return NOT_FOUND;
     }
 #else
-    if (t.getRange().width() - range.width() + t.getDistance() >
+    if (t.getRange().width() - (end - begin) + t.getDistance() >
         largestStratum) {
         return NOT_FOUND;
     } else {
@@ -843,18 +844,21 @@ void IndexInterface::exactMatchesOutput(const string& s, Counters& counters,
                           pairStatus, getText());
     } else {
         // No verification needed, we can just add each occurrence
-        for (const auto& pos : p) {
-            tOcc.emplace_back(Range(pos, pos + s.size()), 0, CIGAR, strand,
-                              pairStatus);
-        }
+        tOcc.reserve(tOcc.size() + p.size());
+        std::transform(p.begin(), p.end(), std::back_inserter(tOcc),
+                       [&](const length_t& pos) {
+                           return TextOcc(Range(pos, pos + s.size()), 0, CIGAR,
+                                          strand, pairStatus);
+                       });
     }
 #else
     std::string CIGAR = "*"; // no CIGAR in RLC
     // directly add occurrences
-    for (const auto& pos : p) {
-        tOcc.emplace_back(Range(pos, pos + s.size()), 0, CIGAR, strand,
-                          pairStatus);
-    }
+    std::transform(p.begin(), p.end(), std::back_inserter(tOcc),
+                   [&](const length_t& pos) {
+                       return TextOcc(Range(pos, pos + s.size()), 0, CIGAR,
+                                      strand, pairStatus);
+                   });
 #endif // end RLC
 
     counters.inc(Counters::TOTAL_REPORTED_POSITIONS, tOcc.size());
@@ -912,10 +916,13 @@ void IndexInterface::approxMatchesNaive(const std::string& pattern,
     } else {
         matrix = &matrices.front();
     }
-    matrix->setSequence(pattern);
-    matrix->initializeMatrix(maxED);
 
-    setDirection(FORWARD, false);
+    // match unidirectionally backward
+    setDirection(BACKWARD, true);
+    Substring p(pattern, BACKWARD);
+
+    matrix->setSequence(p);
+    matrix->initializeMatrix(maxED);
 
     vector<FMPosExt> stack;
     stack.reserve((pattern.size() + maxED + 1) * (sigma.size() - 1));
@@ -966,6 +973,61 @@ void IndexInterface::approxMatchesNaive(const std::string& pattern,
 
     const auto& bundle = ReadBundle::createBundle(pattern, strand);
     matches = getUniqueTextOccurrences(occurrences, maxED, counters, bundle);
+
+#ifndef RUN_LENGTH_COMPRESSION // CIGAR generation
+    generateCIGARS(matches, counters, bundle);
+#endif // end non RLC
+}
+
+void IndexInterface::approxMatchesNaiveHamming(const std::string& pattern,
+                                               length_t maxED,
+                                               Counters& counters,
+                                               vector<TextOcc>& matches) {
+
+    Occurrences occ;
+
+    setDirection(BACKWARD, true);
+
+    // create vector for the scores
+    vector<length_t> vec(pattern.size() + 1, 0);
+
+    vector<FMPosExt> stack;
+    stack.reserve((pattern.size() + maxED + 1) * (sigma.size() - 1));
+
+    extendFMPos(getCompleteRange(), stack, counters, 0);
+
+    while (!stack.empty()) {
+        const FMPosExt node = stack.back();
+        stack.pop_back();
+
+#ifndef RUN_LENGTH_COMPRESSION // in-text verification
+        if (node.getRanges().width() <= getSwitchPoint()) {
+            inTextVerificationHamming(node.getRanges().getRangeSA(), pattern,
+                                      maxED, 0, 0, occ, counters);
+            continue;
+        }
+#endif // end non RLC
+
+        length_t row = node.getRow();
+        vec[row] = vec[row - 1] +
+                   (node.getCharacter() != pattern[pattern.size() - row]);
+
+        if (vec[row] > maxED) {
+            // backtrack
+            continue;
+        }
+
+        if (row == pattern.size()) {
+            // end of pattern and within edit distance (check above)
+            occ.addFMOcc(node, vec[row], strand, pairStatus);
+            continue;
+        }
+
+        extendFMPos(node, stack, counters);
+    }
+
+    const auto& bundle = ReadBundle::createBundle(pattern, strand);
+    matches = getTextOccHamming(occ, counters);
 
 #ifndef RUN_LENGTH_COMPRESSION // CIGAR generation
     generateCIGARS(matches, counters, bundle);
@@ -1103,16 +1165,13 @@ vector<TextOcc> IndexInterface::getTextOccHamming(Occurrences& occ,
     }
     // remove doubles
     occ.eraseDoublesText();
-
-    return occ.getTextOccurrences();
+    // Named RVO: move elision at best, move construction at worst
+    return occ.getTextOccurrencesMove();
 }
 
 vector<TextOcc> IndexInterface::getUniqueTextOccurrences(
     Occurrences& occ, const length_t& maxED, Counters& counters,
     const ReadBundle& bundle) const {
-
-    // TODO: add sorted requirement to doc
-    // TODO: add assertion at the end that checks if it was sorted
 
     // increment report position counter
     counters.inc(Counters::TOTAL_REPORTED_POSITIONS, occ.textOccSize());
@@ -1174,7 +1233,7 @@ vector<TextOcc> IndexInterface::getUniqueTextOccurrences(
                     tOcc.setCigar(CIGARstring);
                 }
             }
-            occ.addTextOcc(tOcc);
+            occ.addTextOcc(std::move(tOcc));
         }
     }
 
@@ -1192,8 +1251,8 @@ vector<TextOcc> IndexInterface::getUniqueTextOccurrences(
     length_t prevDepth = numeric_limits<length_t>::max();
     length_t prevED = maxED + 1;
 
-    const auto& textOcc = occ.getTextOccurrences();
-    for (const auto& o : textOcc) {
+    auto& textOcc = occ.getTextOccurrencesMutable();
+    for (auto& o : textOcc) {
         // find the difference between this and the previous
         // occurrence
         auto diff = abs_diff<length_t>(o.getRange().getBegin(), prevBegin);
@@ -1220,7 +1279,7 @@ vector<TextOcc> IndexInterface::getUniqueTextOccurrences(
         prevED = o.getDistance();
         prevDepth = o.getRange().width();
 
-        nonRedundantOcc.emplace_back(o);
+        nonRedundantOcc.emplace_back(std::move(o));
     }
 
     // assert that nonRedundantOcc is sorted

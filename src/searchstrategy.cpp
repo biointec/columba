@@ -59,12 +59,14 @@ SearchStrategy::SearchStrategy(IndexInterface& argument, PartitionStrategy p,
     case HAMMING:
         startIdxPtr = &SearchStrategy::startIndexHamming;
         filterPtr = &SearchStrategy::filterHamming;
+        naiveMatchPtr = &IndexInterface::approxMatchesNaiveHamming;
 #ifndef RUN_LENGTH_COMPRESSION
         inTextVerificationPtr = &SearchStrategy::inTextVerificationHamming;
 #endif
         break;
     case EDIT:
         startIdxPtr = &SearchStrategy::startIndexEdit;
+        naiveMatchPtr = &IndexInterface::approxMatchesNaive;
 #ifdef RUN_LENGTH_COMPRESSION
         filterPtr = &SearchStrategy::filterEditWithoutCIGARCalculation;
 #else
@@ -232,6 +234,63 @@ void SearchStrategy::setParts(const string& pattern, vector<Substring>& parts,
 
 // Dynamic Partitioning
 
+/**
+ * @brief Seed the parts of the pattern with no k-mer look-up table, parts will
+ * be four characters long (matched in the index) if possible. Helper function
+ * for SearchStrategy::partitionDynamic.
+ * @param pSize The size of the pattern.
+ * @param parts The parts of the pattern.
+ * @param numParts The number of parts.
+ * @param exactMatchRanges The exact match ranges of the parts.
+ * @param counters The performance counters.
+ * @param index The index.
+ * @param pattern The pattern.
+ * @param matchedChars The number of characters matched in the index. (output)
+ */
+void seedIfNoKmers(const length_t& pSize, vector<Substring>& parts,
+                   const int& numParts, vector<SARangePair>& exactMatchRanges,
+                   Counters& counters, IndexInterface& index,
+                   const string& pattern, int& matchedChars) {
+    // wordsize was 0, all parts are of size 0
+    // extend all parts but the last in forwards direction to size 4 (or 1 if
+    // too short)
+    length_t size = (pSize >= 4 * parts.size()) ? 4 : 1;
+    for (int i = 0; i < numParts - 1; i++) {
+        parts[i].setEnd(min(parts[i].end() + size, pSize));
+        index.setDirection(FORWARD, false);
+        for (length_t j = parts[i].begin(); j < parts[i].end(); j++) {
+            index.addChar(pattern[j], exactMatchRanges.at(i), counters);
+            matchedChars++;
+        }
+    }
+}
+
+/**
+ * Helper function for dynamic partitioning. This function extends the parts
+ * so that nothing of the pattern is not allocated to any part. This does
+ * not keep track of the ranges over the suffix array, so should only be
+ * called if this does not matter (e.g. when the parts that can be extended
+ * all correspond to empty ranges)
+ * @param pattern the pattern that is split
+ * @param parts  the current parts, they are updated so that all characters
+ * of pattern are part of exactly one part
+ */
+void extendParts(const string& pattern, vector<Substring>& parts) {
+    for (length_t i = 0; i < parts.size(); i++) {
+
+        if ((i != parts.size() - 1) &&
+            (parts[i].end() != parts[i + 1].begin())) {
+            // extend completely to the right
+            // it is known that the range will stay [0,0)
+            parts[i].setEnd(parts[i + 1].begin());
+        }
+        if ((i != 0) && (parts[i].begin() != parts[i - 1].end())) {
+            // extend completely to the left
+            parts[i].setBegin(parts[i - 1].end());
+        }
+    }
+}
+
 void SearchStrategy::partitionDynamic(const string& pattern,
                                       vector<Substring>& parts,
                                       const int& numParts, const int& maxScore,
@@ -241,19 +300,26 @@ void SearchStrategy::partitionDynamic(const string& pattern,
     int matchedChars =
         seed(pattern, parts, numParts, maxScore, exactMatchRanges);
 
-    int pSize = pattern.size();
-    vector<int> weights = getWeights(numParts, maxScore);
+    length_t pSize = pattern.size();
+    vector<uint64_t> weights = getWeights(numParts, maxScore);
 
     Direction dir = FORWARD;
     int partToExtend = 0;
 
+    if (matchedChars == 0) {
+        // no characters were matched, seed the parts with no k-mer look-up
+        // table
+        seedIfNoKmers(pSize, parts, numParts, exactMatchRanges, counters, index,
+                      pattern, matchedChars);
+    }
+
     // extend the part with the largest range, as to minimize the range
     // for each part do this until all characters are assigned to a
     // part
-    for (int j = matchedChars; j < pSize; j++) {
+    for (length_t j = matchedChars; j < pSize; j++) {
 
         // find the part with the largest range
-        length_t maxRangeWeighted = 0;
+        uint64_t maxRangeWeighted = 0;
 
         for (int i = 0; i < numParts; i++) {
             bool noLeftExtension =
@@ -342,23 +408,6 @@ int SearchStrategy::seed(const string& pattern, vector<Substring>& parts,
     return numParts * wSize;
 }
 
-void SearchStrategy::extendParts(const string& pattern,
-                                 vector<Substring>& parts) const {
-    for (length_t i = 0; i < parts.size(); i++) {
-
-        if ((i != parts.size() - 1) &&
-            (parts[i].end() != parts[i + 1].begin())) {
-            // extend completely to the right
-            // it is known that the range will stay [0,0)
-            parts[i].setEnd(parts[i + 1].begin());
-        }
-        if ((i != 0) && (parts[i].begin() != parts[i - 1].end())) {
-            // extend completely to the left
-            parts[i].setBegin(parts[i - 1].end());
-        }
-    }
-}
-
 // ----------------------------------------------------------------------------
 // (APPROXIMATE) MATCHING
 // ----------------------------------------------------------------------------
@@ -366,6 +415,7 @@ void SearchStrategy::extendParts(const string& pattern,
 void SearchStrategy::matchWithSearches(const string& seq, const length_t k,
                                        Counters& counters, Occurrences& occs,
                                        const length_t minDistance) {
+
     // calculate number of parts
     length_t numParts = calculateNumParts(k);
 
@@ -376,21 +426,24 @@ void SearchStrategy::matchWithSearches(const string& seq, const length_t k,
     vector<Substring> parts;
 
     // partition the read
+    count++;
     partition(seq, parts, numParts, k, exactMatchRanges, counters);
 
     if (parts.empty()) {
         // splitting up was not viable -> just search the entire pattern
-        if (name != "Naive backtracking") {
+        if (name != "Naive backtracking" && numParts > 1) {
             stringstream ss;
-            ss << "Normal bidirectional search was used as "
-                  "entered pattern is too short "
-               << seq.size();
+            ss << "Warning: The pattern size (" << seq.size()
+               << ") is too short for the current number of parts (" << numParts
+               << "). Using normal bidirectional search instead.\n"
+               << "Pattern: " << seq;
             logger.logWarning(ss);
         }
 
         vector<TextOcc> textOccs;
 
-        index.approxMatchesNaive(seq, k, counters, textOccs);
+        (index.*naiveMatchPtr)(seq, k, counters, textOccs);
+
         occs.addTextOccs(textOccs);
         return;
     }
@@ -789,7 +842,7 @@ void SearchStrategy::processComb(
     };
 
     auto processRead = [&](const string& seq, PairStatus status, Strand strand,
-                           OccVector& vector, length_t& max,
+                           OccVector& vector, const length_t& max,
                            length_t& maxOther) {
         if (!processSeq(seq, status, strand, max, vector, counters)) {
             return false; // no occurrences found for read
@@ -856,9 +909,15 @@ void SearchStrategy::processComb(
     }
 }
 
-void SearchStrategy::mergeOrMovePairs(vector<PairedTextOccs>& pairs12,
-                                      vector<PairedTextOccs>& pairs21,
-                                      vector<PairedTextOccs>& pairs) {
+/**
+ * Add the best pairs for the 1-2 and 2-1 combination to the pairs vector.
+ * @param pairs12 the pairs for the 1-2 combination
+ * @param pairs21 the pairs for the 2-1 combination
+ * @param pairs the vector with the paired occurrences (can be updated)
+ */
+void mergeOrMovePairs(vector<PairedTextOccs>& pairs12,
+                      vector<PairedTextOccs>& pairs21,
+                      vector<PairedTextOccs>& pairs) {
     if (pairs12.empty() || pairs21.empty()) {
         pairs = std::move(pairs12.empty() ? pairs21 : pairs12);
         return;
@@ -1210,7 +1269,7 @@ void SearchStrategy::pairOccurrences(vector<TextOcc>& upstreamOccs,
     }
 
     // loop over all matches of the upstream read
-    for (TextOcc& upStreamOcc : upstreamOccs) {
+    for (auto& upStreamOcc : upstreamOccs) {
         length_t upstreamPos = upStreamOcc.getIndexBegin();
 
         // find the index of first match of the downstream read that is
@@ -1299,8 +1358,10 @@ vector<PairedTextOccs> SearchStrategy::pairSingleEndedMatchesAll(
 #endif
 
     // create BoolAndVector for each vector with bool set to true
-    BoolAndVector fw1bv = {true, fw1}, rc1bv = {true, rc1},
-                  fw2bv = {read2done, fw2}, rc2bv = {read2done, rc2};
+    BoolAndVector fw1bv = {true, std::move(fw1)},
+                  rc1bv = {true, std::move(rc1)},
+                  fw2bv = {read2done, std::move(fw2)},
+                  rc2bv = {read2done, std::move(rc2)};
 
     (this->*processOriAllPtr)(readPair, fw1bv, rc1bv, fw2bv, rc2bv,
                               pairedMatches, maxFragSize, minFragSize, maxED,
@@ -1373,7 +1434,8 @@ void SearchStrategy::addUnpairedMatches(vector<TextOcc>& allMatches,
     }
 
     // add the temp occurrences to the unpairedOcc vector
-    unpairedOcc.insert(unpairedOcc.end(), temp.begin(), temp.end());
+    unpairedOcc.insert(unpairedOcc.end(), std::make_move_iterator(temp.begin()),
+                       std::make_move_iterator(temp.end()));
 }
 
 void SearchStrategy::addOneUnmapped(ReadPair& reads, vector<TextOcc>& matches1,
@@ -1383,7 +1445,8 @@ void SearchStrategy::addOneUnmapped(ReadPair& reads, vector<TextOcc>& matches1,
     // Define lambda function to create paired occurrences with one
     // mapped read
     auto createPairedOccurrences = [&](vector<TextOcc>& occurrences,
-                                       ReadBundle& bundle1, ReadBundle& bundle2,
+                                       const ReadBundle& bundle1,
+                                       const ReadBundle& bundle2,
                                        const bool isFirstMapped,
                                        vector<PairedTextOccs>& pairs) {
         const auto& mappedBundle = (isFirstMapped) ? bundle1 : bundle2;
@@ -1403,10 +1466,10 @@ void SearchStrategy::addOneUnmapped(ReadPair& reads, vector<TextOcc>& matches1,
             PairStatus unmappedReadStatus =
                 isFirstMapped ? SECOND_IN_PAIR : FIRST_IN_PAIR;
 
-            TextOcc unMapped = TextOcc::createUnmappedSAMOccurrencePE(
+            auto unMapped = TextOcc::createUnmappedSAMOccurrencePE(
                 isFirstMapped ? bundle2 : bundle1, unmappedReadStatus, true,
                 occurrence.getStrand());
-            PairedTextOccs pair = {occurrence, unMapped, 0};
+            PairedTextOccs pair = {occurrence, std::move(unMapped), 0};
             pairs.emplace_back(std::move(pair));
         }
     };
@@ -1817,7 +1880,7 @@ void SearchStrategy::generateOutputSingleEnd(vector<TextOcc>& occs,
 }
 
 void SearchStrategy::generateSAMPairedEnd(vector<PairedTextOccs>& pairedMatches,
-                                          ReadPair& readPair) {
+                                          ReadPair& rp) {
 
     if (pairedMatches.empty()) {
         return;
@@ -1829,11 +1892,7 @@ void SearchStrategy::generateSAMPairedEnd(vector<PairedTextOccs>& pairedMatches,
 // this by using a vector of reference_wrappers or pointers, but
 // this will need some refactoring, which might not be worth it
 #ifdef DEVELOPER_MODE
-    // TODO if DAG is used to determine strata we might to sort on some extra
-    // criteria to keep the order stable. For example two pairs with the same
-    // but the first is FR and the second is RF might be found in a different
-    // order. If we want to keep the sort stable we should also sort on the
-    // strand of the first read in the pair
+
     std::stable_sort(pairedMatches.begin(), pairedMatches.end(),
                      [](const PairedTextOccs& a, const PairedTextOccs& b) {
                          return a.getDistance() < b.getDistance();
@@ -1877,28 +1936,20 @@ void SearchStrategy::generateSAMPairedEnd(vector<PairedTextOccs>& pairedMatches,
         // upstream is first in pair
         bool upFirst = match.getUpStream().isFirstReadInPair();
 
-        // aliases for the up- and downstream read, id, quality and
-        // revCompl
-        ReadBundle& upstreamBundle =
-            upFirst ? readPair.getBundle1() : readPair.getBundle2();
-        ReadBundle& downstreamBundle =
-            upFirst ? readPair.getBundle2() : readPair.getBundle1();
-
-        // only generate SAM if the second read has a valid alignment. If the
-        // second alignment is unmapped then SAM has already been generated.
-
         // generate SAM for upstream
         if (match.getUpStream().isValid()) {
+            auto& bundle = upFirst ? rp.getBundle1() : rp.getBundle2();
             match.getUpStream().generateSAMPairedEnd(
-                upstreamBundle, nPairs, bestScore, match.getDownStream(),
+                bundle, nPairs, bestScore, match.getDownStream(),
                 match.getFragSize(), match.isDiscordant(), primaryAlignment,
                 index.getSeqNames());
         }
 
         // generate SAM for downstream
         if (match.getDownStream().isValid()) {
+            auto& bundle = upFirst ? rp.getBundle2() : rp.getBundle1();
             match.getDownStream().generateSAMPairedEnd(
-                downstreamBundle, nPairs, bestScore, match.getUpStream(),
+                bundle, nPairs, bestScore, match.getUpStream(),
                 match.getFragSize(), match.isDiscordant(), primaryAlignment,
                 index.getSeqNames());
         }
@@ -1914,7 +1965,7 @@ void SearchStrategy::generateSAMPairedEnd(vector<PairedTextOccs>& pairedMatches,
 // CONSTRUCTION
 // ----------------------------------------------------------------------------
 
-void CustomSearchStrategy::getSearchSchemeFromFolder(string pathToFolder,
+void CustomSearchStrategy::getSearchSchemeFromFolder(const string& pathToFolder,
                                                      bool verbose) {
 
     // get the name of the file
@@ -2045,6 +2096,27 @@ void CustomSearchStrategy::getSearchSchemeFromFolder(string pathToFolder,
     }
 }
 
+/**
+ * Helper function for CustomSearchStrategy::makeSearch.
+ * Extracts the vector from a string and stores it in the vector.
+ * @param vectorString The string representation of the vector.
+ * @param vector The vector to store the values in.
+ */
+void getVector(const string& vectorString, vector<length_t>& vector) {
+
+    if (vectorString.size() < 2) {
+        throw runtime_error(vectorString +
+                            " is not a valid vector for a search");
+    }
+    string bracketsRemoved = vectorString.substr(1, vectorString.size() - 2);
+
+    stringstream ss(bracketsRemoved);
+    string token;
+    while (getline(ss, token, ',')) {
+        vector.emplace_back(stoull(token));
+    }
+}
+
 Search CustomSearchStrategy::makeSearch(const string& line,
                                         length_t idx) const {
     stringstream ss(line);
@@ -2070,22 +2142,6 @@ Search CustomSearchStrategy::makeSearch(const string& line,
     getVector(tokens[2], upper_bound);
 
     return Search::makeSearch(order, lower_bound, upper_bound, idx);
-}
-
-void CustomSearchStrategy::getVector(const string& vectorString,
-                                     vector<length_t>& vector) const {
-
-    if (vectorString.size() < 2) {
-        throw runtime_error(vectorString +
-                            " is not a valid vector for a search");
-    }
-    string bracketsRemoved = vectorString.substr(1, vectorString.size() - 2);
-
-    stringstream ss(bracketsRemoved);
-    string token;
-    while (getline(ss, token, ',')) {
-        vector.emplace_back(stoull(token));
-    }
 }
 
 // ----------------------------------------------------------------------------

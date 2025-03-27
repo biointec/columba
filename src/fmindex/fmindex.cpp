@@ -80,7 +80,6 @@ void FMIndex::getTextPositionsFromSARange(
 
 void FMIndex::fromFiles(const string& baseFile, bool verbose) {
 
-
     string textFile = baseFile + ".txt.bin";
     if (verbose) {
 
@@ -100,14 +99,13 @@ void FMIndex::fromFiles(const string& baseFile, bool verbose) {
 
     inFile.close();
 
-   
-
     // read FMIndex specific files
     stringstream ss;
     if (verbose) {
 
         // read the BWT
-        ss << "Reading " << baseFile << ".bwt" << "...";
+        ss << "Reading " << baseFile << ".bwt"
+           << "...";
         logger.logInfo(ss);
     }
 
@@ -117,7 +115,8 @@ void FMIndex::fromFiles(const string& baseFile, bool verbose) {
     if (verbose) {
 
         // read the baseFile occurrence table
-        ss << "Reading " << baseFile << ".brt" << "...";
+        ss << "Reading " << baseFile << ".brt"
+           << "...";
         logger.logInfo(ss);
     }
 
@@ -125,7 +124,8 @@ void FMIndex::fromFiles(const string& baseFile, bool verbose) {
         throw runtime_error("Cannot open file: " + baseFile + ".brt");
     if (verbose) {
 
-        ss << "Reading " << baseFile << ".rev.brt" << "...";
+        ss << "Reading " << baseFile << ".rev.brt"
+           << "...";
         logger.logInfo(ss);
     }
 
@@ -348,7 +348,7 @@ void FMIndex::inTextVerificationOneString(const length_t startPos,
 }
 
 void FMIndex::verifyExactPartialMatchInTextHamming(
-    FMOcc& startMatch, length_t beginInPattern, length_t maxD,
+    const FMOcc& startMatch, length_t beginInPattern, length_t maxD,
     const std::vector<Substring>& parts, Occurrences& occ, Counters& counters,
     length_t minD) const {
     const auto& r = startMatch.getRanges().getRangeSA();
@@ -356,19 +356,21 @@ void FMIndex::verifyExactPartialMatchInTextHamming(
     // get length of pattern (= sum length of parts)
     length_t pSize = parts.back().end();
 
-    inTextVerificationHamming(r, parts, maxD, minD, pSize, beginInPattern, occ,
+    Substring pattern(parts[0], 0, pSize, FORWARD);
+    inTextVerificationHamming(r, pattern, maxD, minD, beginInPattern, occ,
                               counters);
 }
 
 void FMIndex::inTextVerificationHamming(
-    const SARange& r, const vector<Substring>& parts, const length_t maxEDFull,
-    const length_t minEDFull, const length_t pSize, const length_t lengthBefore,
-    Occurrences& occ, Counters& counters) const {
+    const SARange& r, const Substring& pattern, const length_t maxEDFull,
+    const length_t minEDFull, const length_t lengthBefore, Occurrences& occ,
+    Counters& counters) const {
     std::string CIGAR = "*";
+    const auto& pSize = pattern.size();
 
     if (!noCIGAR) {
         // CIGAR for hamming distance
-        CIGAR = std::to_string(pSize) + "M"; // TODO use fmt
+        CIGAR = fmt::format("{}M", pSize);
     }
 
     for (length_t i = r.getBegin(); i < r.getEnd(); i++) {
@@ -389,16 +391,15 @@ void FMIndex::inTextVerificationHamming(
 
         // Create the reference and pattern sequence
         Substring ref = getSubstring(Tb, Te);
-        Substring pattern(parts[0], 0, pSize, FORWARD);
 
         assert(ref.size() == pattern.size());
 
         length_t score = 0;
 
-        for (length_t i = 0; i < ref.size(); i++) {
+        for (length_t j = 0; j < ref.size(); j++) {
             // update the score
             score =
-                score + (ref.forwardAccessor(i) != pattern.forwardAccessor(i));
+                score + (ref.forwardAccessor(j) != pattern.forwardAccessor(j));
             if (score > maxEDFull) {
                 // in text verification failed
                 break;
@@ -427,8 +428,9 @@ void FMIndex::inTextVerificationHamming(const FMPosExt& node, const Search& s,
     const SARange& r =
         node.getRanges().getRangeSA(); // SA range of current node
 
-    inTextVerificationHamming(r, parts, maxEDFull, minEDFull, pSize,
-                              lengthBefore, occ, counters);
+    Substring pattern(parts[0], 0, pSize, FORWARD);
+    inTextVerificationHamming(r, pattern, maxEDFull, minEDFull, lengthBefore,
+                              occ, counters);
 }
 
 // ----------------------------------------------------------------------------

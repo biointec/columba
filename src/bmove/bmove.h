@@ -75,7 +75,7 @@ class BMove : public IndexInterface {
      * @param baseFile the baseFile of the files that will be read in
      * @param verbose if true the steps will we written to cout
      */
-    virtual void fromFiles(const std::string& baseFile, bool verbose) override;
+    void fromFiles(const std::string& baseFile, bool verbose);
 
     /**
      * Read a binary file and stores content in sdsl int_vector
@@ -294,6 +294,13 @@ class BMove : public IndexInterface {
                                            const length_t idx, Occurrences& occ,
                                            Counters& counters) const override;
 
+    void inTextVerificationHamming(const Range& r, const Substring& pattern,
+                                   const length_t maxEDFull,
+                                   const length_t minEDFull,
+                                   const length_t lengthBefore,
+                                   Occurrences& occ,
+                                   Counters& counters) const override;
+
     // ----------------------------------------------------------------------------
     // LOCATION ROUTINES
     // ----------------------------------------------------------------------------
@@ -339,7 +346,7 @@ class BMove : public IndexInterface {
         populateTable(verbose);
 
         // set the index in FORWARD_STRAND mode
-        setIndexInMode(FORWARD_STRAND);
+        BMove::setIndexInMode(FORWARD_STRAND);
     }
 
     /**
@@ -445,7 +452,7 @@ class BMove : public IndexInterface {
      * occurrences
      */
     virtual void verifyExactPartialMatchInTextHamming(
-        FMOcc& startMatch, length_t beginInPattern, length_t maxD,
+        const FMOcc& startMatch, length_t beginInPattern, length_t maxD,
         const std::vector<Substring>& parts, Occurrences& occ,
         Counters& counters, length_t minD) const override;
 

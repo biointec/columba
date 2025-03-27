@@ -237,6 +237,7 @@ class Substring {
         this->startIndex = other.begin();
         this->endIndex = other.end();
         this->d = other.d;
+        this->accessor = other.accessor;
 
         return *this;
     }

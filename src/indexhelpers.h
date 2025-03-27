@@ -455,6 +455,50 @@ class TextOcc {
 #endif
     }
 
+    TextOcc(TextOcc&& other) noexcept
+        : range(std::move(other.range)), distance(other.distance),
+          stringCIGAR(std::move(other.stringCIGAR)),
+          assignedSequenceID(other.assignedSequenceID),
+          seqNameChecked(other.seqNameChecked),
+          seqNameFound(other.seqNameFound), strand(other.strand),
+          pairStatus(other.pairStatus), outputLine(std::move(other.outputLine)),
+          indexBegin(other.indexBegin) {
+    }
+
+    // delete copy and copy assignment
+    TextOcc(const TextOcc& other) = delete;
+    TextOcc& operator=(const TextOcc& other) = delete;
+
+    // make explicit copy constructor
+    TextOcc copy() const {
+        TextOcc copy(range, distance, stringCIGAR, strand, pairStatus);
+        copy.assignedSequenceID = assignedSequenceID;
+        copy.seqNameChecked = seqNameChecked;
+        copy.seqNameFound = seqNameFound;
+        copy.strand = strand;
+        copy.pairStatus = pairStatus;
+        copy.outputLine = outputLine;
+        copy.indexBegin = indexBegin;
+        return copy;
+    }
+
+    // Move assignment operator
+    TextOcc& operator=(TextOcc&& other) noexcept {
+        if (this != &other) {
+            range = std::move(other.range);
+            distance = other.distance;
+            stringCIGAR = std::move(other.stringCIGAR);
+            assignedSequenceID = other.assignedSequenceID;
+            seqNameChecked = other.seqNameChecked;
+            seqNameFound = other.seqNameFound;
+            strand = other.strand;
+            pairStatus = other.pairStatus;
+            outputLine = std::move(other.outputLine);
+            indexBegin = other.indexBegin;
+        }
+        return *this;
+    }
+
     /**
      * Constructor for an invalid text occurrence
      */
@@ -520,14 +564,16 @@ class TextOcc {
      * @param printQual The base quality to be printed
      * @param nHits The number of matches with the best score (includes this
      * occurrence!)
-     * @param otherMatches The other matches.
+     * @param otherMatchesBegin Iterator to the first other match
+     * @param otherMatchesEnd Iterator to the end of the other matches
      * @param seqNames the vector with all the reference sequence names
      */
-    void generateSAMSingleEndXA(const std::string& seqID,
-                                const std::string& printSeq,
-                                const std::string& printQual, length_t nHits,
-                                const std::vector<TextOcc>& otherMatches,
-                                const std::vector<std::string>& seqNames);
+    void generateSAMSingleEndXA(
+        const std::string& seqID, const std::string& printSeq,
+        const std::string& printQual, length_t nHits,
+        std::vector<TextOcc>::const_iterator otherMatchesBegin,
+        std::vector<TextOcc>::const_iterator otherMatchesEnd,
+        const std::vector<std::string>& seqNames);
 
     /**
      * Generates the SAM line for this occurrence in the current pair.
@@ -590,10 +636,11 @@ class TextOcc {
      * @param otherMatches The other matches.
      * @param seqNames
      */
-    void generateSAMSingleEndXA(ReadBundle& bundle, length_t nHits,
-                                length_t minScore,
-                                const std::vector<TextOcc>& otherMatches,
-                                const std::vector<std::string>& seqNames) {
+    void generateSAMSingleEndXA(
+        ReadBundle& bundle, length_t nHits, length_t minScore,
+        std::vector<TextOcc>::const_iterator otherMatchesBegin,
+        std::vector<TextOcc>::const_iterator otherMatchesEnd,
+        const std::vector<std::string>& seqNames) {
 
         std::string printSeq =
             (isRevCompl()) ? bundle.getRevComp() : bundle.getRead();
@@ -604,7 +651,7 @@ class TextOcc {
             printQual = "*";
         }
         generateSAMSingleEndXA(bundle.getSeqID(), printSeq, printQual, nHits,
-                               otherMatches, seqNames);
+                               otherMatchesBegin, otherMatchesEnd, seqNames);
     }
 
     /**
@@ -631,13 +678,15 @@ class TextOcc {
      * @param otherMatches The other matches.
      * @param seqNames the vector with all the reference sequence names
      */
-    void generateRHSSingleEnd(ReadBundle& bundle,
-                              const std::vector<TextOcc>& otherMatches,
-                              const std::vector<std::string>& seqNames) {
+    void
+    generateRHSSingleEnd(const ReadBundle& bundle,
+                         std::vector<TextOcc>::const_iterator otherMatchesBegin,
+                         std::vector<TextOcc>::const_iterator otherMatchesEnd,
+                         const std::vector<std::string>& seqNames) {
         outputLine = bundle.getSeqID();
         outputLine += "\t" + getRHS(seqNames);
-        for (const auto& other : otherMatches) {
-            outputLine += ";" + other.getRHS(seqNames);
+        for (auto it = otherMatchesBegin; it != otherMatchesEnd; ++it) {
+            outputLine += ";" + it->getRHS(seqNames);
         }
     }
 
@@ -736,7 +785,7 @@ class TextOcc {
      * @param r the occurrence to compare to this (=right hand side of the
      * comparison)
      */
-    bool operator==(const TextOcc& r) {
+    bool operator==(const TextOcc& r) const {
         return r.getRange() == range && r.getDistance() == distance;
     }
 
@@ -780,7 +829,7 @@ class TextOcc {
      * Sets the CIGAR string of this occurrence.
      * @param cigar the CIGAR string to set
      */
-    void setCigar(std::string& cigar) {
+    void setCigar(const std::string& cigar) {
 #ifndef RUN_LENGTH_COMPRESSION
         stringCIGAR = cigar;
 #endif
@@ -866,8 +915,8 @@ class TextOcc {
 */
 class PairedTextOccs {
   private:
-    TextOcc upStreamOcc;   // the upstream occurrence
-    TextOcc downStreamOcc; // the downstream occurrence
+    TextOcc upStreamOcc;   // Pointer to upstream occurrence
+    TextOcc downStreamOcc; // Pointer to downstream occurrence
 
     uint32_t fragSize; // the fragment size
     uint32_t distance; // the distance of the pair to the reference
@@ -885,7 +934,7 @@ class PairedTextOccs {
      * Operator overloading. A PairedTextOccs is smaller than a value if its
      * total distance to the reference is smaller than the value.
      */
-    bool operator<(uint32_t value) {
+    bool operator<(uint32_t value) const {
         return getDistance() < value;
     }
 
@@ -897,19 +946,57 @@ class PairedTextOccs {
         return discordant;
     }
 
-    PairedTextOccs(TextOcc upStreamOcc, TextOcc downStreamOcc)
-        : upStreamOcc(upStreamOcc), downStreamOcc(downStreamOcc),
+    PairedTextOccs(const TextOcc& upStream, const TextOcc& downStream)
+        : upStreamOcc(upStream.copy()), downStreamOcc(downStream.copy()),
+          fragSize(downStream.getRange().getEnd() -
+                   upStream.getRange().getBegin()),
+          distance(upStream.getDistance() + downStream.getDistance()) {
+    }
+
+    PairedTextOccs(const TextOcc& upStream, const TextOcc& downStream,
+                   uint32_t fragSize)
+        : upStreamOcc(upStream.copy()), downStreamOcc(downStream.copy()),
+          fragSize(fragSize),
+          distance(upStream.getDistance() + downStream.getDistance()) {
+    }
+
+    PairedTextOccs(TextOcc&& upStream, TextOcc&& downStream)
+        : upStreamOcc(std::move(upStream)),
+          downStreamOcc(std::move(downStream)),
           fragSize(downStreamOcc.getRange().getEnd() -
                    upStreamOcc.getRange().getBegin()),
           distance(upStreamOcc.getDistance() + downStreamOcc.getDistance()) {
     }
 
-    PairedTextOccs(TextOcc upStreamOcc, TextOcc downStreamOcc,
-                   uint32_t fragSize)
-        : upStreamOcc(upStreamOcc), downStreamOcc(downStreamOcc),
-          fragSize(fragSize),
+    PairedTextOccs(TextOcc&& upStream, TextOcc&& downStream, uint32_t fragSize)
+        : upStreamOcc(std::move(upStream)),
+          downStreamOcc(std::move(downStream)), fragSize(fragSize),
           distance(upStreamOcc.getDistance() + downStreamOcc.getDistance()) {
     }
+
+    // move constructor
+    PairedTextOccs(PairedTextOccs&& other) noexcept
+        : upStreamOcc(std::move(other.upStreamOcc)),
+          downStreamOcc(std::move(other.downStreamOcc)),
+          fragSize(other.fragSize), distance(other.distance),
+          discordant(other.discordant) {
+    }
+
+    // move assignment operator
+    PairedTextOccs& operator=(PairedTextOccs&& other) noexcept {
+        if (this != &other) {
+            upStreamOcc = std::move(other.upStreamOcc);
+            downStreamOcc = std::move(other.downStreamOcc);
+            fragSize = other.fragSize;
+            distance = other.distance;
+            discordant = other.discordant;
+        }
+        return *this;
+    }
+
+    // delete copy constructor and assignment operator
+    PairedTextOccs(const PairedTextOccs&) = delete;
+    PairedTextOccs& operator=(const PairedTextOccs&) = delete;
 
     /**
      * @returns the upstream occurrence
@@ -917,6 +1004,7 @@ class PairedTextOccs {
     TextOcc& getUpStream() {
         return upStreamOcc;
     }
+
     /**
      * @returns the downstream occurrence
      */
@@ -924,10 +1012,16 @@ class PairedTextOccs {
         return downStreamOcc;
     }
 
+    /**
+     * @returns the upstream occurrence (const version)
+     */
     const TextOcc& getUpStream() const {
         return upStreamOcc;
     }
 
+    /**
+     * @returns the downstream occurrence (const version)
+     */
     const TextOcc& getDownStream() const {
         return downStreamOcc;
     }
@@ -1032,8 +1126,9 @@ class SARangePair
      * @param toehold the toehold
      * @param toeholdRepresentsEnd indicates whether the toehold represents the
      */
-    SARangePair(SARange rangeSA, SARange rangeSARev, length_t toehold,
-                bool toeholdRepresentsEnd, length_t originalDepth)
+    SARangePair(const SARange& rangeSA, const SARange& rangeSARev,
+                length_t toehold, bool toeholdRepresentsEnd,
+                length_t originalDepth)
         : ToeholdInterface(toehold, toeholdRepresentsEnd, originalDepth),
           rangeSA(rangeSA), rangeSARev(rangeSARev) {
     }
@@ -1043,7 +1138,7 @@ class SARangePair
      * @param rangeSA the range over the suffix array
      * @param rangeSARev the range over the suffix array of the reversed text
      */
-    SARangePair(SARange rangeSA, SARange rangeSARev)
+    SARangePair(const SARange& rangeSA, const SARange& rangeSARev)
         : rangeSA(rangeSA), rangeSARev(rangeSARev) {
     }
 #endif
@@ -1131,7 +1226,7 @@ class SARangeWithToehold : public SARange, public ToeholdInterface {
     SARangeWithToehold() : SARange(), ToeholdInterface(0, false, 0) {
     }
 
-    SARangeWithToehold(SARange range, length_t toehold,
+    SARangeWithToehold(const SARange& range, length_t toehold,
                        bool toeholdRepresentsEnd, length_t originalDepth)
         : SARange(range),
           ToeholdInterface(toehold, toeholdRepresentsEnd, originalDepth) {
@@ -1177,7 +1272,8 @@ class FMPos {
     FMPos() : ranges(SARangePair()), depth(0) {
     }
 
-    FMPos(SARangePair& ranges, length_t depth) : ranges(ranges), depth(depth) {
+    FMPos(const SARangePair& ranges, length_t depth)
+        : ranges(ranges), depth(depth) {
     }
 
     const SARangePair& getRanges() const {
@@ -1201,7 +1297,7 @@ class FMPos {
         return depth;
     }
 
-    void setRanges(SARangePair ranges) {
+    void setRanges(const SARangePair& ranges) {
         this->ranges = ranges;
     }
 
@@ -1260,7 +1356,7 @@ class FMOcc {
      * @param shift The right shift to the corresponding positions in the
      * text, defaults to zero
      */
-    FMOcc(SARangePair ranges, length_t distance, length_t depth,
+    FMOcc(const SARangePair& ranges, length_t distance, length_t depth,
           Strand strand = FORWARD_STRAND, PairStatus pairStatus = FIRST_IN_PAIR,
           length_t shift = 0)
         : pos(ranges, depth), distance(distance), shift(shift), strand(strand),
@@ -1277,8 +1373,8 @@ class FMOcc {
      * @param shift The right shift to the corresponding positions in the
      * text, defaults to zero
      */
-    FMOcc(FMPos pos, length_t distance, Strand strand, PairStatus pairStatus,
-          length_t shift = 0)
+    FMOcc(const FMPos& pos, length_t distance, Strand strand,
+          PairStatus pairStatus, length_t shift = 0)
         : pos(pos), distance(distance), shift(shift), strand(strand),
           pairStatus(pairStatus) {
     }
@@ -1302,7 +1398,7 @@ class FMOcc {
         return shift;
     }
 
-    void setRanges(SARangePair ranges) {
+    void setRanges(const SARangePair& ranges) {
         pos.setRanges(ranges);
     }
 
@@ -1402,7 +1498,7 @@ class FMPosExt : public FMPos {
      * @param row the row of this node in the alignment matrix = depth of
      * this node
      */
-    FMPosExt(char character, SARangePair ranges, length_t row)
+    FMPosExt(char character, const SARangePair& ranges, length_t row)
         : FMPos(ranges, row), c(character), reported(false) {
     }
 
@@ -1775,11 +1871,23 @@ class Occurrences {
 
     /**
      * @brief Adds an in-text occurrence to the collection.
+     * @warning This explicit copy is expensive. If the given occurrence is no
+     * longer needed outside this instance, consider using addTextOcc with move
+     * semantics instead.
      *
      * @param occ The in-text occurrence to add.
      */
-    void addTextOcc(const TextOcc& occ) {
-        inTextOcc.emplace_back(occ);
+    void addTextOcWithCopy(const TextOcc& occ) {
+        inTextOcc.emplace_back(occ.copy());
+    }
+
+    /**
+     * @brief Adds an in-text occurrence to the collection.
+     *
+     * @param occ The in-text occurrence to add.
+     */
+    void addTextOcc(TextOcc&& occ) {
+        inTextOcc.emplace_back(std::move(occ));
     }
 
     /**
@@ -1798,6 +1906,22 @@ class Occurrences {
     }
 
     /**
+     * @brief Adds an in-text occurrence to the collection. Moves the given
+     * CIGAR string.
+     *
+     * @param range The range of the occurrence in the text.
+     * @param score The score of the occurrence.
+     * @param CIGAR The CIGAR string of the occurrence. INVALIDATED after this
+     * call.
+     * @param strand The strand of the occurrence.
+     * @param pairStatus The pair status of the read.
+     */
+    void addTextOcc(const Range& range, const length_t& score,
+                    std::string&& CIGAR, Strand strand, PairStatus pairStatus) {
+        inTextOcc.emplace_back(range, score, move(CIGAR), strand, pairStatus);
+    }
+
+    /**
      * @brief Adds an in-text occurrence to the collection.
      *
      * @param range The range of the occurrence in the text.
@@ -1811,21 +1935,46 @@ class Occurrences {
     }
 
     /**
-     * @brief Adds the given occurrences to the inTextOcc vector.
+     * @brief Adds the given occurrences to the inTextOcc vector via explicit
+     * copies.
+     * @warning This is expensive, if the given occurrences are no longer needed
+     * outside this instance, consider using addTextOccs instead.
      *
      * @param occs The occurrences to add.
      */
-    void addTextOccs(const std::vector<TextOcc>& occs) {
-        inTextOcc.insert(inTextOcc.end(), occs.begin(), occs.end());
+    void addTextOccsWithCopy(const std::vector<TextOcc>& occs) {
+        std::transform(occs.begin(), occs.end(), std::back_inserter(inTextOcc),
+                       [](const TextOcc& occ) { return occ.copy(); });
+    }
+
+    /**
+     * @brief Adds the given occurrences to the inTextOcc vector with move
+     * semantics
+     *
+     * @param occs The occurrences to add.
+     */
+    void addTextOccs(std::vector<TextOcc>& occs) {
+
+        inTextOcc.insert(inTextOcc.end(), std::make_move_iterator(occs.begin()),
+                         std::make_move_iterator(occs.end()));
     }
 
     /**
      * @brief Sets the inTextOcc vector to the given occurrences.
+     * @warning Explicitly copies the elements of the given vector. This is
+     * expensive, if the given vector is no longer needed outside this instance,
+     * consider using setTextOccs instead.
      *
      * @param occs The occurrences to set.
      */
-    void setTextOccs(std::vector<TextOcc>& occs) {
-        inTextOcc = occs;
+    void setTextOccsWithCopy(const std::vector<TextOcc>& occs) {
+        // explicitly use the copy() method to copy the elements of the given
+        // vector
+        inTextOcc.clear();
+        inTextOcc.reserve(occs.size());
+        // Use std::transform to copy elements using the copy() method
+        std::transform(occs.begin(), occs.end(), std::back_inserter(inTextOcc),
+                       [](const TextOcc& occ) { return occ.copy(); });
     }
 
     /**
@@ -1833,7 +1982,7 @@ class Occurrences {
      * The given occurrences are moved into the inTextOcc vector.
      * @param occs The occurrences to set.
      */
-    void moveTextOccs(std::vector<TextOcc>& occs) {
+    void setTextOccs(std::vector<TextOcc>& occs) {
         inTextOcc = std::move(occs);
     }
 
@@ -1890,6 +2039,14 @@ class Occurrences {
      */
     const std::vector<TextOcc>& getTextOccurrences() const {
         return inTextOcc;
+    }
+
+    std::vector<TextOcc>& getTextOccurrencesMutable() {
+        return inTextOcc;
+    }
+
+    std::vector<TextOcc> getTextOccurrencesMove() {
+        return std::move(inTextOcc); // Moves the internal vector
     }
 
     /**

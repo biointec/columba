@@ -445,10 +445,8 @@ void writeCharCounts(const string& baseFN, const vector<length_t>& charCounts) {
 void createAlphabet(const string& T, const vector<length_t>& charCounts,
                     Alphabet<ALPHABET>& sigma) {
     // count the number of unique characters in T
-    int nUniqueChar = 0;
-    for (length_t count : charCounts)
-        if (count > 0)
-            nUniqueChar++;
+    int nUniqueChar = std::count_if(charCounts.begin(), charCounts.end(),
+                                    [](length_t count) { return count > 0; });
 
     logger.logInfo("Text has length " + std::to_string(T.size()));
     logger.logInfo("Text has " + std::to_string(nUniqueChar) +
@@ -767,8 +765,6 @@ void createSuffixArrayAndBWT(const string& T, vector<length_t>& SA,
     createSAWithSanityCheck(SA, T);
     generateBWT(T, SA, BWT);
 }
-
-
 
 #ifdef RUN_LENGTH_COMPRESSION
 // ============================================================================
@@ -1283,7 +1279,7 @@ void readSuffixArrayFile(const std::string& baseFN,
     fclose(file);
 }
 
-#endif
+#endif // BIG_BWT_USABLE
 
 void constructRunLengthEncodedPLCP(const SparseBitvec& first,
                                    const vector<length_t>& first_to_run,
@@ -1909,7 +1905,7 @@ void writeSA(const string& baseFN, const vector<length_t>& SA) {
 
 /**
  * @brief Create the suffix array and BWT and write the sparse suffix array with
- * the sparsenessfactor defined in the BuildParameters.
+ * the sparsenessFactor defined in the BuildParameters.
  * @param T The text.
  * @param SA The suffix array. (output)
  * @param BWT The BWT. (output)
@@ -1931,7 +1927,7 @@ void createSuffixArrayAndBWTAndWriteSparseSA(const string& T,
 }
 
 void writeBWT(const Alphabet<ALPHABET>& sigma, const string& baseFN,
-              string& BWT) {
+              const string& BWT) {
 
     // Encode bwt
     logger.logInfo("Encoding BWT...");

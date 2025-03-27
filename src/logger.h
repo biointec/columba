@@ -54,6 +54,14 @@ class Logger {
     void setLogFile(const std::string& filename);
 
     /**
+     * @brief Set the verbosity of the logger.
+     * @param verbose Whether to log verbose messages.
+     */
+    void setVerbose(bool verbose) {
+        this->verbose = verbose;
+    }
+
+    /**
      * @brief Log an info message to the log file.
      *
      * @param message The message to log.
@@ -70,6 +78,28 @@ class Logger {
      */
     void logInfo(std::stringstream& stream) {
         logInfo(stream.str());
+        // clear the stream
+        stream.str(std::string());
+    }
+
+    /**
+     * @brief Log a verbose message to the log file.
+     *
+     * @param message The message to log.
+     */
+    void logVerbose(const std::string& message) {
+        if (verbose)
+            logWithTimestamp("[VERBOSE]", message);
+    }
+
+    /**
+     * @brief Log a verbose message to the log file.
+     *
+     * The string stream is cleared after logging.
+     * @param stream The stream to log.
+     */
+    void logVerbose(std::stringstream& stream) {
+        logVerbose(stream.str());
         // clear the stream
         stream.str(std::string());
     }
@@ -161,6 +191,8 @@ class Logger {
     std::mutex mutex;           // The mutex to ensure thread-safety
     std::chrono::time_point<std::chrono::steady_clock>
         startTime; // Start time of the logger
+
+    bool verbose = false; // whether to log verbose messages
 
     /**
      * @brief Log a message with a timestamp.

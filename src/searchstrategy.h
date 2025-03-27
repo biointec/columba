@@ -73,8 +73,8 @@ typedef void (SearchStrategy::*PartitionPtr)(const std::string&,
 // Pointer to function that starts the index on a particular search
 typedef void (SearchStrategy::*StartIdxPtr)(const Search&, const FMOcc&,
                                             Occurrences&,
-                                            std::vector<Substring>&, Counters&,
-                                            const int&) const;
+                                            const std::vector<Substring>&,
+                                            Counters&, const int&) const;
 
 // Pointer to match function (ALL or BEST scenario)
 typedef void (SearchStrategy::*MatchPtrSE)(ReadBundle&, const length_t,
@@ -97,7 +97,7 @@ typedef void (SearchStrategy::*ProcessOriBestPtr)(
     std::vector<PairedTextOccs>&, int, int, length_t, length_t, Counters&);
 
 typedef void (SearchStrategy::*ProcessOriAllPtr)(
-    ReadPair& pair, std::pair<bool, std::vector<TextOcc>>& m1,
+    const ReadPair& pair, std::pair<bool, std::vector<TextOcc>>& m1,
     std::pair<bool, std::vector<TextOcc>>& mRC1,
     std::pair<bool, std::vector<TextOcc>>& m2,
     std::pair<bool, std::vector<TextOcc>>& mRC2,
@@ -111,14 +111,20 @@ typedef std::vector<TextOcc> (SearchStrategy::*FilterPtr)(
 #ifndef RUN_LENGTH_COMPRESSION
 // pointer to in-text verification function (hamming or edit distance)
 typedef void (SearchStrategy::*InTextVerificationPtr)(
-    FMOcc&, length_t, length_t, const std::vector<Substring>&, Occurrences&,
-    Counters&, length_t) const;
+    const FMOcc&, length_t, length_t, const std::vector<Substring>&,
+    Occurrences&, Counters&, length_t) const;
 #endif
 
 // Pointer to function that generates SAM lines for single-end
 typedef void (SearchStrategy::*GenerateOutputSEPtr)(ReadBundle&, size_t, int,
                                                     std::vector<TextOcc>&,
                                                     Counters& counters) const;
+// Pointer to the naive approximate matching procedure (hamming or edit)
+typedef void (IndexInterface::*NaiveMatchPtr)(const std::string& pattern,
+                                              length_t maxED,
+                                              Counters& counters,
+                                              std::vector<TextOcc>& occ);
+
 typedef TextOcc (*CreateUnmappedSEPtr)(const ReadBundle&);
 
 /**
@@ -151,9 +157,10 @@ class SearchStrategy {
     Orientation orientation; // the expected orientation of the reads
 
     // pointers for correct partitioning and correct distance metric
-    PartitionPtr partitionPtr; // pointer to the partition method
-    StartIdxPtr startIdxPtr;   // pointer to start method (hamming or
-                               // (naive/optimized) edit distance)
+    PartitionPtr partitionPtr;   // pointer to the partition method
+    StartIdxPtr startIdxPtr;     // pointer to start method (hamming or edit)
+    NaiveMatchPtr naiveMatchPtr; // pointer to the correct naive approximate
+                                 // matching function
 
     // pointers to functions for mapping mode (ALL or BEST)
     MatchPtrSE matchPtrSE; // pointer to the correct match function SE
@@ -190,8 +197,8 @@ class SearchStrategy {
     bool discordantAllowed = false; // whether discordant alignments are allowed
     length_t nDiscordantPairs = 100000; // number of discordant pairs allowed
 
+    length_t count = 0;
     // ----------------------------------------------------------------------------
-
     // PROTECTED FUNCTIONS
     // ----------------------------------------------------------------------------
 
@@ -294,9 +301,9 @@ class SearchStrategy {
      * function)
      * @returns vector with weights
      */
-    virtual const std::vector<int> getWeights(const int& numParts,
-                                              const int& maxScore) const {
-        std::vector<int> w(numParts, 1);
+    virtual const std::vector<uint64_t> getWeights(const int& numParts,
+                                                   const int& maxScore) const {
+        std::vector<uint64_t> w(numParts, 1);
         w.front() = 2;
         w.back() = 2;
         return w;
@@ -363,19 +370,6 @@ class SearchStrategy {
                    const int& numParts, const int& maxScore,
                    std::vector<SARangePair>& exactMatchRanges,
                    Counters& counters) const;
-
-    /**
-     * Helper function for dynamic partitioning. This function extends the parts
-     * so that nothing of the pattern is not allocated to any part. This does
-     * not keep track of the ranges over the suffix array, so should only be
-     * called if this does not matter (e.g. when the parts that can be extended
-     * all correspond to empty ranges)
-     * @param pattern the pattern that is split
-     * @param parts  the current parts, they are updated so that all characters
-     * of pattern are part of exactly one part
-     */
-    void extendParts(const std::string& pattern,
-                     std::vector<Substring>& parts) const;
 
     /**
      * Helper function for uniform and static partitioning. This function
@@ -526,9 +520,9 @@ class SearchStrategy {
         // set the index in the correct mode
         index.setIndexInMode(strand, pairStatus);
         if (maxED == 0) {
-            std::vector<TextOcc> occ;
-            index.exactMatchesOutput(read, counters, occ);
-            return occ;
+            std::vector<TextOcc> exactMatches;
+            index.exactMatchesOutput(read, counters, exactMatches);
+            return exactMatches;
         }
 
         // match the sequence and return the filtered occurrences
@@ -559,7 +553,8 @@ class SearchStrategy {
      * @param idx the index in the search to match next
      */
     void startIndexHamming(const Search& s, const FMOcc& startMatch,
-                           Occurrences& occ, std::vector<Substring>& parts,
+                           Occurrences& occ,
+                           const std::vector<Substring>& parts,
                            Counters& counters, const int& idx) const {
         index.recApproxMatchHamming(s, startMatch, occ, parts, counters, idx);
     }
@@ -581,8 +576,8 @@ class SearchStrategy {
      * @param counters The performance counters.
      * @param minD the minimal allowed Hamming distance for found occurrences
      */
-    void inTextVerificationHamming(FMOcc& startMatch, length_t beginInPattern,
-                                   length_t maxD,
+    void inTextVerificationHamming(const FMOcc& startMatch,
+                                   length_t beginInPattern, length_t maxD,
                                    const std::vector<Substring>& parts,
                                    Occurrences& occ, Counters& counters,
                                    length_t minD) const {
@@ -607,7 +602,7 @@ class SearchStrategy {
      * @param idx the index in the search to match next
      */
     void startIndexEdit(const Search& s, const FMOcc& startMatch,
-                        Occurrences& occ, std::vector<Substring>& parts,
+                        Occurrences& occ, const std::vector<Substring>& parts,
                         Counters& counters, const int& idx) const {
         index.recApproxMatchEditEntry(s, startMatch, occ, parts, counters, idx);
     }
@@ -629,8 +624,8 @@ class SearchStrategy {
      * @param counters The performance counters.
      * @param minED the minimal allowed distance for found occurrences
      */
-    void inTextVerificationEdit(FMOcc& startMatch, length_t beginInPattern,
-                                length_t maxD,
+    void inTextVerificationEdit(const FMOcc& startMatch,
+                                length_t beginInPattern, length_t maxD,
                                 const std::vector<Substring>& parts,
                                 Occurrences& occ, Counters& counters,
                                 length_t minD) const {
@@ -816,7 +811,7 @@ class SearchStrategy {
      * @param maxD the maximal distance allowed
      * @param counters the performance counters
      */
-    void processCombFRAll(ReadPair& pair, BoolAndVector& m1,
+    void processCombFRAll(const ReadPair& pair, BoolAndVector& m1,
                           BoolAndVector& mRC1, BoolAndVector& m2,
                           BoolAndVector& mRC2,
                           std::vector<PairedTextOccs>& pairs, int maxFragSize,
@@ -845,7 +840,7 @@ class SearchStrategy {
      * @param maxD the maximal distance allowed
      * @param counters the performance counters
      */
-    void processCombFFAll(ReadPair& pair, BoolAndVector& m1,
+    void processCombFFAll(const ReadPair& pair, BoolAndVector& m1,
                           BoolAndVector& mRC1, BoolAndVector& m2,
                           BoolAndVector& mRC2,
                           std::vector<PairedTextOccs>& pairs, int maxFragSize,
@@ -874,7 +869,7 @@ class SearchStrategy {
      * @param maxD the maximal distance allowed
      * @param counters the performance counters
      */
-    void processCombRFAll(ReadPair& pair, BoolAndVector& m1,
+    void processCombRFAll(const ReadPair& pair, BoolAndVector& m1,
                           BoolAndVector& mRC1, BoolAndVector& m2,
                           BoolAndVector& mRC2,
                           std::vector<PairedTextOccs>& pairs, int maxFragSize,
@@ -1013,16 +1008,6 @@ class SearchStrategy {
                        std::vector<PairedTextOccs>& pairs, int maxFragSize,
                        int minFragSize, length_t totDist, length_t minTotDist,
                        Counters& counters);
-
-    /**
-     * Add the best pairs for the 1-2 and 2-1 combination to the pairs vector.
-     * @param pairs12 the pairs for the 1-2 combination
-     * @param pairs21 the pairs for the 2-1 combination
-     * @param pairs the vector with the paired occurrences (can be updated)
-     */
-    void mergeOrMovePairs(std::vector<PairedTextOccs>& pairs12,
-                          std::vector<PairedTextOccs>& pairs21,
-                          std::vector<PairedTextOccs>& pairs);
 
     /**
      * Matches the pair approximately and reports the best possible matches
@@ -1272,15 +1257,16 @@ class SearchStrategy {
      * @param pairs the pairs vector, a record with a pair of unmapped
      * occurrences will be added
      */
-    void addBothUnmapped(ReadPair& reads, std::vector<PairedTextOccs>& pairs) {
+    void addBothUnmapped(const ReadPair& reads,
+                         std::vector<PairedTextOccs>& pairs) const {
         if (!unmappedSAM)
             return;
         // if both reads unmapped -> report both as unmapped
-        PairedTextOccs pair = {TextOcc::createUnmappedSAMOccurrencePE(
-                                   reads.getBundle1(), FIRST_IN_PAIR),
-                               TextOcc::createUnmappedSAMOccurrencePE(
-                                   reads.getBundle2(), SECOND_IN_PAIR),
-                               0};
+        auto m1 = TextOcc::createUnmappedSAMOccurrencePE(reads.getBundle1(),
+                                                         FIRST_IN_PAIR);
+        auto m2 = TextOcc::createUnmappedSAMOccurrencePE(reads.getBundle2(),
+                                                         SECOND_IN_PAIR);
+        PairedTextOccs pair = {std::move(m1), std::move(m2), 0};
         pairs.emplace_back(std::move(pair));
     }
 
@@ -1652,8 +1638,9 @@ class SearchStrategy {
     void generateSE_SAM_XATag(ReadBundle& bundle, size_t nHits, int minScore,
                               std::vector<TextOcc>& occs,
                               Counters& counters) const {
+
         occs.front().generateSAMSingleEndXA(bundle, nHits, minScore,
-                                            {occs.begin() + 1, occs.end()},
+                                            occs.begin() + 1, occs.end(),
                                             index.getSeqNames());
         counters.inc(Counters::DROPPED_UNIQUE_MATCHES, occs.size() - 1);
         occs.resize(1);
@@ -1688,6 +1675,10 @@ class SearchStrategy {
      */
     void generateSE_RHS(ReadBundle& bundle, size_t nHits, int minScore,
                         std::vector<TextOcc>& occs, Counters& counters) const {
+        // INFO: parameter bundle cannot be const because it needs same
+        // signature as generateSE_SAM, which might update the revQual in the
+        // bundle
+
         // for each distinct assigned sequence + distance combination keep only
         // the first ones
 
@@ -1712,8 +1703,8 @@ class SearchStrategy {
         // Resize the vector to remove the redundant elements
         occs.erase(uniqueEnd, occs.end());
 
-        occs.front().generateRHSSingleEnd(
-            bundle, {occs.begin() + 1, occs.end()}, index.getSeqNames());
+        occs.front().generateRHSSingleEnd(bundle, occs.begin() + 1, occs.end(),
+                                          index.getSeqNames());
         counters.inc(Counters::DROPPED_UNIQUE_MATCHES, occs.size() - 1);
         occs.resize(1);
     }
@@ -2069,7 +2060,7 @@ typedef const std::vector<double> (
     CustomSearchStrategy::*GetSeedingPositionsPtr)(const int& numParts,
                                                    const int& maxScore) const;
 // Pointer to the correct getWeights() function for dynamic partitioning
-typedef const std::vector<int> (CustomSearchStrategy::*GetWeightsPtr)(
+typedef const std::vector<uint64_t> (CustomSearchStrategy::*GetWeightsPtr)(
     const int& numParts, const int& maxScore) const;
 
 /**
@@ -2118,7 +2109,7 @@ class CustomSearchStrategy : public SearchStrategy {
     std::vector<std::vector<double>>
         seedingPositions; // the seeds for dynamic partitioning per
 
-    std::vector<std::vector<int>>
+    std::vector<std::vector<uint64_t>>
         weights; // the weights for dynamic partitioning per score
 
     std::vector<GetSeedingPositionsPtr>
@@ -2137,7 +2128,8 @@ class CustomSearchStrategy : public SearchStrategy {
      * scheme
      * @param verbose if the sanity check should be verbose
      */
-    void getSearchSchemeFromFolder(std::string pathToFolder, bool verbose);
+    void getSearchSchemeFromFolder(const std::string& pathToFolder,
+                                   bool verbose);
 
     /**
      * If the values provided for dynamic partitioning for the given max
@@ -2163,14 +2155,6 @@ class CustomSearchStrategy : public SearchStrategy {
      * runtime error will be thrown.
      */
     Search makeSearch(const std::string& line, length_t idx) const;
-
-    /**
-     * Parses an array from a string.
-     * @param vectorString the string to parse
-     * @param vector the vector with the parsed array as values
-     */
-    void getVector(const std::string& vectorString,
-                   std::vector<length_t>& vector) const;
 
     /**
      * Checks whether the connectivity property is satisfied for all
@@ -2253,8 +2237,8 @@ class CustomSearchStrategy : public SearchStrategy {
      * @param numParts the number of parts of the pattern
      * @param maxScore the maximal allowed score
      */
-    const std::vector<int> getWeightsDefault(const int& numParts,
-                                             const int& maxScore) const {
+    const std::vector<uint64_t> getWeightsDefault(const int& numParts,
+                                                  const int& maxScore) const {
         return SearchStrategy::getWeights(numParts, maxScore);
     }
 
@@ -2264,8 +2248,8 @@ class CustomSearchStrategy : public SearchStrategy {
      * @param numParts the number of parts of the pattern
      * @param maxScore the maximal allowed score
      */
-    const std::vector<int> getWeightsCustom(const int& numParts,
-                                            const int& maxScore) const {
+    const std::vector<uint64_t> getWeightsCustom(const int& numParts,
+                                                 const int& maxScore) const {
         return weights[maxScore - 1];
     }
     /**
@@ -2274,8 +2258,8 @@ class CustomSearchStrategy : public SearchStrategy {
      * "dynamic_partitioning.txt" file, otherwise the base class function
      * will be called;
      */
-    const std::vector<int> getWeights(const int& numParts,
-                                      const int& maxScore) const override {
+    const std::vector<uint64_t> getWeights(const int& numParts,
+                                           const int& maxScore) const override {
         assert(supportsMaxScore[maxScore - 1]);
         return (this->*weightsPointers[maxScore - 1])(numParts, maxScore);
     }
@@ -2391,12 +2375,13 @@ class MultipleSchemes {
 
             numParts = schemes.front().getNumParts();
 
-            for (const auto& scheme : schemes) {
-                if (scheme.getNumParts() != numParts) {
-                    throw std::runtime_error(
-                        "Not all schemes have same amount of parts in: " +
-                        pathToFolder);
-                }
+            if (std::any_of(schemes.begin(), schemes.end(),
+                            [this](const SearchScheme& scheme) {
+                                return scheme.getNumParts() != numParts;
+                            })) {
+                throw std::runtime_error(
+                    "Not all schemes have same number of parts in: " +
+                    pathToFolder);
             }
         }
     }
@@ -2825,7 +2810,7 @@ class KucherovKPlus1 : public SearchStrategy {
     const std::vector<std::vector<double>> seedingPositions = {
         {}, {0.57}, {0.38, 0.65}, {0.38, 0.55, 0.73}};
 
-    const std::vector<std::vector<int>> weights = {
+    const std::vector<std::vector<uint64_t>> weights = {
         {1, 1}, {39, 10, 40}, {400, 4, 5, 400}, {100, 5, 1, 6, 105}};
 
     const std::vector<std::vector<double>> staticPositions = {
@@ -2845,8 +2830,8 @@ class KucherovKPlus1 : public SearchStrategy {
                                         const int& maxScore) const override {
         return staticPositions[maxScore - 1];
     }
-    const std::vector<int> getWeights(const int& numParts,
-                                      const int& maxScore) const override {
+    const std::vector<uint64_t> getWeights(const int& numParts,
+                                           const int& maxScore) const override {
         return weights[maxScore - 1];
     }
 
@@ -2932,10 +2917,11 @@ class KucherovKPlus2 : public SearchStrategy {
     const std::vector<std::vector<double>> seedingPositions = {
         {0.94}, {0.48, 0.55}, {0.4, 0.63, 0.9}, {0.34, 0.5, 0.65, 0.7}};
 
-    const std::vector<std::vector<int>> weights = {{11, 10, 1},
-                                                   {400, 4, 1, 800},
-                                                   {6, 3, 2, 1, 1},
-                                                   {52, 42, 16, 14, 1, 800}};
+    const std::vector<std::vector<uint64_t>> weights = {
+        {11, 10, 1},
+        {400, 4, 1, 800},
+        {6, 3, 2, 1, 1},
+        {52, 42, 16, 14, 1, 800}};
 
     const std::vector<std::vector<double>> staticPositions = {
         {0.47, 0.94},
@@ -2947,8 +2933,8 @@ class KucherovKPlus2 : public SearchStrategy {
                                         const int& maxScore) const override {
         return staticPositions[maxScore - 1];
     }
-    const std::vector<int> getWeights(const int& numParts,
-                                      const int& maxScore) const override {
+    const std::vector<uint64_t> getWeights(const int& numParts,
+                                           const int& maxScore) const override {
         return weights[maxScore - 1];
     }
 
@@ -3005,7 +2991,7 @@ class OptimalKianfar : public SearchStrategy {
     const std::vector<std::vector<double>> seedingPositions = {
         {}, {0.50}, {0.34, 0.66}, {0.42, 0.56, 0.67}};
 
-    const std::vector<std::vector<int>> weights = {
+    const std::vector<std::vector<uint64_t>> weights = {
         {1, 1}, {10, 1, 5}, {1, 1, 1, 1}, {7, 2, 1, 3, 5}};
 
     const std::vector<std::vector<double>> staticPositions = {
@@ -3026,8 +3012,8 @@ class OptimalKianfar : public SearchStrategy {
                                         const int& maxScore) const override {
         return staticPositions[maxScore - 1];
     }
-    const std::vector<int> getWeights(const int& numParts,
-                                      const int& maxScore) const override {
+    const std::vector<uint64_t> getWeights(const int& numParts,
+                                           const int& maxScore) const override {
         return weights[maxScore - 1];
     }
 
@@ -3111,7 +3097,7 @@ class O1StarSearchStrategy : public SearchStrategy {
     const std::vector<std::vector<double>> seedingPositions = {
         {0.94}, {0.51, 0.93}, {0.34, 0.64, 0.88}, {0.28, 0.48, 0.63, 0.94}};
 
-    const std::vector<std::vector<int>> weights = {
+    const std::vector<std::vector<uint64_t>> weights = {
         {11, 10, 1}, {20, 11, 11, 10}, {3, 2, 2, 1, 1}, {1, 2, 2, 1, 2, 1}};
 
     const std::vector<std::vector<double>> staticPositions = {
@@ -3124,8 +3110,8 @@ class O1StarSearchStrategy : public SearchStrategy {
                                         const int& maxScore) const override {
         return staticPositions[maxScore - 1];
     }
-    const std::vector<int> getWeights(const int& numParts,
-                                      const int& maxScore) const override {
+    const std::vector<uint64_t> getWeights(const int& numParts,
+                                           const int& maxScore) const override {
         return weights[maxScore - 1];
     }
 
@@ -3674,10 +3660,6 @@ class DynamicColumbaStrategy : public MultipleSchemesStrategy {
         ColumbaSearchStrategy columbaStrategy(index, p, metric, mode, sMode);
         auto instance = new DynamicColumbaStrategy(&columbaStrategy);
 
-        std::vector<Search> midSearch2 = {
-            Search::makeSearch({2, 1, 0}, {0, 1, 1}, {0, 2, 2}, 0),
-            Search::makeSearch({1, 2, 0}, {0, 0, 0}, {0, 1, 2}, 1),
-            Search::makeSearch({0, 1, 2}, {0, 0, 2}, {0, 1, 2}, 2)};
         instance->addScheme(SearchScheme(getMidSearch2(), 2));
         instance->addScheme(SearchScheme(getMidSearch4(), 4));
         SearchScheme scheme6 = SearchScheme(getMidSearch6(), 6);

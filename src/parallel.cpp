@@ -87,7 +87,7 @@ void processChunk(vector<ReadBundle>& input, OutputChunk& output,
  */
 void threadEntrySingleEnd(Reader& myReader, OutputWriter& myWriter,
                           std::unique_ptr<SearchStrategy>& strategy,
-                          length_t& maxEDOrIdentity) {
+                          const length_t& maxEDOrIdentity) {
     // local storage of reads
     vector<ReadBundle> input;
     OutputChunk output;
@@ -130,7 +130,7 @@ void threadEntrySingleEnd(Reader& myReader, OutputWriter& myWriter,
  * @param minFragSize The minimum fragment size
 
  */
-void processChunkPairedEnd(vector<ReadBundle>& input, OutputChunk& output,
+void processChunkPairedEnd(const vector<ReadBundle>& input, OutputChunk& output,
                            std::unique_ptr<SearchStrategy>& strategy,
                            const length_t& maxEDOrIdentity,
                            const length_t& maxFragSize,
@@ -168,7 +168,7 @@ void processChunkPairedEnd(vector<ReadBundle>& input, OutputChunk& output,
  */
 void threadEntryPairedEnd(Reader& myReader, OutputWriter& myWriter,
                           std::unique_ptr<SearchStrategy>& strategy,
-                          length_t& maxEDOrIdentity,
+                          const length_t& maxEDOrIdentity,
                           const length_t& maxFragSize,
                           const length_t& minFragSize) {
     // local storage of reads
@@ -224,11 +224,6 @@ struct InferParametersProcessedChunk {
         clear();
     }
 };
-
-bool hasUnambiguousMatch(const std::vector<TextOcc>& matches) {
-
-    return matches.size() == 1 && matches.front().isValid();
-}
 
 /**
  * Check if there is only one match in the first file for which the best
@@ -302,22 +297,19 @@ void processChunkSingleEndForPairInferring(
                                   output.output.getMutableCounters(), matches);
         }
 
-        // add the matches to the output record
-        output.output.addSingleEndRecord(std::move(matches));
-
         // Keep the info of the paired reads together
         if (first) {
             firstBundle = std::move(bundle);
-            first = false;
             firstHasUnambiguousMatch =
                 hasUnambiguousMatchInFirstFile(matches, strategy);
-
         } else {
             output.readPairs.emplace_back(std::move(firstBundle),
                                           std::move(bundle));
             output.boolsRead2Done.push_back(firstHasUnambiguousMatch);
-            first = true;
         }
+        // add the matches to the output record
+        output.output.addSingleEndRecord(std::move(matches));
+        first = !first; // switch between first and second read
     }
 }
 
@@ -424,21 +416,25 @@ void inferPairedEndParameters(Parameters& params, vector<length_t>& fragSizes,
 
     // calculate median absolute deviation
     vector<length_t> absDeviations;
-    for (const length_t& fragSize : fragSizes) {
-        absDeviations.emplace_back(
-            abs(static_cast<int32_t>(fragSize) - medianFragSize));
-    }
+    absDeviations.reserve(fragSizes.size());
+    std::transform(
+        fragSizes.begin(), fragSizes.end(), std::back_inserter(absDeviations),
+        [medianFragSize](const length_t fragSize) {
+            return abs(static_cast<int32_t>(fragSize) - medianFragSize);
+        });
 
     length_t medianAbsDev = calcMedian(absDeviations);
 
     // remove outliers
     vector<length_t> filteredFragSizes;
-    for (const auto& fragSize : fragSizes) {
-        if (abs(static_cast<int32_t>(fragSize) - medianFragSize) <
-            PE_STD_DEV_CONSIDERED * medianAbsDev) {
-            filteredFragSizes.push_back(fragSize);
-        }
-    }
+    filteredFragSizes.reserve(fragSizes.size());
+    std::copy_if(fragSizes.begin(), fragSizes.end(),
+                 std::back_inserter(filteredFragSizes),
+                 [medianFragSize, medianAbsDev](const length_t fragSize) {
+                     return abs(static_cast<int32_t>(fragSize) -
+                                medianFragSize) <
+                            PE_STD_DEV_CONSIDERED * medianAbsDev;
+                 });
 
     // calculate the mean and standard deviation of the filtered fragment
     // sizes
@@ -585,10 +581,11 @@ class InferParametersQueue {
     /**
      * Thread-safely add processedChunks for inference to this
      * queue. Should be called after getNextChunk returns false.
-     * @param processedChunks The vector of processedChunks
+     * @param processedChunks The vector of processedChunks. Will be made
+     * invalid.
      */
-    void
-    addProcessedChunks(vector<InferParametersProcessedChunk>& processedChunks) {
+    void addProcessedChunks(
+        vector<InferParametersProcessedChunk>&& processedChunks) {
         lock_guard<mutex> lock(processedChunksMutex);
         // Use move semantics to avoid copying
         this->processedChunks.insert(
@@ -600,11 +597,11 @@ class InferParametersQueue {
     /**
      * Thread-safely add the fragment sizes and orientations to this queue.
      * Should be called after getNextChunk returns false.
-     * @param fragSizes The vector of fragment sizes
-     * @param orientations The vector of orientations
+     * @param fragSizes The vector of fragment sizes. Will be made invalid.
+     * @param orientations The vector of orientations Will be made invalid.
      */
-    void addFragmentsAndOrientations(vector<length_t>& fragSizes,
-                                     vector<Orientation>& orientations) {
+    void addFragmentsAndOrientations(vector<length_t>&& fragSizes,
+                                     vector<Orientation>&& orientations) {
         assert(fragSizes.size() == orientations.size());
         lock_guard<mutex> lock(fragSizesAndOrientationsMutex);
         // Use move semantics to avoid copying
@@ -696,15 +693,15 @@ class InferParametersWorker {
             assert(input.size() % 2 == 0);
 
             // process the chunk singled ended
-            auto start = chrono::high_resolution_clock::now();
+            auto startTime = chrono::high_resolution_clock::now();
             InferParametersProcessedChunk processedChunk;
             processChunkSingleEndForPairInferring(
                 input, processedChunk, strategy, maxEDOrIdentity, identity);
 
             auto end = chrono::high_resolution_clock::now();
             auto elapsed =
-                std::chrono::duration_cast<std::chrono::microseconds>(end -
-                                                                      start);
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    end - startTime);
 
             // Record processing time
             queue.addProcessingTime(elapsed);
@@ -737,8 +734,9 @@ class InferParametersWorker {
 
         // termination signal received, add the processed chunks and
         // fragSizes and Orientations to the queue
-        queue.addProcessedChunks(processedChunks);
-        queue.addFragmentsAndOrientations(fragSizes, orientations);
+        queue.addProcessedChunks(std::move(processedChunks));
+        queue.addFragmentsAndOrientations(std::move(fragSizes),
+                                          std::move(orientations));
     }
 
   public:
@@ -775,7 +773,7 @@ class InferParametersWorker {
  */
 void threadEntryPairedEndAfterInferring(
     Reader& myReader, OutputWriter& myWriter,
-    std::unique_ptr<SearchStrategy>& strategy, length_t& maxEDOrIdentity,
+    std::unique_ptr<SearchStrategy>& strategy, const length_t& maxEDOrIdentity,
     const length_t& maxFragSize, const length_t& minFragSize,
     InferParametersQueue& q) {
 
@@ -851,7 +849,7 @@ void logInferredPairedEndParameters(const Parameters& params,
                                     float stddevInsertSize) {
     std::stringstream ss;
     ss << "Inferred paired-end parameters:\n";
-    ss << "\tDected Mean fragment size: " << meanInsertSize << "\n";
+    ss << "\tDetected Mean fragment size: " << meanInsertSize << "\n";
     ss << "\tStandard deviation of detected fragment size: " << stddevInsertSize
        << "\n";
     ss << "\tAllowing " << PE_STD_DEV_CONSIDERED
@@ -1094,7 +1092,7 @@ std::unique_ptr<Reader> createReader(const Parameters& params) {
     try {
         auto reader = std::make_unique<Reader>(params.firstReadsFile,
                                                params.secondReadsFile);
-        size_t targetChunk = 64 * 9;
+        size_t targetChunk = 64 * 1;
         reader->startReaderThread(targetChunk, params.nThreads);
         return reader;
     } catch (const std::exception& e) {
@@ -1184,7 +1182,7 @@ void startPairedEndWorkers(Parameters& params,
 
 /**
  * @brief Starts worker threads for processing and waits on them as well as the
- * reader and writer to finih.
+ * reader and writer to finish.
  *
  * @param params Parameters object containing necessary parameters.
  * @param reader Reference to Reader object.
@@ -1243,6 +1241,31 @@ void cleanupAndExit(std::unique_ptr<IndexInterface>& indexPtr,
 }
 
 /**
+ * @brief Get a time as a string.
+ *
+ * @param time The time to convert to a string.
+ * @return std::string The time as a string.
+ */
+std::string getTimeAsString(std::chrono::system_clock::time_point time) {
+    std::time_t now_time = std::chrono::system_clock::to_time_t(time);
+    std::stringstream ss;
+    ss << std::ctime(&now_time);
+    std::string timeStr = ss.str();
+    timeStr.pop_back(); // remove the newline character
+    return timeStr;
+}
+
+/**
+ * @brief Get the current time as a string.
+ *
+ * @return std::string The current time.
+ */
+std::string getCurrentTime() {
+    auto now = std::chrono::system_clock::now();
+    return getTimeAsString(now);
+}
+
+/**
  * @brief Entry point of the program.
  *
  * @param argc Argument count.
@@ -1255,6 +1278,9 @@ int main(int argc, char* argv[]) {
     if (!processArguments(argc, argv, params)) {
         return EXIT_FAILURE;
     }
+
+    // set logger verbosity
+    logger.setVerbose(params.verbose);
 
     std::unique_ptr<IndexInterface> indexPtr;
 
@@ -1282,10 +1308,15 @@ int main(int argc, char* argv[]) {
 
     std::unique_ptr<Reader> readerPtr = createReader(params);
     if (!readerPtr) {
+        writerPtr.reset();
         return EXIT_FAILURE;
     }
 
     logAlignmentParameters(params, *indexPtr, strategy);
+
+    auto startTime = std::chrono::high_resolution_clock::now();
+    logger.logInfo("Start alignment at " + getTimeAsString(startTime));
+    writerPtr->setStartTime(startTime);
 
     if (!startWorkerThreads(params, *readerPtr, *writerPtr, strategy)) {
         return EXIT_FAILURE;

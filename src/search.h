@@ -89,7 +89,7 @@ class Search {
     Search(std::vector<length_t>& order, std::vector<length_t>& lowerBounds,
            std::vector<length_t>& upperBounds,
            std::vector<Direction>& directions, std::vector<bool>& dSwitch,
-           std::vector<std::pair<length_t, length_t>>
+           const std::vector<std::pair<length_t, length_t>>&
                lowestAndHighestPartsProcessedBefore,
            length_t idx, bool uniBackwards, length_t uniBackwardsIndex)
         : L(lowerBounds), U(upperBounds), order(order), sIdx(idx),
@@ -649,37 +649,6 @@ class SearchScheme {
         }
     }
 
-    /**
-     * @brief Static method to generate all error distributions with a given
-     * number of parts and errors.
-     *
-     * This method generates error distributions with a specified number of
-     * parts and allowed errors.
-     *
-     * @param P The number of parts in the error distributions.
-     * @param K The number of allowed errors.
-     * @param distributions A vector to store the generated error distributions.
-     */
-    static void
-    genErrorDistributions(int P, int K,
-                          std::vector<Distribution>& distributions) {
-        Distribution distribution(P, 0);
-
-        for (int i = 0; i < pow(K + 1, P); i++) {
-            int sum =
-                std::accumulate(distribution.begin(), distribution.end(), 0);
-            if (sum <= K)
-                distributions.push_back(distribution);
-
-            for (int j = 0; j < P; j++) {
-                distribution[j]++;
-                if (distribution[j] != K + 1)
-                    break;
-                distribution[j] = 0;
-            }
-        }
-    }
-
   public:
     /**
      * @brief Constructor for the SearchScheme class.
@@ -722,6 +691,9 @@ class SearchScheme {
         std::vector<Search> rSearches;
         std::string line;
         while (std::getline(stream_searches, line)) {
+            if (line.empty()) {
+                continue;
+            }
             try {
                 rSearches.push_back(makeSearch(line, sIdx++));
             } catch (const std::runtime_error& e) {
@@ -772,9 +744,11 @@ class SearchScheme {
      */
     SearchScheme mirrorPiStrings() const {
         std::vector<Search> reversedSearches;
-        for (const Search& s : searches) {
-            reversedSearches.push_back(s.mirrorPiStrings());
-        }
+        reversedSearches.reserve(searches.size());
+        std::transform(searches.begin(), searches.end(),
+                       std::back_inserter(reversedSearches),
+                       [](const Search& s) { return s.mirrorPiStrings(); });
+
         return SearchScheme(reversedSearches, k);
     }
 

@@ -96,13 +96,6 @@ class IndexInterface {
     // ----------------------------------------------------------------------------
 
     /**
-     * Private helper function that reads in all the necessary files
-     * @param baseFile the baseFile of the files that will be read in
-     * @param verbose if true the steps will we written to cout
-     */
-    virtual void fromFiles(const std::string& baseFile, bool verbose) = 0;
-
-    /**
      * Read the counts array, the build_tag info, the flavor and the
      * compilation-bits info of the index.
      * @param baseFile The base name of the files that contain the info about
@@ -403,6 +396,11 @@ class IndexInterface {
                                            const length_t idx, Occurrences& occ,
                                            Counters& counters) const = 0;
 
+    virtual void inTextVerificationHamming(
+        const Range& r, const Substring& pattern, const length_t maxEDFull,
+        const length_t minEDFull, const length_t lengthBefore, Occurrences& occ,
+        Counters& counters) const = 0;
+
     // ----------------------------------------------------------------------------
     // LOCATION ROUTINES
     // ----------------------------------------------------------------------------
@@ -694,6 +692,10 @@ class IndexInterface {
     void approxMatchesNaive(const std::string& pattern, length_t maxED,
                             Counters& counters, std::vector<TextOcc>& occ);
 
+    void approxMatchesNaiveHamming(const std::string& pattern, length_t maxED,
+                                   Counters& counters,
+                                   std::vector<TextOcc>& occ);
+
     virtual void resetInTextMatrices() = 0;
 
     /**
@@ -803,7 +805,7 @@ class IndexInterface {
      * @param minD the minimal allowed Hamming distance for found occurrences
      */
     virtual void verifyExactPartialMatchInTextHamming(
-        FMOcc& startMatch, length_t beginInPattern, length_t maxD,
+        const FMOcc& startMatch, length_t beginInPattern, length_t maxD,
         const std::vector<Substring>& parts, Occurrences& occ,
         Counters& counters, length_t minD) const = 0;
 
@@ -835,7 +837,8 @@ class IndexInterface {
      * occurrences are converted to in-text occurrences with CIGAR string.
      * Afterwards redundant occurrences are removed. Eventually all
      * non-redundant text-occurrences are returned.
-     * @param occ The occurrences to find the unique text occurrences for.
+     * @param occ The occurrences to find the unique text occurrences for. Will
+     * be invalidated during execution.
      * @param counters The performance counters.
      * @returns the non-redundant text occurrences.
      */

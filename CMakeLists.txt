@@ -184,7 +184,6 @@ add_executable(columba src/parallel.cpp src/fastq.cpp src/seqfile.cpp src/util.c
 target_link_libraries(columba AuxiliaryClasses)
 
 
-
 if(RUN_LENGTH_COMPRESSION)
     add_executable(columba_build src/logger.cpp src/buildindex.cpp src/bmove/moverepr.cpp src/parameters/buildparameters.cpp src/seqfile.cpp src/util.cpp)
     if(BIG_BWT_USABLE)
@@ -384,5 +383,6 @@ endif()
 # ---- Installation ----
 
 # Install targets to the bin directory
-install(TARGETS columba columba_build  DESTINATION bin)
+install(TARGETS columba columba_build DESTINATION bin)
+
 

@@ -633,6 +633,16 @@ void BMove::inTextVerificationHamming(const FMPosExt& node, const Search& s,
                         " should not be called for this index.");
 }
 
+void BMove::inTextVerificationHamming(const Range& r, const Substring& pattern,
+                                      const length_t maxEDFull,
+                                      const length_t minEDFull,
+                                      const length_t lengthBefore,
+                                      Occurrences& occ,
+                                      Counters& counters) const {
+    throw runtime_error("Function " + string(__func__) +
+                        " should not be called for this index.");
+}
+
 void BMove::verifyExactPartialMatchInText(const FMOcc& startMatch,
                                           const length_t& beginInPattern,
                                           const length_t& maxED,
@@ -644,7 +654,7 @@ void BMove::verifyExactPartialMatchInText(const FMOcc& startMatch,
 }
 
 void BMove::verifyExactPartialMatchInTextHamming(
-    FMOcc& startMatch, length_t beginInPattern, length_t maxD,
+    const FMOcc& startMatch, length_t beginInPattern, length_t maxD,
     const std::vector<Substring>& parts, Occurrences& occ, Counters& counters,
     length_t minD) const {
     throw runtime_error("Function " + string(__func__) +

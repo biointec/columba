@@ -146,7 +146,7 @@ class IBitParallelED {
      * Find the CIGAR string of the alignment of a reference substring to
      * the query sequence the matrix was initialized with. The sequence
      * should be set before calling this function
-     * @param ref the reference string that was aligned. Will be accesssed in
+     * @param ref the reference string that was aligned. Will be accessed in
      * the forward direction.
      * @param score the alignment score between ref and query
      * @param CIGAR (output) the CIGAR string of the alignment, must be empty
@@ -359,7 +359,8 @@ class BitParallelED : public IBitParallelED {
 
         // compute the minScore at the diagonal
         const uint32_t diagBit = l + DIAG_R0;
-        bv[i].score = bv[i - 1].score + (D0 & (WordType(1) << diagBit) ? 0 : 1);
+        bv[i].score =
+            bv[i - 1].score + ((D0 & (WordType(1) << diagBit)) ? 0 : 1);
 
         // update the rightmost active column (Hyyro)
         // if not a match on the previous RAC, the RAC needs to be updated

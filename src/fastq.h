@@ -26,8 +26,9 @@
 #include "reads.h"        // for Read
 #include "seqfile.h"      // for FileType
 
-#include <algorithm>          // for max, transform
-#include <chrono>             // for minutes, seconds, steady_clock, time_p...
+#include <algorithm> // for max, transform
+#include <atomic>
+#include <chrono> // for minutes, seconds, high_resolution_clock, time_p...
 #include <condition_variable> // for condition_variable
 #include <ctype.h>            // for toupper
 #include <deque>              // for deque
@@ -260,6 +261,8 @@ class Reader {
         (highEndProcessingTime + lowEndProcessingTime) / 2;
     std::vector<std::chrono::microseconds> processingTimes;
 
+    std::exception_ptr exceptionPtr = nullptr; // Store exception
+
     /**
      * Entry routine for the input thread.
      * This function is responsible for reading the input files and
@@ -343,18 +346,20 @@ class OutputRecord {
     /**
      * Constructor with single-end occurrences
      */
-    OutputRecord(const std::vector<TextOcc>& occurrences)
-        : outputOcc(std::make_shared<std::vector<TextOcc>>(occurrences)) {
+    OutputRecord(std::vector<TextOcc>&& occurrences)
+        : outputOcc(
+              std::make_shared<std::vector<TextOcc>>(std::move(occurrences))) {
     }
 
     /**
      * Constructor with paired-end occurrences
      */
-    OutputRecord(const std::vector<PairedTextOccs>& pairedOccurrences,
-                 const std::vector<TextOcc>& unpairedOcc)
-        : unpairedOcc(std::make_shared<std::vector<TextOcc>>(unpairedOcc)),
+    OutputRecord(std::vector<PairedTextOccs>&& pairedOccurrences,
+                 std::vector<TextOcc>&& unpairedOcc)
+        : unpairedOcc(
+              std::make_shared<std::vector<TextOcc>>(std::move(unpairedOcc))),
           pairOcc(std::make_shared<std::vector<PairedTextOccs>>(
-              pairedOccurrences)) {};
+              std::move(pairedOccurrences))) {};
 
     // Move constructor
     OutputRecord(OutputRecord&& other) noexcept
@@ -565,13 +570,16 @@ class OutputWriter {
     // variables for logging
     length_t logIntervalRecords =
         1024 * 8; // after how many processed records do we log
-    std::chrono::time_point<std::chrono::steady_clock> lastLogTime;
+    std::chrono::time_point<std::chrono::high_resolution_clock> lastLogTime;
     const std::chrono::seconds logIntervalSeconds =
         std::chrono::seconds(60); // after how many seconds must we log
     const std::chrono::seconds minimumLogSeconds =
         std::chrono::seconds(5); // minimum time between two logs
 
-    std::chrono::time_point<std::chrono::steady_clock> startTime;
+    std::chrono::time_point<std::chrono::high_resolution_clock> startTime;
+
+    // variables for stopping
+    std::atomic<bool> stopRequested{false}; // Add stop flag
 
     /**
      * Writes chunks to file
@@ -601,6 +609,11 @@ class OutputWriter {
                  const std::string& commandLineParameters,
                  const SequencingMode& sMode, bool reorder);
 
+    ~OutputWriter() {
+        stop();
+        joinWriterThread();
+    }
+
     /**
      * Start writer thread.
      *
@@ -609,6 +622,14 @@ class OutputWriter {
      * @param threads the number of threads
      */
     void start(const size_t maxNumChunks, const size_t threads);
+
+    /**
+     * Stop the writer thread
+     */
+    void stop() {
+        stopRequested = true;
+        outputReady.notify_all(); // Wake up the thread if it's waiting
+    }
     /**
      * Join the writer thread
      */
@@ -625,5 +646,12 @@ class OutputWriter {
      * set yet
      */
     void sendTermination(size_t chunkID);
+
+    void setStartTime(
+        const std::chrono::time_point<std::chrono::high_resolution_clock>&
+            startTime) {
+        this->startTime = startTime;
+        lastLogTime = startTime;
+    }
 };
 #endif

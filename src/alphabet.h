@@ -127,10 +127,10 @@ class Alphabet {    // e.g. S = 5 for DNA (A,C,G,T + $)
     }
 
     /**
-     * Return the size of the alphabet
+     * Return the size of the alphabet. Depends on the template parameter S.
      * @return The size of the alphabet
      */
-    size_t size() const {
+    static size_t size() {
         return S;
     }
 };

@@ -86,7 +86,7 @@ class FMIndex : public IndexInterface {
      * @param baseFile the baseFile of the files that will be read in
      * @param verbose if true the steps will we written to cout
      */
-    virtual void fromFiles(const std::string& baseFile, bool verbose) override;
+    void fromFiles(const std::string& baseFile, bool verbose);
 
     /**
      * Read a text file (e.g. input text, BWT, ...)
@@ -252,7 +252,7 @@ class FMIndex : public IndexInterface {
     // IN TEXT VERIFICATION ROUTINES
     // ----------------------------------------------------------------------------
 
-    bool use64Matrix(length_t nZeros, length_t maxED) const {
+    static bool use64Matrix(length_t nZeros, length_t maxED) {
         // find the  required length of the first column of the matrix
         // this column is initialized with zeros, followed by 1.. maxED
 
@@ -356,13 +356,12 @@ class FMIndex : public IndexInterface {
                                            const length_t idx, Occurrences& occ,
                                            Counters& counters) const override;
 
-    void inTextVerificationHamming(const Range& r,
-                                   const std::vector<Substring>& parts,
+    void inTextVerificationHamming(const Range& r, const Substring& pattern,
                                    const length_t maxEDFull,
                                    const length_t minEDFull,
-                                   const length_t pSize,
                                    const length_t lengthBefore,
-                                   Occurrences& occ, Counters& counters) const;
+                                   Occurrences& occ,
+                                   Counters& counters) const override;
 
     // ----------------------------------------------------------------------------
     // LOCATION ROUTINES
@@ -429,7 +428,7 @@ class FMIndex : public IndexInterface {
         populateTable(verbose);
 
         // set the index in FORWARD_STRAND mode
-        setIndexInMode(FORWARD_STRAND);
+        FMIndex::setIndexInMode(FORWARD_STRAND);
     }
 
     /**
@@ -586,7 +585,7 @@ class FMIndex : public IndexInterface {
      * @param minD the minimal allowed Hamming distance for found occurrences
      */
     virtual void verifyExactPartialMatchInTextHamming(
-        FMOcc& startMatch, length_t beginInPattern, length_t maxD,
+        const FMOcc& startMatch, length_t beginInPattern, length_t maxD,
         const std::vector<Substring>& parts, Occurrences& occ,
         Counters& counters, length_t minD) const override;
 

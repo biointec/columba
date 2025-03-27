@@ -52,6 +52,13 @@ struct Parameters : public ParametersInterface {
     bool XATag = false;            // Add secondary alignments via XA tag
     bool reorder = false;          // Ensure order is same as original file
 
+    bool verbose =
+#ifdef DEVELOPER_MODE
+        true; // Print verbose stats
+#else
+        false; // Print verbose stats
+#endif
+
     // Numerical parameters
     length_t maxDistance = 0; // the maximum allowed distance (for ALL mode)
     length_t nThreads = 1;    // the number of threads to be used

@@ -92,11 +92,9 @@ class Read {
      * Replaces all non ACTG characters of the read with N
      */
     void replaceNonACTGWithN() {
-        for (char& c : read) {
-            if (!Nucleotide::isACGT(c)) {
-                c = 'N';
-            }
-        }
+        std::replace_if(
+            read.begin(), read.end(),
+            [](char c) { return !Nucleotide::isACGT(c); }, 'N');
     }
 
     /**
@@ -145,12 +143,11 @@ class ReadBundle : public Read {
   public:
     ReadBundle() : Read(), reverseComplement(""), revQuality("") {
     }
-    ReadBundle(Read read)
+    ReadBundle(const Read& read)
         : Read(read),
           reverseComplement(Nucleotide::getRevComplWithN(read.getRead())),
           revQuality("") {
         // leave reverse quality untouched for now, only consider it when needed
-        // TODO: check if getRevComplWithN is  a performance bottleneck
     }
 
     const std::string& getRevComp() const {
@@ -207,6 +204,14 @@ class ReadPair {
         return read2;
     }
 
+    const ReadBundle& getBundle1() const {
+        return read1;
+    }
+
+    const ReadBundle& getBundle2() const {
+        return read2;
+    }
+
     const std::string& getRead1() const {
         return read1.getRead();
     }
@@ -223,7 +228,8 @@ class ReadPair {
         return read2.getRevComp();
     }
 
-    ReadPair(ReadBundle read1, ReadBundle read2) : read1(read1), read2(read2) {
+    ReadPair(const ReadBundle& read1, const ReadBundle& read2)
+        : read1(read1), read2(read2) {
     }
 
     /**

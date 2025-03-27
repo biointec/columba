@@ -63,9 +63,9 @@ void BitParallelED<WordType>::setSequence(const Substring& X) {
         }
 
         bitmask = WordType(1) << (WORD_SIZE - BLOCK_SIZE);
-        size_t jb = WORD_SIZE - LEFT + (b - 1) * BLOCK_SIZE;
-        size_t je = std::min<size_t>(X.size(), jb + BLOCK_SIZE);
-        for (size_t j = jb; j < je; j++) {
+        size_t jb_b = WORD_SIZE - LEFT + (b - 1) * BLOCK_SIZE;
+        size_t je_b = std::min<size_t>(X.size(), jb_b + BLOCK_SIZE);
+        for (size_t j = jb_b; j < je_b; j++) {
             assert(char2idx[X[j]] < N_MATCH_VECTORS); // assert ACTG alphabet
             mv[b][char2idx[X[j]]] |= bitmask;
             bitmask <<= 1;

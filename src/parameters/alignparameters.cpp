@@ -52,9 +52,9 @@ class PartitioningOption : public ParameterOption {
  * Option for the command line arguments considering the sparseness factor of
  * the suffix array.
  */
-class SparsenessOption : public ParameterOption {
+class AlignSparsenessOption : public ParameterOption {
   public:
-    SparsenessOption()
+    AlignSparsenessOption()
         : ParameterOption("s", "sa-sparseness", true, INTEGER, ADVANCED) {
     }
 
@@ -93,22 +93,22 @@ class InTextOption : public ParameterOption {
     }
 
     void process(const std::string& arg, Parameters& params) const override {
-        length_t iFactor = params.inTextVerificationPoint;
+
         try {
-            iFactor = std::stoi(arg);
+            int input = std::stoi(arg);
+            if (input < 0) {
+                logger.logWarning(
+                    "In-text verification switch point should be a "
+                    "positive integer." +
+                    ignoreMessage());
+                input = params.inTextVerificationPoint; // set to default
+            }
+            params.inTextVerificationPoint = input;
         } catch (...) {
             logger.logWarning("In-text verification switch point should be a "
                               "positive integer." +
                               ignoreMessage());
         }
-        if (iFactor < 0) {
-            logger.logWarning(std::to_string(iFactor) +
-                              " is not allowed as the in-text verification "
-                              "switch point, should be in [0, inf]." +
-                              ignoreMessage());
-            iFactor = params.inTextVerificationPoint;
-        }
-        params.inTextVerificationPoint = iFactor;
     }
 
     std::string getDescription() const override {
@@ -382,14 +382,17 @@ class MaxDistanceOption : public ParameterOption {
 
     void process(const std::string& arg, Parameters& params) const override {
         try {
-            params.maxDistance = std::stoi(arg);
+            int input = std::stoi(arg);
+            if (input < 0 || input > MAX_K) {
+                logger.logWarning("Max Distance should be in [0, " +
+                                  std::to_string(MAX_K) + "]" +
+                                  ignoreMessage());
+                input = params.maxDistance; // set to default
+            }
+            params.maxDistance = input;
         } catch (...) {
             logger.logWarning("Max Distance should be a positive integer" +
                               ignoreMessage());
-        }
-        if (params.maxDistance < 0 || params.maxDistance > MAX_K) {
-            logger.logWarning("Max Distance should be in [0, " +
-                              std::to_string(MAX_K) + "]" + ignoreMessage());
         }
     }
 
@@ -409,22 +412,22 @@ class KmerSizeOption : public ParameterOption {
     }
 
     void process(const std::string& arg, Parameters& params) const override {
-        length_t defaultKmerSize = params.kmerSize;
         try {
-            params.kmerSize = std::stoi(arg);
+            int input = std::stoi(arg);
+            if (input < 0 || input > 15) {
+                logger.logWarning("kmer-size should be in [0, 15]." +
+                                  ignoreMessage());
+                input = params.kmerSize; // set to default
+            }
+            params.kmerSize = input;
         } catch (...) {
             logger.logWarning("kmer-size should be an integer." +
                               ignoreMessage());
         }
-        if (params.kmerSize < 0 || params.kmerSize > 15) {
-            logger.logWarning("kmer-size should be in [0, 15]." +
-                              ignoreMessage());
-            params.kmerSize = defaultKmerSize;
-        }
 
         if (params.kmerSize == 0) {
             logger.logWarning(
-                "Setting kmer-size to 0 will affect peformance. Consider "
+                "Setting kmer-size to 0 will affect performance. Consider "
                 "choosing a value of at least 1.");
         }
     }
@@ -506,12 +509,13 @@ class ThreadsOption : public ParameterOption {
 
     void process(const std::string& arg, Parameters& params) const override {
         try {
-            params.nThreads = std::stoi(arg);
-            if (params.nThreads <= 0) {
+            int input = std::stoi(arg);
+            if (input <= 0) {
                 logger.logWarning("Only positive values are allowed for the "
                                   "number of threads. Using 1 thread instead.");
-                params.nThreads = 1;
+                input = 1;
             }
+            params.nThreads = input;
 
         } catch (...) {
             logger.logWarning(
@@ -568,17 +572,19 @@ class MaxInsertSizeOption : public ParameterOption {
     }
 
     void process(const std::string& arg, Parameters& params) const override {
-        length_t defaultMaxInsertSize = params.maxInsertSize;
+
         try {
-            params.maxInsertSize = std::stoi(arg);
+            int input = std::stoi(arg);
+            if (input < 0) {
+                logger.logWarning(
+                    "maxInsertSize should be a positive integer." +
+                    ignoreMessage());
+                input = params.maxInsertSize; // set to default
+            }
+            params.maxInsertSize = input;
         } catch (...) {
             logger.logWarning("maxInsertSize should be an integer." +
                               ignoreMessage());
-        }
-        if (params.maxInsertSize < 0) {
-            logger.logWarning("maxInsertSize should be a positive integer." +
-                              ignoreMessage());
-            params.maxInsertSize = defaultMaxInsertSize;
         }
     }
 
@@ -599,17 +605,19 @@ class MinInsertSizeOption : public ParameterOption {
     }
 
     void process(const std::string& arg, Parameters& params) const override {
-        length_t defaultMinInsertSize = params.minInsertSize;
+
         try {
-            params.minInsertSize = std::stoi(arg);
+            int input = std::stoi(arg);
+            if (input < 0) {
+                logger.logWarning(
+                    "minInsertSize should be a positive integer." +
+                    ignoreMessage());
+                input = params.minInsertSize; // set to default
+            }
+            params.minInsertSize = input;
         } catch (...) {
             logger.logWarning("minInsertSize should be an integer." +
                               ignoreMessage());
-        }
-        if (params.minInsertSize < 0) {
-            logger.logWarning("minInsertSize should be a positive integer." +
-                              ignoreMessage());
-            params.minInsertSize = defaultMinInsertSize;
         }
     }
 
@@ -713,9 +721,9 @@ class XATagOption : public ParameterOption {
 /**
  * Option for the command line arguments to trigger the help.
  */
-class HelpOption : public ParameterOption {
+class AlignHelpOption : public ParameterOption {
   public:
-    HelpOption() : ParameterOption("h", "help", false, NONE, HELP) {
+    AlignHelpOption() : ParameterOption("h", "help", false, NONE, HELP) {
     }
 
     void process(const std::string& arg, Parameters& params) const override {
@@ -782,6 +790,20 @@ class StrataAfterBestOption : public ParameterOption {
     }
 };
 
+class VerboseOption : public ParameterOption {
+  public:
+    VerboseOption() : ParameterOption("v", "verbose", false, NONE, HELP) {
+    }
+
+    void process(const std::string& arg, Parameters& params) const override {
+        params.verbose = true;
+    }
+
+    std::string getDescription() const override {
+        return "Print advanced stats after the alignment process.";
+    }
+};
+
 const std::vector<std::shared_ptr<Option>> ParametersInterface::options = {
     std::make_shared<PartitioningOption>(),
     std::make_shared<MetricOption>(),
@@ -809,17 +831,34 @@ const std::vector<std::shared_ptr<Option>> ParametersInterface::options = {
     std::make_shared<DynamicSelectionOption>(),
     std::make_shared<ReorderOption>(),
     std::make_shared<StrataAfterBestOption>(),
-    std::make_shared<HelpOption>(),
+    std::make_shared<AlignHelpOption>(),
+    std::make_shared<VerboseOption>(),
 #ifndef RUN_LENGTH_COMPRESSION // options that are not available with run-length
                                // compression
     std::make_shared<InTextOption>(),
-    std::make_shared<SparsenessOption>(),
+    std::make_shared<AlignSparsenessOption>(),
     std::make_shared<NoCigarOption>()
 #endif
 };
 
 void ParametersInterface::printHeader() {
     std::cout << "Usage: columba [OPTIONS]\n\n";
+}
+
+void addSlashCharacter(std::string& path) {
+    char lastChar = path.back();
+
+#ifdef _WIN32
+    // On Windows, check for backslash or forward slash
+    if (lastChar != '\\' && lastChar != '/') {
+        path += '\\';
+    }
+#else
+    // On Unix-like systems, check for forward slash
+    if (lastChar != '/') {
+        path += '/';
+    }
+#endif
 }
 
 Parameters Parameters::processOptionalArguments(int argc, char** argv) {
@@ -856,21 +895,12 @@ Parameters Parameters::processOptionalArguments(int argc, char** argv) {
                           NoDynamicSelectionWithCustomOption().ignoreMessage());
     }
 
+    // make sure paths end with a slash
     if (!params.custom.empty()) {
-        // Check the last character of the path
-        char lastChar = params.custom.back();
-
-#ifdef _WIN32
-        // On Windows, check for backslash or forward slash
-        if (lastChar != '\\' && lastChar != '/') {
-            params.custom += '\\';
-        }
-#else
-        // On Unix-like systems, check for forward slash
-        if (lastChar != '/') {
-            params.custom += '/';
-        }
-#endif
+        addSlashCharacter(params.custom);
+    }
+    if (!params.dynamicSelectionPath.empty()) {
+        addSlashCharacter(params.dynamicSelectionPath);
     }
 
     if (params.mMode == BEST) {
@@ -965,7 +995,7 @@ Parameters Parameters::processOptionalArguments(int argc, char** argv) {
         }
         if (!params.outputIsSAM) {
 
-            // check if last 4 characers are .rhs
+            // check if last 4 characters are .rhs
             if (params.outputFile.size() > 4 &&
                 params.outputFile.substr(params.outputFile.size() - 4) ==
                     ".rhs") {
@@ -985,7 +1015,36 @@ Parameters Parameters::processOptionalArguments(int argc, char** argv) {
             params.outputIsSAM = true;
         }
     }
+
     return params;
+}
+
+void sanityCheckSearchScheme(const std::unique_ptr<SearchStrategy>& strategy,
+                             const MappingMode& mMode, length_t maxDistance,
+                             const std::string& path, bool custom) {
+
+    std::string name =
+        (custom) ? "Custom search scheme" : "Dynamic selection search scheme";
+    if (mMode == ALL) {
+        if (!strategy->supportsDistanceScore(maxDistance)) {
+            throw std::runtime_error(
+                name + " with path " + path +
+                " does not support the given distance score: " +
+                std::to_string(maxDistance));
+        }
+
+    } else if (mMode == BEST) {
+        int maxForBest = 0;
+        if (!strategy->supportsBestMapping(maxForBest)) {
+            throw std::runtime_error(name + " with path " + path +
+                                     " does not support best mapping");
+        }
+        if (maxForBest < MAX_K) {
+            logger.logWarning(name + " with path " + path +
+                              " does not support best mapping for more than " +
+                              std::to_string(maxForBest) + " errors");
+        }
+    }
 }
 
 std::unique_ptr<SearchStrategy>
@@ -995,6 +1054,9 @@ Parameters::createStrategy(IndexInterface& index) const {
     if (!dynamicSelectionPath.empty()) {
         strategy.reset(new MultipleSchemesStrategy(
             index, dynamicSelectionPath, pStrategy, metric, mMode, sMode));
+        sanityCheckSearchScheme(strategy, mMode, maxDistance,
+                                dynamicSelectionPath, false);
+
     } else if (!custom.empty()) {
         if (customDynamicSelection) {
             DynamicCustomStrategy* customStrategy =
@@ -1007,28 +1069,7 @@ Parameters::createStrategy(IndexInterface& index) const {
                                                     metric, mMode, sMode));
         }
 
-        if (mMode == ALL) {
-            if (!strategy->supportsDistanceScore(maxDistance)) {
-                throw std::runtime_error(
-                    "Custom search scheme with path " + custom +
-                    " does not support the given distance score: " +
-                    std::to_string(maxDistance));
-            }
-
-        } else if (mMode == BEST) {
-            int maxForBest = 0;
-            if (!strategy->supportsBestMapping(maxForBest)) {
-                throw std::runtime_error("Custom search scheme with path " +
-                                         custom +
-                                         " does not support best mapping");
-            }
-            if (maxForBest < MAX_K) {
-                logger.logWarning(
-                    "Custom search scheme with path " + custom +
-                    " does not support best mapping for more than " +
-                    std::to_string(maxForBest) + " errors");
-            }
-        }
+        sanityCheckSearchScheme(strategy, mMode, maxDistance, custom, true);
 
     } else {
         // Handle other search schemes

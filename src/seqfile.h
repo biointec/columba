@@ -170,20 +170,20 @@ class RegularReadFileHandler : public ReadFileHandler {
      * @param filename File to open
      * @param mode Read (default) or write
      */
-    void open(const std::string& filename, ReadFileMode mode = READ);
+    void open(const std::string& filename, ReadFileMode mode = READ) override;
 
     /**
      * Check if the input is still valid
      * @return True of false
      */
-    bool good() {
+    bool good() override {
         return !feof(fh);
     }
 
     /**
      * Read a line from file
      */
-    void getLine(std::string& line) {
+    void getLine(std::string& line) override {
         line.clear();
 
         while (fgets(buffer, bufSize, fh) != NULL) {
@@ -197,7 +197,7 @@ class RegularReadFileHandler : public ReadFileHandler {
      * Write a line to file
      * @param line String to write
      */
-    void writeLine(const std::string& line) {
+    void writeLine(const std::string& line) override {
         fputs(line.c_str(), fh);
     }
 
@@ -205,7 +205,7 @@ class RegularReadFileHandler : public ReadFileHandler {
      * Write a character to file
      * @param c Character to write
      */
-    void writeChar(char c) {
+    void writeChar(char c) override {
         fputc(c, fh);
     }
 
@@ -213,7 +213,7 @@ class RegularReadFileHandler : public ReadFileHandler {
      * Peek at the next character in the stream
      * @return The character
      */
-    char peekCharacter() {
+    char peekCharacter() override {
         char c = fgetc(fh);
         ungetc(c, fh);
         return c;
@@ -223,7 +223,7 @@ class RegularReadFileHandler : public ReadFileHandler {
      * Get one character from the stream
      * @return The character
      */
-    char getCharacter() {
+    char getCharacter() override {
         char c = fgetc(fh);
         return c;
     }
@@ -231,19 +231,19 @@ class RegularReadFileHandler : public ReadFileHandler {
     /**
      * Close the file
      */
-    void close();
+    void close() override;
 
     /**
      * Reset the input file
      */
-    void reset();
+    void reset() override;
 
     /**
      * Estimate the size of an ASCII file
      * @param filename File to estimate
      * @return Estimated size
      */
-    size_t estimateASCIISize(const std::string& filename) const {
+    size_t estimateASCIISize(const std::string& filename) const override {
         std::ifstream file(
             filename,
             std::ios::binary |
@@ -253,7 +253,6 @@ class RegularReadFileHandler : public ReadFileHandler {
                                      filename); // Throw an error if
                                                 // the file couldn't be
                                                 // opened
-            return 0; // Return 0 if the file couldn't be opened
         }
 
         std::streampos fileSize = file.tellg(); // Get file size
@@ -263,7 +262,6 @@ class RegularReadFileHandler : public ReadFileHandler {
                                      filename); // Throw an error if
                                                 // the file couldn't be
                                                 // opened
-            return 0;
         }
 
         return static_cast<size_t>(
@@ -308,17 +306,17 @@ class GZipReadFileHandler : public ReadFileHandler {
      * @param mode Read (default) of write
      * @return True upon success, false otherwise
      */
-    void open(const std::string& filename, ReadFileMode mode);
+    void open(const std::string& filename, ReadFileMode mode) override;
 
     /**
      * Check if the input is still valid
      * @return True of false
      */
-    bool good() {
+    bool good() override {
         return !gzeof(ifs);
     }
 
-    void getLine(std::string& line) {
+    void getLine(std::string& line) override {
         line.clear();
 
         while (gzgets(ifs, buffer, bufSize) != NULL) {
@@ -332,7 +330,7 @@ class GZipReadFileHandler : public ReadFileHandler {
      * Write a line to file
      * @param line String to write
      */
-    void writeLine(const std::string& line) {
+    void writeLine(const std::string& line) override {
         gzwrite(ifs, line.c_str(), line.length());
     }
 
@@ -340,7 +338,7 @@ class GZipReadFileHandler : public ReadFileHandler {
      * Write a character to file
      * @param c Character to write
      */
-    void writeChar(char c) {
+    void writeChar(char c) override {
         gzputc(ifs, c);
     }
 
@@ -348,7 +346,7 @@ class GZipReadFileHandler : public ReadFileHandler {
      * Peek at the next character in the stream
      * @return The character
      */
-    char peekCharacter() {
+    char peekCharacter() override {
         char c;
         c = gzgetc(ifs);
         gzungetc(c, ifs);
@@ -359,26 +357,26 @@ class GZipReadFileHandler : public ReadFileHandler {
      * Get one character from the stream
      * @return The character
      */
-    char getCharacter() {
+    char getCharacter() override {
         return gzgetc(ifs);
     }
 
     /**
      * Close the file
      */
-    void close();
+    void close() override;
 
     /**
      * Reset the input file
      */
-    void reset();
+    void reset() override;
 
     /**
      * Estimate the size of an ASCII file
      * @param filename File to estimate
      * @return Estimated size
      */
-    size_t estimateASCIISize(const std::string& filename) const {
+    size_t estimateASCIISize(const std::string& filename) const override {
         struct stat st;
         if (stat(filename.c_str(), &st) != 0) {
             // If we can't get the file size, return 0 as an error
