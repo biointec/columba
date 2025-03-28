@@ -33,6 +33,7 @@ When selecting the appropriate Columba flavor for your needs, consider the follo
 ## Installation
 
 The following instructions will get you a copy of the project up and running on your local machine.
+Additionally, for Windows users pre-compiled executables are available [here](https://github.com/biointec/columba/releases/latest).
 
 ### Prerequisites
 
