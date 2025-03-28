@@ -374,7 +374,7 @@ Currently, this mode is only supported in single-end alignment.
 
 The output file consists of two columns separated by tab characters.
 The first column is the read identifier and the second column is a semi-colon-separated list of all the hits.
-Each hit is represented as `(refSeq, distance)`, where ``refSeq` is the name of the reference sequence of the hit and distance is the edit or hamming distance to the read.
+Each hit is represented as `(refSeq, distance)`, where `refSeq` is the name of the reference sequence of the hit and distance is the edit or hamming distance to the read.
 
 To use the RHS output format use the `-o` flag to redirect the output to a file with the `rhs` extension.
 
