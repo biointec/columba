@@ -543,14 +543,25 @@ void createSuffixArrayDivsufsort64(const string& T, vector<uint64_t>& SA) {
  * @param SA The suffix array. (output)
  */
 void createSuffixArray(const string& T, vector<length_t>& SA) {
+    try {
 #ifdef THIRTY_TWO
-    createSuffixArrayLibsais(T, SA);
+        createSuffixArrayLibsais(T, SA);
 #else
-    createSuffixArrayDivsufsort64(T, SA);
+        createSuffixArrayDivsufsort64(T, SA);
 
 #endif
 
-    logger.logInfo("Suffix array generated successfully!");
+        logger.logInfo("Suffix array generated successfully!");
+    }
+
+    catch (const std::exception& e) {
+        // create new exception with custom message
+        std::string errorMessage = "Error thrown during creation of suffix "
+                                   "array: " +
+                                   std::string(e.what()) +
+                                   ". Does your system have enough memory?";
+        throw std::runtime_error(errorMessage);
+    }
 }
 
 /**
@@ -625,8 +636,8 @@ void preprocessFastaFiles(const std::vector<std::string>& fastaFiles,
             return replaceNonACGT(c, gen, seed, seedIndex);
         };
 
-        logger.logInfo(
-            "Using random (non-seeded) replacement for non-ACGT characters...");
+        logger.logInfo("Using random (non-seeded) replacement for non-ACGT "
+                       "characters...");
 
     } else {
 
@@ -781,14 +792,14 @@ length_t getRunIndex(const length_t position, const length_t size,
                      const MoveLFReprBP& rows) {
     length_t rightBoundary = size - 1;
     length_t leftBoundary = 0;
-    // Iteratively make the possible range smaller by binary search, until only
-    // 1 interval remains.
+    // Iteratively make the possible range smaller by binary search, until
+    // only 1 interval remains.
     while (rightBoundary - leftBoundary >= 1) {
         // Use the middle of the possible range as a test value.
         length_t testIndex = ((rightBoundary + leftBoundary) / 2) + 1;
 
-        // Eliminate half of the possible range by comparing the value to the
-        // test value.
+        // Eliminate half of the possible range by comparing the value to
+        // the test value.
         if (rows.getInputStartPos(testIndex) <= position) {
             leftBoundary = testIndex;
         } else {
@@ -853,7 +864,8 @@ length_t createAndWriteMove(const string& baseFN, const string& BWT,
     // Set bwt size
     length_t bwtSize = BWT.size();
 
-    // balanced tree: stores pairs of I_out with increasing input interval index
+    // balanced tree: stores pairs of I_out with increasing input interval
+    // index
     map<length_t, pair<uint8_t, length_t>> tIn;
 
     // Create accumulated charCounts
@@ -919,7 +931,8 @@ void writeIntVectorBinary(const std::string& filename,
 
 /**
  * Builds samplesFirst and samplesLast from the suffix array (SA) and BWT.
- * Fills samplesFirst and samplesLast at character changes in BWT for length_t.
+ * Fills samplesFirst and samplesLast at character changes in BWT for
+ * length_t.
  *
  * @param samplesFirst The samplesFirst array to fill.
  * @param samplesLast The samplesLast array to fill.
@@ -1023,10 +1036,10 @@ void generatePredecessors(const MovePhiReprBP& move, SparseBitvec& pred,
  * Generate predToRun arrays
  * @param samplesFirst samplesFirst array
  * @param samplesLast samplesLast array
- * @param [out] firstToRun mapping between rank of ones in predFirst bitvector
+ * @param [out] firstToRun mapping between rank of ones in predFirst
+ * bitvector and run indices
+ * @param [out] lastToRun mapping between rank of ones in predLast bitvector
  * and run indices
- * @param [out] lastToRun mapping between rank of ones in predLast bitvector and
- * run indices
  */
 void generatePredToRun(const vector<length_t>& samplesFirst,
                        const vector<length_t>& samplesLast,
@@ -1189,8 +1202,8 @@ void createUnbalancedMoveTable(MovePhiReprBP& rows,
 }
 
 /**
- * Generate the mapping from start indices in both output intervals (phi and phi
- * inverse) to their corresponding run indices
+ * Generate the mapping from start indices in both output intervals (phi and
+ * phi inverse) to their corresponding run indices
  *
  * @param move Move structure
  * @param pred predecessor bitvector of the start samples
@@ -1238,8 +1251,8 @@ void readSuffixArrayFile(const std::string& baseFN,
         if (fread(buf, SABYTES, 1, file) != 1)
             throw runtime_error((fileName + " read failed."));
 
-        // Calculate sa_val from buf: take the first byte, ensure it's within
-        // range, and adjust as needed based on the data size
+        // Calculate sa_val from buf: take the first byte, ensure it's
+        // within range, and adjust as needed based on the data size
         uint64_t sa_val = buf[0] % (1UL << (8 * SABYTES));
         if (reverse) {
             // Only for the reverse suffix array, sa_val must be corrected.
@@ -1511,7 +1524,8 @@ void processPhiAndPhiInverse(const string& baseFN,
 
 #ifdef BIG_BWT_USABLE
 
-// Optimized helper function to replace multiple characters and log their counts
+// Optimized helper function to replace multiple characters and log their
+// counts
 void replaceSentinel(std::string& str) {
     logger.logInfo("Replacing special characters in the BWT...");
 
@@ -1643,8 +1657,8 @@ void createIndex(string& T, const BuildParameters& params,
         createRevBWT(baseFN, T, revSA, sigma, revBWT);
 
         // Create samplesLast and samplesFirst
-        logger.logInfo(
-            "Sampling the reverse suffix array values at run boundaries...");
+        logger.logInfo("Sampling the reverse suffix array values at run "
+                       "boundaries...");
         vector<length_t> revSamplesFirst;
         vector<length_t> revSamplesLast;
         buildSamples(revSamplesFirst, revSamplesLast, revSA, revBWT);
@@ -2049,6 +2063,11 @@ int main(int argc, char* argv[]) {
             }
         }
         processFastaFiles(params);
+    } catch (const std::bad_alloc& e) {
+        logger.logDeveloper("Memory allocation failed. Does your system have "
+                            "enough memory?");
+        // Do specific handling for memory allocation failure
+
     } catch (const std::exception& e) {
         logger.logError("Fatal: " + string(e.what()));
 
