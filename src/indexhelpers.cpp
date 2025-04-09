@@ -386,26 +386,33 @@ FMOcc Cluster::getClusterCentra(uint16_t lowerBound, vector<FMPosExt>& desc,
 void Counters::reportStatistics(const SequencingMode& sMode) const {
     std::stringstream ss;
 
-    ss << "Average no. nodes: "
-       << counters[NODE_COUNTER] / (counters[NUMBER_OF_READS] * 1.0);
-    logger.logVerbose(ss);
+    bool zeroReads = (counters[NUMBER_OF_READS] == 0);
+    if (!zeroReads) {
+        ss << "Average no. nodes: "
+           << counters[NODE_COUNTER] / (counters[NUMBER_OF_READS] * 1.0);
+        logger.logVerbose(ss);
+    }
 
     ss << "Total no. Nodes: " << counters[NODE_COUNTER];
     logger.logVerbose(ss);
 
     if (sMode == SINGLE_END) {
-        ss << "Average no. unique matches per read: "
-           << counters[TOTAL_UNIQUE_MATCHES] /
-                  (counters[NUMBER_OF_READS] * 1.0);
-        logger.logInfo(ss);
+        if (!zeroReads) {
+            ss << "Average no. unique matches per read: "
+               << counters[TOTAL_UNIQUE_MATCHES] /
+                      (counters[NUMBER_OF_READS] * 1.0);
+            logger.logInfo(ss);
+        }
 
         ss << "Total no. matches: " << counters[TOTAL_UNIQUE_MATCHES];
         logger.logInfo(ss);
 
-        ss << "Average no. matches per read "
-           << counters[TOTAL_REPORTED_POSITIONS] /
-                  (counters[NUMBER_OF_READS] * 1.0);
-        logger.logVerbose(ss);
+        if (!zeroReads) {
+            ss << "Average no. matches per read "
+               << counters[TOTAL_REPORTED_POSITIONS] /
+                      (counters[NUMBER_OF_READS] * 1.0);
+            logger.logVerbose(ss);
+        }
 
         ss << "Total no. reported matches: "
            << counters[TOTAL_REPORTED_POSITIONS];
@@ -417,15 +424,20 @@ void Counters::reportStatistics(const SequencingMode& sMode) const {
         ss << "Number of reads: " << counters[NUMBER_OF_READS];
         logger.logInfo(ss);
 
-        ss << "Percentage reads mapped: "
-           << (counters[MAPPED_READS] * 100.0) / counters[NUMBER_OF_READS]
-           << "%";
-        logger.logInfo(ss);
+        if (!zeroReads) {
+            ss << "Percentage reads mapped: "
+               << (counters[MAPPED_READS] * 100.0) / counters[NUMBER_OF_READS]
+               << "%";
+            logger.logInfo(ss);
+        }
     } else {
         // Paired end
-        ss << "Average no. matches per pair: "
-           << counters[TOTAL_UNIQUE_PAIRS] / (counters[NUMBER_OF_READS] / 2.0);
-        logger.logInfo(ss);
+        if (!zeroReads) {
+            ss << "Average no. matches per pair: "
+               << counters[TOTAL_UNIQUE_PAIRS] /
+                      (counters[NUMBER_OF_READS] / 2.0);
+            logger.logInfo(ss);
+        }
 
         ss << "Total no. matches : " << counters[TOTAL_UNIQUE_PAIRS];
         logger.logInfo(ss);
@@ -433,30 +445,37 @@ void Counters::reportStatistics(const SequencingMode& sMode) const {
         ss << "Mapped pairs: " << counters[MAPPED_PAIRS];
         logger.logInfo(ss);
 
-        ss << "Percentage of pairs mapped: "
-           << (counters[MAPPED_PAIRS] * 100.0) / (counters[NUMBER_OF_READS] / 2)
-           << "%";
-        logger.logInfo(ss);
+        if (!zeroReads) {
+            ss << "Percentage of pairs mapped: "
+               << (counters[MAPPED_PAIRS] * 100.0) /
+                      (counters[NUMBER_OF_READS] / 2)
+               << "%";
+            logger.logInfo(ss);
+        }
 
         ss << "Discordantly mapped pairs: "
            << counters[DISCORDANTLY_MAPPED_PAIRS];
         logger.logInfo(ss);
 
-        ss << "Percentage of discordantly mapped pairs: "
-           << (counters[DISCORDANTLY_MAPPED_PAIRS] * 100.0) /
-                  (counters[NUMBER_OF_READS] / 2)
-           << "%";
-        logger.logInfo(ss);
+        if (!zeroReads) {
+            ss << "Percentage of discordantly mapped pairs: "
+               << (counters[DISCORDANTLY_MAPPED_PAIRS] * 100.0) /
+                      (counters[NUMBER_OF_READS] / 2)
+               << "%";
+            logger.logInfo(ss);
+        }
 
         ss << "No. unpaired reads that did match: "
            << counters[MAPPED_HALF_PAIRS];
         logger.logInfo(ss);
 
-        ss << "Percentage pairs for which only 1 read matched: "
-           << (counters[MAPPED_HALF_PAIRS] * 100.0) /
-                  (counters[NUMBER_OF_READS] / 2)
-           << "%";
-        logger.logInfo(ss);
+        if (!zeroReads) {
+            ss << "Percentage pairs for which only 1 read matched: "
+               << (counters[MAPPED_HALF_PAIRS] * 100.0) /
+                      (counters[NUMBER_OF_READS] / 2)
+               << "%";
+            logger.logInfo(ss);
+        }
 
         ss << "Total read pairs both mapped but unpaired: "
            << counters[UNPAIRED_BUT_MAPPED_PAIRS];
