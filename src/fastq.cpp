@@ -41,12 +41,23 @@ using namespace std;
 // ============================================================================
 
 bool SequenceRecord::readFromFileFASTQ(SeqFile& inputFile) {
-    // read sequence identifier
-    char c = inputFile.peekCharacter();
 
     // end of file might be reached
     if (!inputFile.good())
         return false;
+    // read sequence identifier
+    char c = inputFile.peekCharacter();
+
+    while (c == '\n' || c == '\r') {
+        // go to the next line
+        string dummy;
+        inputFile.getLine(dummy);
+        c = inputFile.peekCharacter();
+        if (!inputFile.good()) {
+            return false;
+        }
+    }
+
     if (c != '@')
         throw ios::failure("File " + inputFile.getFileName() +
                            " doesn't appear to be in FastQ format");
@@ -90,6 +101,16 @@ bool SequenceRecord::readFromFileFASTA(SeqFile& inputFile) {
         return false;
     // read sequence identifier
     char c = inputFile.peekCharacter();
+
+    while (c == '\n' || c == '\r') {
+        // go to the next line
+        string dummy;
+        inputFile.getLine(dummy);
+        c = inputFile.peekCharacter();
+        if (!inputFile.good()) {
+            return false;
+        }
+    }
 
     if (c != '>')
         throw ios::failure("File " + inputFile.getFileName() +
@@ -318,7 +339,8 @@ void Reader::readerThread() {
                         targetChunkSize *= multFactor;
                         targetChunkSize = (targetChunkSize / 64) * 64;
                         targetChunkSize =
-                            max(targetChunkSize, (size_t)1); // Ensure it's at least 1
+                            max(targetChunkSize,
+                                (size_t)1); // Ensure it's at least 1
                         targetBlockSize =
                             targetChunkSize * numberOfWorkerThreads;
                         change = targetChunkSize != prevSize;
