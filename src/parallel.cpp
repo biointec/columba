@@ -1282,6 +1282,17 @@ int main(int argc, char* argv[]) {
     // set logger verbosity
     logger.setVerbose(params.verbose);
 
+    std::unique_ptr<OutputWriter> writerPtr = createOutputWriter(params);
+    if (!writerPtr) {
+        return EXIT_FAILURE;
+    }
+
+    std::unique_ptr<Reader> readerPtr = createReader(params);
+    if (!readerPtr) {
+        writerPtr.reset();
+        return EXIT_FAILURE;
+    }
+
     std::unique_ptr<IndexInterface> indexPtr;
 
     // Conditional compilation
@@ -1298,17 +1309,6 @@ int main(int argc, char* argv[]) {
     std::unique_ptr<SearchStrategy> strategy =
         createSearchStrategy(params, *indexPtr);
     if (!strategy) {
-        return EXIT_FAILURE;
-    }
-
-    std::unique_ptr<OutputWriter> writerPtr = createOutputWriter(params);
-    if (!writerPtr) {
-        return EXIT_FAILURE;
-    }
-
-    std::unique_ptr<Reader> readerPtr = createReader(params);
-    if (!readerPtr) {
-        writerPtr.reset();
         return EXIT_FAILURE;
     }
 
