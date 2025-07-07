@@ -51,7 +51,7 @@ class Read {
         seqID = seqID.substr(1);
 
         // convert read to upper case
-        std::transform(read.begin(), read.end(), read.begin(), ::toupper);
+        std::transform(read.begin(), read.end(), read.begin(), [](unsigned char c) { return std::toupper(c); });
 
         // Replace all non-ACGT characters with N
         replaceNonACTGWithN();
