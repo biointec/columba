@@ -35,6 +35,7 @@
 #include <string>                   // for string, char_traits<>::pos_type
 #include <utility>                  // for pair
 #include <vector>                   // for vector
+                                    // RUN_LENGTH_COMPRESSION
 
 class MemoryMappedTextFile;
 class Search;
@@ -61,6 +62,7 @@ class IndexInterface {
     thread_local static Direction dir; // the direction of the index
     thread_local static ExtraCharPtr
         extraChar; // pointer to extra char method (for direction)
+                   // RUN_LENGTH_COMPRESSION
 
     // stacks for search schemes
     thread_local static std::vector<std::vector<FMPosExt>>
@@ -90,6 +92,21 @@ class IndexInterface {
     std::vector<length_t> startPos;    // the start positions of the sequences
     std::vector<std::string> seqNames; // the names of the sequences
     std::vector<length_t> firstSeqIDPerFile; // the first seqID per FASTA file
+
+    bool noCIGAR = false; // do not calculate the CIGAR string
+
+    // in-text verification matrices
+    thread_local static std::vector<BitParallelED64>
+        fullReadMatrices; // the in-text verification matrices
+    thread_local static BitParallelED64*
+        fullReadMatrix; // pointer to the current fullReadMatrix
+
+    thread_local static std::vector<BitParallelED128>
+        fullReadMatrices128; // the in-text verification matrices for many
+                             // errors/start positions
+    thread_local static BitParallelED128*
+        fullReadMatrix128; // pointer to the current fullReadMatrix for many
+                           // errors/start positions
 
     // ----------------------------------------------------------------------------
     // PREPROCESSING ROUTINES
@@ -272,6 +289,20 @@ class IndexInterface {
         length_t positionInAlphabet, const SARangePair& rangesOfP,
         SARangePair& rangesOfChild) const = 0;
 
+#ifdef RUN_LENGTH_COMPRESSION
+
+    void updateMatchStr(std::vector<char>& matchStr, char c, length_t row,
+                        length_t startSize) const {
+        assert(c != 0 && "Cannot update match string with a null character.");
+        size_t numToKeep = startSize + (row - 1);
+        assert(matchStr.size() >= numToKeep);
+        matchStr.resize(numToKeep);
+        matchStr.push_back(c);
+
+        return;
+    }
+#endif // RUN_LENGTH_COMPRESSION
+
     /**
      * Helper function for the approximate matching. This function fills in
      * the matrix for the current node at the current row and goes deeper
@@ -298,7 +329,7 @@ class IndexInterface {
      * @return false if the search can continue along this branch for the
      * current part, true if the search should backtrack.
      */
-    bool branchAndBound(IBitParallelED* bpED, Cluster& cluster,
+    bool branchAndBound(IBitParallelED* bpED, MatrixMetaInfo& cluster,
                         const FMPosExt& currentNode, const Search& s,
                         const length_t& idx,
                         const std::vector<Substring>& parts, Occurrences& occ,
@@ -327,9 +358,10 @@ class IndexInterface {
      * that are already created but aren't checked yet and might need to be
      * checked for the next part.
      */
-    void goDeeper(Cluster& cluster, const length_t& nIdx, const Search& s,
-                  const std::vector<Substring>& parts, Occurrences& occ,
-                  Counters& counters, const std::vector<FMPosExt>& descOtherD,
+    void goDeeper(MatrixMetaInfo& cluster, const length_t& nIdx,
+                  const Search& s, const std::vector<Substring>& parts,
+                  Occurrences& occ, Counters& counters,
+                  const std::vector<FMPosExt>& descOtherD,
                   const std::vector<uint16_t>& initOtherD,
                   const std::vector<FMPosExt>& remDesc);
 
@@ -340,7 +372,7 @@ class IndexInterface {
     /**
      * Verifies the text occurrences in the text and adds them to the
      * occurrences for the edit distance metric. WARNING: This function makes
-     * use of the inTextMatrix pointer. Before calling this function make sure
+     * use of the fullReadMatrix pointer. Before calling this function make sure
      * the pointer has been set correctly (using the setIndexInMode function).
      * @param sPos The start positions to be verified.
      * @param maxED The maximal edit distance that is allowed for the search.
@@ -362,8 +394,8 @@ class IndexInterface {
     /**
      * Verifies an in-text occurrence and adds it to the occurrences for the
      * edit distance metric. WARNING: This function makes use of the
-     * inTextMatrix pointer. Before calling this function make sure the pointer
-     * has been set correctly (using the setIndexInMode function).
+     * fullReadMatrix pointer. Before calling this function make sure the
+     * pointer has been set correctly (using the setIndexInMode function).
      * @param startPos the start position of the in-text occurrence to verify
      * @param endPos the end position of the in-text occurrence to verify
      * @param maxED the maximal allowed edit distance
@@ -443,7 +475,7 @@ class IndexInterface {
      * @param stack The stack to push the children on.
      * @param counters The performance counters.
      */
-    void extendFMPos(const FMPosExt& pos, std::vector<FMPosExt>& stack,
+    void extendFMPos(const FMPos& pos, std::vector<FMPosExt>& stack,
                      Counters& counters) const;
 
     // ----------------------------------------------------------------------------
@@ -475,12 +507,13 @@ class IndexInterface {
      * the index.
      * @param verbose If true, the steps will be written to cout. [default =
      * true]
+     * @param noCIGAR If true, the CIGAR string will not be calculated.
      * @param wordSize The size of the mers to be stored in the hashtable. Used
      * for quick look-ups of exact seeds. [default = 10]
      */
     IndexInterface(const std::string& baseFile, bool verbose = true,
-                   length_t wordSize = 10)
-        : baseFile(baseFile), wordSize(wordSize) {
+                   bool noCIGAR = false, length_t wordSize = 10)
+        : baseFile(baseFile), wordSize(wordSize), noCIGAR(noCIGAR) {
         readMetaAndCounts(baseFile, verbose);
     }
 
@@ -497,6 +530,13 @@ class IndexInterface {
      * index.
      */
     virtual SARangePair getCompleteRange() const = 0;
+
+    /**
+     * @brief Get the Empty String FMPos object
+     *
+     * @return FMPosExt
+     */
+    virtual FMPos getEmptyStringFMPos() const = 0;
 
     // ----------------------------------------------------------------------------
     // ROUTINES FOR ACCESSING THE DATA STRUCTURE
@@ -529,7 +569,9 @@ class IndexInterface {
     /**
      * @brief Check if the CIGAR string must be reported
      */
-    virtual bool getNoCIGAR() const = 0;
+    bool getNoCIGAR() const {
+        return noCIGAR;
+    }
 
     /**
      * Find the range of an exact match of single character in this index.
@@ -696,7 +738,30 @@ class IndexInterface {
                                    Counters& counters,
                                    std::vector<TextOcc>& occ);
 
-    virtual void resetInTextMatrices() = 0;
+    /**
+     * Get the in-Text verification matrix for the read on the given strand with
+     * the given pair status.
+     * @param strand The strand to align to.
+     * @param pairStatus The pair status of the read (first or second).
+     */
+    BitParallelED64& getFullReadMatrix(Strand strand,
+                                       PairStatus pairStatus) const {
+        return fullReadMatrices[strand * 2 + pairStatus];
+    }
+
+    BitParallelED128& getFullReadMatrix128(Strand strand,
+                                           PairStatus pairStatus) const {
+        return fullReadMatrices128[strand * 2 + pairStatus];
+    }
+
+    void resetFullReadMatrices() {
+        for (auto& matrix : fullReadMatrices) {
+            matrix.reset();
+        }
+        for (auto& matrix : fullReadMatrices128) {
+            matrix.reset();
+        }
+    }
 
     /**
      * Sets the search direction of the fm-index
@@ -871,8 +936,17 @@ class IndexInterface {
      * @param counters The performance counters.
      * @param bundle The read bundle with info about the read
      */
-    virtual void generateCIGARS(std::vector<TextOcc>& occs, Counters& counters,
-                                const ReadBundle& bundle) = 0;
+    void generateCIGARS(std::vector<TextOcc>& occs, Counters& counters,
+                        const ReadBundle& bundle) {
+        if (noCIGAR) {
+            return;
+        }
+        for (TextOcc& t : occs) {
+            if (!t.hasCigar()) {
+                generateCIGAR(t, counters, bundle.getSequence(t.getStrand()));
+            }
+        }
+    }
 
     /**
      * Generate the CIGAR string for the in-index occurrence. This function
@@ -882,8 +956,45 @@ class IndexInterface {
      * @param counters The performance counters.
      * @param read The read to which t is a match
      */
-    virtual void generateCIGAR(TextOcc& t, Counters& counters,
-                               const Substring& read) const = 0;
+    void generateCIGAR(TextOcc& t, Counters& counters,
+                       const Substring& read) const {
+        if (noCIGAR || t.hasCigar()) {
+            return;
+        }
+
+// aliases
+#ifdef RUN_LENGTH_COMPRESSION
+        const std::vector<char>& ref = t.getMatchedStr();
+#else
+        const auto& ref = Substring(getText(), t.getRange().getBegin(),
+                                    t.getRange().getEnd());
+#endif
+        const auto& score = t.getDistance();
+        const auto& strand = t.getStrand();
+        const auto& status = t.getPairStatus();
+
+        // select the correct matrix
+        IBitParallelED* matrix;
+        if (BitParallelED64::getMatrixMaxED() >= score) {
+            matrix = &getFullReadMatrix(strand, status);
+        } else {
+            matrix = &getFullReadMatrix128(strand, status);
+        }
+
+        // set the sequence if needed
+        if (!matrix->sequenceSet()) {
+            assert(read.getDirection() == FORWARD);
+            matrix->setSequence(read);
+        }
+
+        // find the CIGAR string
+        std::string strCIGAR;
+        matrix->findCIGAR(ref, score, strCIGAR);
+        t.setCigar(strCIGAR);
+
+        // increase the counter
+        counters.inc(Counters::CIGARS_IN_INDEX);
+    }
 };
 
-#endif
+#endif // INDEXINTERFACE_H

@@ -303,13 +303,10 @@ struct ParametersInterface {
         std::cout << "Report bugs to "
                   <<
 #ifdef RUN_LENGTH_COMPRESSION
-            "lore.depuydt"
-                  <<
-#else
-            "luca.renders"
+            "lore.depuydt@ugent.be and "
                   <<
 #endif
-            "@ugent.be" << std::endl;
+            "luca.renders@ugent.be" << std::endl;
     }
     static void printHelp() {
         printHeader();

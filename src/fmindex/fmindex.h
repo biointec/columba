@@ -60,22 +60,7 @@ class FMIndex : public IndexInterface {
     // in-text verification
     length_t inTextSwitchPoint = 50;
 
-    // in-text verification matrices
-    thread_local static std::vector<BitParallelED64>
-        inTextMatrices; // the in-text verification matrices
-    thread_local static BitParallelED64*
-        inTextMatrix; // pointer to the current inTextMatrix
-
-    thread_local static std::vector<BitParallelED128>
-        inTextMatrices128; // the in-text verification matrices for many
-                           // errors/start positions
-    thread_local static BitParallelED128*
-        inTextMatrix128; // pointer to the current inTextMatrix for many
-                         // errors/start positions
-
     thread_local static std::vector<uint32_t> zerosBuffer;
-
-    bool noCIGAR = false; // do not calculate the CIGAR string
 
     // ----------------------------------------------------------------------------
     // PREPROCESSING ROUTINES
@@ -286,9 +271,9 @@ class FMIndex : public IndexInterface {
 
         IBitParallelED* matrix;
         if (matrix64)
-            matrix = inTextMatrix;
+            matrix = fullReadMatrix;
         else
-            matrix = inTextMatrix128;
+            matrix = fullReadMatrix128;
 
         // initialize the matrix
         initializeMatrix(matrix, pattern, nZeros, maxED);
@@ -299,7 +284,7 @@ class FMIndex : public IndexInterface {
     /**
      * Verifies the text occurrences in the text and adds them to the
      * occurrences for the edit distance metric. WARNING: This function makes
-     * use of the inTextMatrix pointer. Before calling this function make sure
+     * use of the fullReadMatrix pointer. Before calling this function make sure
      * the pointer points to the correct bit-parallel matrix and that the
      * sequence for this matrix has been set.
      * @param sPos The start positions to be verified.
@@ -322,9 +307,9 @@ class FMIndex : public IndexInterface {
     /**
      * Verifies an in-text occurrence and adds it to the occurrences for the
      * edit distance metric. WARNING: This function makes use of the
-     * inTextMatrix pointer. Before calling this function make sure the pointer
-     * points to the correct bit-parallel matrix and that the sequence for this
-     * matrix has been set.
+     * fullReadMatrix pointer. Before calling this function make sure the
+     * pointer points to the correct bit-parallel matrix and that the sequence
+     * for this matrix has been set.
      * @param startPos the start position of the in-text occurrence to verify
      * @param endPos the end position of the in-text occurrence to verify
      * @param maxED the maximal allowed edit distance
@@ -407,19 +392,19 @@ class FMIndex : public IndexInterface {
      * the index.
      * @param inTextSwitch The switch point from in-index to in-text
      * verification.
+     * @param noCIGAR If true, the CIGAR string will not be calculated.
      * @param sa_sparse The sparseness factor of suffix array. It is assumed
      * this is a power of two. [default = 1]
      * @param verbose If true, the steps will be written to cout. [default =
      * true]
      * @param wordSize The size of the mers to be stored in the hashtable. Used
      * for quick look-ups of exact seeds. [default = 10]
-     * @param noCIGAR If true, the CIGAR strings will not be calculated.
      */
     FMIndex(const std::string& baseFile, length_t inTextSwitch, bool noCIGAR,
             int sa_sparse = 1, bool verbose = true, length_t wordSize = 10)
-        : IndexInterface(baseFile, verbose, wordSize),
+        : IndexInterface(baseFile, verbose, noCIGAR, wordSize),
           logSparseFactorSA(log2(sa_sparse)), sparseSA(baseFile, sa_sparse),
-          inTextSwitchPoint(inTextSwitch), noCIGAR(noCIGAR) {
+          inTextSwitchPoint(inTextSwitch) {
 
         // read in files
         fromFiles(baseFile, verbose);
@@ -445,6 +430,10 @@ class FMIndex : public IndexInterface {
      */
     virtual SARangePair getCompleteRange() const override {
         return SARangePair(SARange(0, textLength), SARange(0, textLength));
+    }
+
+    virtual FMPos getEmptyStringFMPos() const override {
+        return FMPos(getCompleteRange(), 0);
     }
 
     // ----------------------------------------------------------------------------
@@ -486,13 +475,6 @@ class FMIndex : public IndexInterface {
     }
 
     /**
-     * @brief Check if the CIGAR string must be reported
-     */
-    virtual bool getNoCIGAR() const override {
-        return noCIGAR;
-    }
-
-    /**
      * Find the range of an exact match of single character in this index.
      * Warning: this function assumes that the character is in the alphabet.
      * @returns the ranges of a single character in this index
@@ -502,31 +484,6 @@ class FMIndex : public IndexInterface {
     // ----------------------------------------------------------------------------
     // ROUTINES FOR APPROXIMATE MATCHING
     // ----------------------------------------------------------------------------
-
-    /**
-     * Get the in-Text verification matrix for the read on the given strand with
-     * the given pair status.
-     * @param strand The strand to align to.
-     * @param pairStatus The pair status of the read (first or second).
-     */
-    BitParallelED64& getInTextMatrix(Strand strand,
-                                     PairStatus pairStatus) const {
-        return inTextMatrices[strand * 2 + pairStatus];
-    }
-
-    BitParallelED128& getInTextMatrix128(Strand strand,
-                                         PairStatus pairStatus) const {
-        return inTextMatrices128[strand * 2 + pairStatus];
-    }
-
-    virtual void resetInTextMatrices() override {
-        for (auto& matrix : inTextMatrices) {
-            matrix.reset();
-        }
-        for (auto& matrix : inTextMatrices128) {
-            matrix.reset();
-        }
-    }
 
     /**
      * Sets the index in the correct mode. All found occurrences will now be
@@ -541,9 +498,9 @@ class FMIndex : public IndexInterface {
     virtual void setIndexInMode(Strand reverseComplement,
                                 PairStatus firstRead = FIRST_IN_PAIR) override {
         setIndexInModeSubRoutine(reverseComplement, firstRead);
-        // point to the correct inTextMatrix based on the two parameters
-        inTextMatrix = &getInTextMatrix(strand, pairStatus);
-        inTextMatrix128 = &getInTextMatrix128(strand, pairStatus);
+        // point to the correct fullReadMatrix based on the two parameters
+        fullReadMatrix = &getFullReadMatrix(strand, pairStatus);
+        fullReadMatrix128 = &getFullReadMatrix128(strand, pairStatus);
     }
 
     /**
@@ -611,69 +568,6 @@ class FMIndex : public IndexInterface {
     virtual void getTextPositionsFromSARange(
         const SARangePair& ranges,
         std::vector<length_t>& positions) const override;
-
-    /**
-     * Generate the CIGAR strings for the in-index occurrences that do not have
-     * one yet. This function assumes that the in-text verification matrices
-     * have correctly been set.
-     * @param occs The occurrences to generate the CIGAR strings for.
-     * @param counters The performance counters.
-     * @param bundle The read bundle with info about the read
-     */
-    virtual void generateCIGARS(std::vector<TextOcc>& occs, Counters& counters,
-                                const ReadBundle& bundle) override {
-        if (noCIGAR) {
-            return;
-        }
-        for (TextOcc& t : occs) {
-            if (!t.hasCigar()) {
-                generateCIGAR(t, counters, bundle.getSequence(t.getStrand()));
-            }
-        }
-    }
-
-    /**
-     * Generate the CIGAR string for the in-index occurrence. This function
-     * assumes that the in-text verification matrix associated with the strand
-     * and pairStatus of the occurrence has been correctly set.
-     * @param t The occurrence to generate the CIGAR string for.
-     * @param counters The performance counters.
-     * @param read The read to which t is a match
-     */
-    virtual void generateCIGAR(TextOcc& t, Counters& counters,
-                               const Substring& read) const override {
-        if (noCIGAR || t.hasCigar()) {
-            return;
-        }
-
-        // aliases
-        const auto& ref = getSubstring(t.getRange());
-        const auto& score = t.getDistance();
-        const auto& strand = t.getStrand();
-        const auto& status = t.getPairStatus();
-
-        // select the correct matrix
-        IBitParallelED* matrix;
-        if (BitParallelED64::getMatrixMaxED() >= score) {
-            matrix = &getInTextMatrix(strand, status);
-        } else {
-            matrix = &getInTextMatrix128(strand, status);
-        }
-
-        // set the sequence if needed
-        if (!matrix->sequenceSet()) {
-            assert(read.getDirection() == FORWARD);
-            matrix->setSequence(read);
-        }
-
-        // find the CIGAR string
-        std::string strCIGAR;
-        matrix->findCIGAR(ref, score, strCIGAR);
-        t.setCigar(strCIGAR);
-
-        // increase the counter
-        counters.inc(Counters::CIGARS_IN_INDEX);
-    }
 };
 
 #endif

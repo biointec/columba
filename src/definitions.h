@@ -54,11 +54,9 @@
 #define PE_NUMBER_PAIRS_FOR_INFERENCE 750 // The number of pairs to use for
 #define PE_MAX_READS_FOR_INFERENCE 10000  // The maximum number of reads to use
 
-#ifndef RUN_LENGTH_COMPRESSION // No CIGAR in RLC
 #define CIGAR_THRESHOLD                                                        \
     10 // The threshold for the CIGAR string calculation when converting from FM
        // occurrence to in-text occurrence
-#endif
 
 // ============================================================================
 // AT-COMPILE-TIME DEFINITIONS

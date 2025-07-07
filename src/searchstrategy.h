@@ -522,6 +522,8 @@ class SearchStrategy {
         if (maxED == 0) {
             std::vector<TextOcc> exactMatches;
             index.exactMatchesOutput(read, counters, exactMatches);
+            // sort the exact matches needed for correct pairing
+            std::sort(exactMatches.begin(), exactMatches.end());
             return exactMatches;
         }
 
@@ -1528,7 +1530,7 @@ class SearchStrategy {
                                        const ReadBundle& bundle) const {
         return index.getTextOccHamming(occ, counters);
     }
-#ifndef RUN_LENGTH_COMPRESSION
+
     /**
      * Filter the occurrences (both in-index and in-text) based on edit
      * distance. The in-index occurrences are first converted to in-text
@@ -1548,7 +1550,6 @@ class SearchStrategy {
         index.generateCIGARS(occs, counters, bundle);
         return occs;
     }
-#endif
 
     /**
      * Filter the occurrences (both in-index and in-text) based on edit
@@ -1580,12 +1581,12 @@ class SearchStrategy {
     SeqNameFound assignSequenceAndCIGAR(TextOcc& occ, Counters& counters,
                                         length_t maxED,
                                         const std::string& pattern) const {
-// first handle CIGAR string
-#ifndef RUN_LENGTH_COMPRESSION
+        // first handle CIGAR string
+
         if (!occ.hasCigar()) {
             index.generateCIGAR(occ, counters, pattern);
         }
-#endif
+
         return assignSequence(occ, counters, maxED, pattern);
     }
 
@@ -2095,7 +2096,8 @@ class CustomSearchStrategy : public SearchStrategy {
   private:
     std::vector<std::vector<Search>>
         schemePerED; // the search schemes for each distance score,
-  std::array<bool, MAX_K> supportsMaxScore; // if a particular distance score is supported
+    std::array<bool, MAX_K>
+        supportsMaxScore; // if a particular distance score is supported
 
     // helpers for static partitioning
     std::vector<std::vector<double>>

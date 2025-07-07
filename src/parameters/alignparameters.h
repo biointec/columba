@@ -52,6 +52,10 @@ struct Parameters : public ParametersInterface {
     bool XATag = false;            // Add secondary alignments via XA tag
     bool reorder = false;          // Ensure order is same as original file
 
+    bool doTrim = false;    // Trim the reads before aligning
+    length_t trimStart = 0; // The start position of the bases to keep
+    length_t trimEnd = 0;   // The end position of the bases to keep
+
     bool verbose =
 #ifdef DEVELOPER_MODE
         true; // Print verbose stats
@@ -67,12 +71,20 @@ struct Parameters : public ParametersInterface {
     length_t minIdentity =
         95; // The minimum identity for alignments in BEST mode
     length_t strataAfterBest = 0; // the number of strata above the best stratum
-                                  // to explore in BEST mode
+    // to explore in BEST mode
+
+#ifndef RUN_LENGTH_COMPRESSION
+    bool noCIGAR = false; // By default calculate the CIGAR string
+#else
+    bool noCIGAR = true; // By default do not calculate the CIGAR string
+#endif // RUN_LENGTH_COMPRESSION
+
+    bool cigarBehaviourChanged = false; // If the CIGAR behaviour has changed
 
     // Non-bmove parameters
 #ifndef RUN_LENGTH_COMPRESSION
     // Input/Output
-    bool noCIGAR = false; // Do not calculate the CIGAR string
+
     // Numerical
     length_t sparsenessFactor =
         DEFAULT_SPARSENESS; // the sparseness factor for the suffix array

@@ -50,6 +50,9 @@ class Read {
         // Remove the first character (@ or >)
         seqID = seqID.substr(1);
 
+        // convert read to upper case
+        std::transform(read.begin(), read.end(), read.begin(), ::toupper);
+
         // Replace all non-ACGT characters with N
         replaceNonACTGWithN();
     }

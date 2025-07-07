@@ -67,13 +67,13 @@ SearchStrategy::SearchStrategy(IndexInterface& argument, PartitionStrategy p,
     case EDIT:
         startIdxPtr = &SearchStrategy::startIndexEdit;
         naiveMatchPtr = &IndexInterface::approxMatchesNaive;
-#ifdef RUN_LENGTH_COMPRESSION
-        filterPtr = &SearchStrategy::filterEditWithoutCIGARCalculation;
-#else
         filterPtr = (sequencingMode == SINGLE_END)
                         ? &SearchStrategy::filterEditWithCIGARCalculation
                         : &SearchStrategy::filterEditWithoutCIGARCalculation;
+
+#ifndef RUN_LENGTH_COMPRESSION
         inTextVerificationPtr = &SearchStrategy::inTextVerificationEdit;
+
 #endif
 
     default:
@@ -502,10 +502,9 @@ void SearchStrategy::matchApproxAllMap(ReadBundle& bundle, length_t maxED,
     // The occurrences in the text and index
     Occurrences occ;
 
-#ifndef RUN_LENGTH_COMPRESSION
     // reset all in-text verification matrices
-    index.resetInTextMatrices();
-#endif
+    index.resetFullReadMatrices();
+
     // set the index in forward mode with the correct sequence
     index.setIndexInMode(FORWARD_STRAND);
     // map with the searches
@@ -532,11 +531,11 @@ void SearchStrategy::checkAlignments(OccVector& occVector, uint32_t& best,
     std::vector<TextOcc> assignedOccs = {};
     for (length_t i = 0; i < occVector[l].second.size(); i++) {
         auto& occ = occVector[l].second[i];
-#ifndef RUN_LENGTH_COMPRESSION
+
         if (!occ.hasCigar()) {
             index.generateCIGAR(occ, counters, seq);
         }
-#endif
+
         auto seqFound = assignSequence(occ, counters, cutOff, seq);
         if (seqFound != FOUND) {
             if (seqFound == FOUND_WITH_TRIMMING && occ.getDistance() > l) {
@@ -707,10 +706,8 @@ void SearchStrategy::matchApproxBestPlusX(ReadBundle& bundle, length_t x,
                                           const length_t minIdentity,
                                           vector<TextOcc>& result) {
 
-#ifndef RUN_LENGTH_COMPRESSION
     // reset the in-text verification matrices from previous read
-    index.resetInTextMatrices();
-#endif
+    index.resetFullReadMatrices();
 
     length_t cutOff = getMaxED(minIdentity, bundle.size());
     OccVector occVectorFW(cutOff + 1), occVectorRC(cutOff + 1);
@@ -748,10 +745,8 @@ vector<PairedTextOccs> SearchStrategy::matchApproxPairedEndAll(
     BoolAndVector matches1forward, matches2forward, matches2revCompl,
         matches1revCompl;
 
-#ifndef RUN_LENGTH_COMPRESSION
     // reset all in-text verification matrices from the previous pair
-    index.resetInTextMatrices();
-#endif
+    index.resetFullReadMatrices();
 
     (this->*processOriAllPtr)(pair, matches1forward, matches1revCompl,
                               matches2forward, matches2revCompl, pairedMatches,
@@ -1106,10 +1101,8 @@ vector<PairedTextOccs> SearchStrategy::matchApproxPairedEndBestPlusX(
                               read2done);
     }
 
-#ifndef RUN_LENGTH_COMPRESSION
     // reset all in-text verification matrices from previous pair
-    index.resetInTextMatrices();
-#endif
+    index.resetFullReadMatrices();
 
     // the minimal distance that has not been explored
     length_t minDistNotExplored = 0;
@@ -1184,8 +1177,7 @@ void SearchStrategy::doRecSearch(const Search& s, vector<Substring>& parts,
         // first part is allowed an error so start with an empty match
         s.setDirectionsInParts(parts);
 
-        SARangePair startRange = index.getCompleteRange();
-        FMOcc startMatch = FMOcc(startRange, 0, 0);
+        FMOcc startMatch = FMOcc(index.getEmptyStringFMPos(), 0);
         (this->*startIdxPtr)(s, startMatch, occ, parts, counters, 0);
         return;
     }
@@ -1222,6 +1214,29 @@ void SearchStrategy::doRecSearch(const Search& s, vector<Substring>& parts,
 
         // Create a match corresponding to the exact match
         FMOcc startMatch = FMOcc(startRange, 0, exactLength);
+
+#ifdef RUN_LENGTH_COMPRESSION
+        // TODO: do this once for all parts in the beginning
+        // add the exact match string to the start match
+
+        length_t lPartIdx = s.getLowestPartProcessedBefore(partInSearch);
+        length_t hPartIdx = s.getHighestPartProcessedBefore(partInSearch);
+
+        std::string str =
+            Substring(parts[lPartIdx].getText(), parts[lPartIdx].begin(),
+                      parts[hPartIdx].end())
+                .tostring();
+
+        std::vector<char> strVector(str.begin(), str.end());
+
+        if (s.getDirection(partInSearch) == BACKWARD) {
+            // reverse the string if the direction is backward
+            // so that we can append to the vector in the phase
+            std::reverse(strVector.begin(), strVector.end());
+        }
+
+        startMatch.setMatchedStr(strVector);
+#endif
 
         // Start approximate matching in the index
         (this->*startIdxPtr)(s, startMatch, occ, parts, counters, partInSearch);
@@ -1352,10 +1367,8 @@ vector<PairedTextOccs> SearchStrategy::pairSingleEndedMatchesAll(
     sort(rc2.begin(), rc2.end());
 #endif
 
-#ifndef RUN_LENGTH_COMPRESSION
     // reset the in-text verification matrices from a previous pair
-    index.resetInTextMatrices();
-#endif
+    index.resetFullReadMatrices();
 
     // create BoolAndVector for each vector with bool set to true
     BoolAndVector fw1bv = {true, std::move(fw1)},
@@ -1385,12 +1398,11 @@ void SearchStrategy::addUnpairedMatches(vector<TextOcc>& allMatches,
     // sequence can be assigned
     for (auto& occ : allMatches) {
 
-#ifndef RUN_LENGTH_COMPRESSION
         if (!occ.hasCigar()) {
             const auto& seq = bundle.getSequence(occ.getStrand());
             index.generateCIGAR(occ, counters, seq);
         }
-#endif
+
         const auto& seq = bundle.getSequence(occ.getStrand());
         if (assignSequence(occ, counters, maxED, seq) != NOT_FOUND) {
             temp.emplace_back(std::move(occ));
@@ -1454,11 +1466,11 @@ void SearchStrategy::addOneUnmapped(ReadPair& reads, vector<TextOcc>& matches1,
         for (auto& occurrence : occurrences) {
             // assign sequence and generate CIGAR string
             const auto& seq = mappedBundle.getSequence(occurrence.getStrand());
-#ifndef RUN_LENGTH_COMPRESSION
+
             if (!occurrence.hasCigar()) {
                 index.generateCIGAR(occurrence, counters, seq);
             }
-#endif
+
             if (assignSequence(occurrence, counters, maxED, seq) == NOT_FOUND) {
                 continue;
             }
@@ -1509,14 +1521,14 @@ void SearchStrategy::addDiscPairs(vector<TextOcc>& fw1, vector<TextOcc>& rc1,
             reads.getSequence(first.getStrand(), first.getPairStatus());
         const auto& secondSeq =
             reads.getSequence(second.getStrand(), second.getPairStatus());
-#ifndef RUN_LENGTH_COMPRESSION
+
         if (!first.hasCigar()) {
             index.generateCIGAR(first, counters, firstSeq);
         }
         if (!second.hasCigar()) {
             index.generateCIGAR(second, counters, secondSeq);
         }
-#endif
+
         // try to assign a sequence to both occurrences
         if (assignSequence(first, counters, maxED, firstSeq) != NOT_FOUND &&
             assignSequence(second, counters, maxED, secondSeq) != NOT_FOUND) {
