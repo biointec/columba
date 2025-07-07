@@ -82,7 +82,7 @@ class SequenceRecord : public ReadBundle {
             assert(read.size() == qual.size());
             read = read.substr(trimStart, trimEnd - trimStart);
             qual = qual.substr(trimStart, trimEnd - trimStart);
-            makeReverseComplement();
+     
         } catch (const std::out_of_range& e) {
             // Reset to original values if an error occurs
             read = originalRead;
@@ -106,6 +106,7 @@ class SequenceRecord : public ReadBundle {
     bool readFromFile(SeqFile& input) {
         if (readFunc(input)) {
             trimFunc(); // trim read if necessary
+            makeReverseComplement();
             return true;
         }
         return false;
