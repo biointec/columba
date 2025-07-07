@@ -27,8 +27,9 @@
 // DEFINITIONS OF CONSTANTS
 // ============================================================================
 
-#define VERSION_NUMBER_COLUMBA 1     // The version number of Columba
-#define SUB_VERSION_NUMBER_COLUMBA 3 // The sub version number of Columba
+#define VERSION_NUMBER_COLUMBA 2     // The version number of Columba
+#define SUB_VERSION_NUMBER_COLUMBA 0 // The sub version number of Columba
+#define SUB_SUB_VERSION_NUMBER_COLUMBA 2 // The sub version number of Columba
 #define COLUMBA_BUILD_INDEX_TAG 21   // the tag for building the index
 #ifndef RUN_LENGTH_COMPRESSION
 #define COLUMBA_FLAVOUR "VANILLA" // the flavour of Columba (vanilla)
@@ -79,6 +80,16 @@ typedef uint64_t length_t;
 #else
 #define HAS_UINT128_T 0
 #endif // (__GNUC__ || __clang__) && (__x86_64__ || __SIZEOF_POINTER__ == 8)
+
+
+inline std::string getVersionString() {
+    std::string str = std::to_string(VERSION_NUMBER_COLUMBA) + "." +
+                      std::to_string(SUB_VERSION_NUMBER_COLUMBA);
+    if (SUB_SUB_VERSION_NUMBER_COLUMBA > 0) {
+        str += "." + std::to_string(SUB_SUB_VERSION_NUMBER_COLUMBA);
+    }
+    return str;
+}
 
 // ============================================================================
 // ENUMS

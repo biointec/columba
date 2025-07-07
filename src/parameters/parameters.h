@@ -309,6 +309,9 @@ struct ParametersInterface {
             "luca.renders@ugent.be" << std::endl;
     }
     static void printHelp() {
+
+        std::cout << "Columba " << COLUMBA_FLAVOUR << " version "
+                  << getVersionString() << std::endl;
         printHeader();
         const size_t maxWidth = 100;
 

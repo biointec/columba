@@ -577,9 +577,9 @@ void OutputWriter::writerThread() {
     // write the  headers
     if (isSAM) {
         writeSeq.writeLine("@HD\tVN:1.6\tSO:queryname\n");
-        writeSeq.writeLine("@PG\tID:Columba" +
-                           to_string(VERSION_NUMBER_COLUMBA) + "." +
-                           to_string(SUB_VERSION_NUMBER_COLUMBA) +
+
+       
+        writeSeq.writeLine("@PG\tID:Columba" + getVersionString() +
                            "\tPN:Columba\tCL:" + commandLineParameters + "\n");
 
         ifstream ifs(headerFile, ios::binary);
