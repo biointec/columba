@@ -22,6 +22,8 @@
 #define DEFINITIONS_H
 
 #include <cstdint>
+#include <string>
+
 
 // ============================================================================
 // DEFINITIONS OF CONSTANTS
