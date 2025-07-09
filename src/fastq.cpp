@@ -53,14 +53,19 @@ bool SequenceRecord::readFromFileFASTQ(SeqFile& inputFile) {
         string dummy;
         inputFile.getLine(dummy);
         c = inputFile.peekCharacter();
-        if (!inputFile.good()) {
+        if ((!inputFile.good())) {
             return false;
         }
     }
 
-    if (c != '@')
+    if (c == EOF)
+        return false;
+
+    if (c != '@') {
+
         throw ios::failure("File " + inputFile.getFileName() +
                            " doesn't appear to be in FastQ format");
+    }
     inputFile.getLine(seqID);
     if (!seqID.empty() && seqID.back() == '\n')
         seqID.pop_back();
@@ -172,13 +177,16 @@ void ReadBlock::getNextChunk(vector<ReadBundle>& buffer, bool pairedEnd) {
 }
 
 void ReadBlock::readFromFile(SeqFile& file1, SeqFile& file2,
-                             size_t targetBlockSize, bool fastq1, bool fastq2) {
+                             size_t targetBlockSize, bool fastq1, bool fastq2,
+                             bool doTrim, length_t trimStart,
+                             length_t trimEnd) {
     // clear the block
     this->clear();
     nextChunkOffset = 0;
 
     // read in new contents
-    SequenceRecord recordA(fastq1), recordB(fastq2);
+    SequenceRecord recordA(fastq1, doTrim, trimStart, trimEnd),
+        recordB(fastq2, doTrim, trimStart, trimEnd);
     size_t thisBlockSize = 0;
 
     while (thisBlockSize < targetBlockSize) {
@@ -198,14 +206,15 @@ void ReadBlock::readFromFile(SeqFile& file1, SeqFile& file2,
             "paired-end FastQ files contain different  number of reads\n");
 }
 
-void ReadBlock::readFromFile(SeqFile& file, size_t targetBlockSize,
-                             bool fastq) {
+void ReadBlock::readFromFile(SeqFile& file, size_t targetBlockSize, bool fastq,
+                             bool doTrim, length_t trimStart,
+                             length_t trimEnd) {
     // clear the block
     this->clear();
     nextChunkOffset = 0;
 
     // read in new contents
-    SequenceRecord record(fastq);
+    SequenceRecord record(fastq, doTrim, trimStart, trimEnd);
     size_t thisBlockSize = 0;
 
     while (thisBlockSize < targetBlockSize) {
@@ -301,9 +310,10 @@ void Reader::readerThread() {
             // no mutexes are held by this thread at this point
             if (pairedEnd)
                 block.readFromFile(file1, file2, targetBlockSize, fastq1,
-                                   fastq2);
+                                   fastq2, doTrim, trimStart, trimEnd);
             else
-                block.readFromFile(file1, targetBlockSize, fastq1);
+                block.readFromFile(file1, targetBlockSize, fastq1, doTrim,
+                                   trimStart, trimEnd);
 
             // empty block: end-of-file reached
             if (block.empty())
@@ -567,9 +577,9 @@ void OutputWriter::writerThread() {
     // write the  headers
     if (isSAM) {
         writeSeq.writeLine("@HD\tVN:1.6\tSO:queryname\n");
-        writeSeq.writeLine("@PG\tID:Columba" +
-                           to_string(VERSION_NUMBER_COLUMBA) + "." +
-                           to_string(SUB_VERSION_NUMBER_COLUMBA) +
+
+       
+        writeSeq.writeLine("@PG\tID:Columba" + getVersionString() +
                            "\tPN:Columba\tCL:" + commandLineParameters + "\n");
 
         ifstream ifs(headerFile, ios::binary);

@@ -22,13 +22,16 @@
 #define DEFINITIONS_H
 
 #include <cstdint>
+#include <string>
+
 
 // ============================================================================
 // DEFINITIONS OF CONSTANTS
 // ============================================================================
 
-#define VERSION_NUMBER_COLUMBA 1     // The version number of Columba
-#define SUB_VERSION_NUMBER_COLUMBA 3 // The sub version number of Columba
+#define VERSION_NUMBER_COLUMBA 2     // The version number of Columba
+#define SUB_VERSION_NUMBER_COLUMBA 0 // The sub version number of Columba
+#define SUB_SUB_VERSION_NUMBER_COLUMBA 2 // The sub version number of Columba
 #define COLUMBA_BUILD_INDEX_TAG 21   // the tag for building the index
 #ifndef RUN_LENGTH_COMPRESSION
 #define COLUMBA_FLAVOUR "VANILLA" // the flavour of Columba (vanilla)
@@ -54,11 +57,9 @@
 #define PE_NUMBER_PAIRS_FOR_INFERENCE 750 // The number of pairs to use for
 #define PE_MAX_READS_FOR_INFERENCE 10000  // The maximum number of reads to use
 
-#ifndef RUN_LENGTH_COMPRESSION // No CIGAR in RLC
 #define CIGAR_THRESHOLD                                                        \
     10 // The threshold for the CIGAR string calculation when converting from FM
        // occurrence to in-text occurrence
-#endif
 
 // ============================================================================
 // AT-COMPILE-TIME DEFINITIONS
@@ -81,6 +82,16 @@ typedef uint64_t length_t;
 #else
 #define HAS_UINT128_T 0
 #endif // (__GNUC__ || __clang__) && (__x86_64__ || __SIZEOF_POINTER__ == 8)
+
+
+inline std::string getVersionString() {
+    std::string str = std::to_string(VERSION_NUMBER_COLUMBA) + "." +
+                      std::to_string(SUB_VERSION_NUMBER_COLUMBA);
+    if (SUB_SUB_VERSION_NUMBER_COLUMBA > 0) {
+        str += "." + std::to_string(SUB_SUB_VERSION_NUMBER_COLUMBA);
+    }
+    return str;
+}
 
 // ============================================================================
 // ENUMS

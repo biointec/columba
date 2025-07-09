@@ -39,12 +39,6 @@ using namespace std;
 // CLASS FMIndex
 // ============================================================================
 
-thread_local vector<BitParallelED128> FMIndex::inTextMatrices128(4);
-thread_local BitParallelED128* FMIndex::inTextMatrix128;
-
-thread_local vector<BitParallelED64> FMIndex::inTextMatrices(4);
-thread_local BitParallelED64* FMIndex::inTextMatrix;
-
 thread_local vector<uint32_t> FMIndex::zerosBuffer(0, 2 * MAX_K + 1);
 
 // ----------------------------------------------------------------------------
@@ -284,9 +278,9 @@ void FMIndex::inTextVerification(const vector<length_t>& startPos,
 
     IBitParallelED* matrix;
     if (matrix64)
-        matrix = inTextMatrix;
+        matrix = fullReadMatrix;
     else
-        matrix = inTextMatrix128;
+        matrix = fullReadMatrix128;
 
     // initialize the matrix
     initializeMatrix(matrix, pattern, nZeros, maxED);
@@ -305,12 +299,12 @@ void FMIndex::inTextVerification(const vector<length_t>& startPos,
     }
 
     if (matrix64) {
-        InTextVerificationTask<uint64_t> task(refs, inTextMatrix, maxED, minED,
-                                              strand, pairStatus, noCIGAR);
+        InTextVerificationTask<uint64_t> task(
+            refs, fullReadMatrix, maxED, minED, strand, pairStatus, noCIGAR);
         task.doTask(counters, occ);
     } else {
         InTextVerificationTask<UInt128> task(
-            refs, inTextMatrix128, maxED, minED, strand, pairStatus, noCIGAR);
+            refs, fullReadMatrix128, maxED, minED, strand, pairStatus, noCIGAR);
         task.doTask(counters, occ);
     }
 }
@@ -326,9 +320,9 @@ void FMIndex::inTextVerificationOneString(const length_t startPos,
 
     IBitParallelED* matrix;
     if (matrix64)
-        matrix = inTextMatrix;
+        matrix = fullReadMatrix;
     else
-        matrix = inTextMatrix128;
+        matrix = fullReadMatrix128;
 
     // initialize the matrix
     initializeMatrix(matrix, pattern, 1, maxED);
@@ -337,12 +331,12 @@ void FMIndex::inTextVerificationOneString(const length_t startPos,
     std::vector<Substring> refs = {getSubstring(startPos, endPos)};
 
     if (matrix64) {
-        InTextVerificationTask<uint64_t> task(refs, inTextMatrix, maxED, minED,
-                                              strand, pairStatus, noCIGAR);
+        InTextVerificationTask<uint64_t> task(
+            refs, fullReadMatrix, maxED, minED, strand, pairStatus, noCIGAR);
         task.doTask(counters, occ);
     } else {
         InTextVerificationTask<UInt128> task(
-            refs, inTextMatrix128, maxED, minED, strand, pairStatus, noCIGAR);
+            refs, fullReadMatrix128, maxED, minED, strand, pairStatus, noCIGAR);
         task.doTask(counters, occ);
     }
 }

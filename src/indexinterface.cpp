@@ -64,6 +64,12 @@ thread_local vector<BitParallelED128> IndexInterface::matrices128;
 thread_local Strand IndexInterface::strand = FORWARD_STRAND;
 thread_local PairStatus IndexInterface::pairStatus = FIRST_IN_PAIR;
 
+thread_local vector<BitParallelED128> IndexInterface::fullReadMatrices128(4);
+thread_local BitParallelED128* IndexInterface::fullReadMatrix128;
+
+thread_local vector<BitParallelED64> IndexInterface::fullReadMatrices(4);
+thread_local BitParallelED64* IndexInterface::fullReadMatrix;
+
 // ----------------------------------------------------------------------------
 // PREPROCESSING ROUTINES
 // ----------------------------------------------------------------------------
@@ -307,7 +313,8 @@ void IndexInterface::populateTable(bool verbose) {
     string word;
     vector<FMPosExt> stack;
     Counters counters;
-    extendFMPos(getCompleteRange(), stack, counters);
+
+    extendFMPos(getEmptyStringFMPos(), stack, counters);
     while (!stack.empty()) {
         auto curr = stack.back();
         stack.pop_back();
@@ -323,7 +330,7 @@ void IndexInterface::populateTable(bool verbose) {
             table.insert(make_pair(k, std::move(curr.getRanges())));
 
         } else // add extra characters
-            extendFMPos(curr.getRanges(), stack, counters, curr.getRow());
+            extendFMPos(curr, stack, counters);
     }
 }
 
@@ -424,9 +431,23 @@ void IndexInterface::recApproxMatchEdit(
     // initialize bit-parallel matrix
     bpED->initializeMatrix(maxED, initED);
 
+#ifdef RUN_LENGTH_COMPRESSION
+    // TODO regardless of direction keep a vector that dynamically grows, only
+    // when we report do we append the matched of the startMatch and the
+    // extensions here..
+
+    std::vector<char> matchStr = startMatch.getMatchedStr();
+    // currently we make a copy here, but maybe can be optimized?
     // initialize  cluster
-    Cluster cluster(bpED->getSizeOfFinalColumn(), maxED, startMatch.getDepth(),
-                    startMatch.getShift());
+    MatrixMetaInfo cluster(bpED->getSizeOfFinalColumn(), maxED,
+                           startMatch.getDepth(), startMatch.getShift(),
+                           matchStr);
+#else
+    // initialize  cluster
+    MatrixMetaInfo cluster(bpED->getSizeOfFinalColumn(), maxED,
+                           startMatch.getDepth(), startMatch.getShift());
+
+#endif // RUN_LENGTH_COMPRESSION
 
     if (bpED->inFinalColumn(0)) {
         // the first row is part of the final column of the banded matrix
@@ -460,18 +481,19 @@ void IndexInterface::recApproxMatchEdit(
             return;
         }
 
-        SARangePair pair = descendants.back().getRanges();
-        if (dSwitch) {
-            // after a switch the ranges of final descendant should be
-            // updated
-            pair = startMatch.getRanges();
-        }
+        // after a switch the ranges of final descendant should be
+        // updated
+        SARangePair pair =
+            dSwitch ? startMatch.getRanges() : descendants.back().getRanges();
+
+        FMPos descPos(pair, descendants.back().getDepth());
 
         // push children of final descendant
-        extendFMPos(pair, stack, counters, descendants.back().getDepth());
+        extendFMPos(descPos, stack, counters);
 
     } else { // get the initial nodes to check
-        extendFMPos(startMatch.getRanges(), stack, counters);
+        FMPos startPos(startMatch.getRanges(), 0);
+        extendFMPos(startPos, stack, counters);
     }
 
 #ifndef RUN_LENGTH_COMPRESSION
@@ -505,7 +527,7 @@ void IndexInterface::recApproxMatchEdit(
 }
 
 bool IndexInterface::branchAndBound(
-    IBitParallelED* bpED, Cluster& cluster, const FMPosExt& currentNode,
+    IBitParallelED* bpED, MatrixMetaInfo& cluster, const FMPosExt& currentNode,
     const Search& s, const length_t& idx, const vector<Substring>& parts,
     Occurrences& occ, Counters& counters, const vector<uint16_t>& initOther,
     const vector<FMPosExt>& descOther, const vector<FMPosExt>& remainingDesc) {
@@ -513,6 +535,11 @@ bool IndexInterface::branchAndBound(
     const length_t row = currentNode.getDepth();
     bool validED = bpED->computeRow(row, currentNode.getCharacter());
 
+#ifdef RUN_LENGTH_COMPRESSION
+    updateMatchStr(cluster.getMatchedStr(), currentNode.getCharacter(), row,
+                   cluster.getStartDepth());
+
+#endif
     // check if we have reached the final column of the matrix
     if (bpED->inFinalColumn(row)) {
         // update the cluster
@@ -533,7 +560,7 @@ bool IndexInterface::branchAndBound(
     return !validED;
 }
 
-void IndexInterface::goDeeper(Cluster& cluster, const length_t& nIdx,
+void IndexInterface::goDeeper(MatrixMetaInfo& cluster, const length_t& nIdx,
                               const Search& s, const vector<Substring>& parts,
                               Occurrences& occ, Counters& counters,
                               const vector<FMPosExt>& descOtherD,
@@ -547,18 +574,31 @@ void IndexInterface::goDeeper(Cluster& cluster, const length_t& nIdx,
         // match)
         if (nIdx == parts.size()) {
             auto matches = cluster.reportCentersAtEnd();
+#ifdef RUN_LENGTH_COMPRESSION
+            bool reverse = dir == BACKWARD;
+#endif
             for (auto& match : matches) {
                 if (match.isValid() && match.getDistance() >= lowerBound) {
                     match.setStrand(strand);
                     match.setPairStatus(pairStatus);
-                    occ.addFMOcc(match);
+#ifdef RUN_LENGTH_COMPRESSION
+                    if (reverse) {
+                        match.reverseMatchedStr();
+                    }
+#endif // RUN_LENGTH_COMPRESSION
+                    occ.addFMOcc(
+                        match); // matched string added via call to cluster
                 }
             }
         } else {
             FMOcc match = cluster.reportDeepestMinimum(this->dir);
             if (match.isValid() && match.getDistance() >= lowerBound) {
+
                 // go deeper in search
                 Direction originalDir = this->dir;
+#ifdef RUN_LENGTH_COMPRESSION
+                match.reverseMatchedStr();
+#endif // RUN_LENGTH_COMPRESSION
                 recApproxMatchEdit(s, match, occ, parts, counters, nIdx, {}, {},
                                    descOtherD, initOtherD);
                 // set direction back again
@@ -611,6 +651,9 @@ void IndexInterface::goDeeper(Cluster& cluster, const length_t& nIdx,
         }
 
         Direction originalDir = this->dir;
+#ifdef RUN_LENGTH_COMPRESSION
+        newMatch.reverseMatchedStr();
+#endif // RUN_LENGTH_COMPRESSION
 
         recApproxMatchEdit(s, newMatch, occ, parts, counters, nIdx, descendants,
                            initEds, descOtherD, initOtherD);
@@ -647,14 +690,111 @@ void IndexInterface::extendFMPos(const SARangePair& parentRanges,
     }
 }
 
-void IndexInterface::extendFMPos(const FMPosExt& pos, vector<FMPosExt>& stack,
+void IndexInterface::extendFMPos(const FMPos& pos, vector<FMPosExt>& stack,
                                  Counters& counters) const {
+
     extendFMPos(pos.getRanges(), stack, counters, pos.getDepth());
 }
 
 // ----------------------------------------------------------------------------
 // ROUTINES FOR ACCESSING THE DATA STRUCTURE
 // ----------------------------------------------------------------------------
+
+#ifdef RUN_LENGTH_COMPRESSION
+
+/**
+ * @brief Checks if the trimmed match of the TextOcc t is still a valid mathch
+ *
+ * @param t The TextOcc object containing the match information (can be updated
+ * if the trimmed version is still a match)
+ * @param original_begin The original beginning position of the match in the
+ * text (before trimming)
+ * @param maxED The maximum allowed edit distance for the match
+ * @param matrix A BitParallelED matrix used for calculating the edit distance.
+ * @param noCIGAR If true, the CIGAR string will not be calculated, only the
+ * match is checked.
+ * @param pattern The pattern that was aligned. Used to initialize the matrix.
+ * @return true if the trimmed match is still a valid match within the allowed
+ * edit distance. In that case t will updated to contain match information for
+ * the trimmed match.
+ * @return false if occurrence is not a match if trimmed
+ */
+bool checkTrimmedMatch(TextOcc& t, length_t original_begin, length_t maxED,
+                       IBitParallelED* matrix, bool noCIGAR,
+                       const std::string& pattern) {
+
+    // initialize the matrix with the pattern and max score
+    if (!matrix->sequenceSet()) {
+        matrix->setSequence(pattern);
+    }
+    matrix->initializeMatrix(maxED, {0});
+
+    // if the match was with ED = 0, the matched string is not kept during
+    // alignment however we know it equals the pattern
+    auto& matchedStrVector =
+        (t.getDistance() == 0)
+            ? std::vector<char>(pattern.begin(), pattern.end())
+            : t.getMatchedStr();
+
+    length_t startPosInMatchedStr = t.getBegin() - original_begin;
+    length_t endPosInMatchedStr = startPosInMatchedStr + t.getRange().width();
+
+    const auto size = t.getRange().width();
+    if (!matrix->inFinalColumn(size)) {
+        // the trimmed matched string is not long enough to match the pattern
+        return false;
+    }
+
+    // create the trimeed matched string
+    std::string trimmedMatchedStr(
+        matchedStrVector.begin() + startPosInMatchedStr,
+        matchedStrVector.begin() + endPosInMatchedStr);
+    Substring ref(trimmedMatchedStr);
+
+    length_t i;
+    for (i = 0; i < size; ++i) {
+        if (!matrix->computeRow(i + 1, ref.forwardAccessor(i))) {
+            // we can break calculation here, as we are above the maximum
+            if (i <= size - matrix->getSizeOfFinalColumn()) {
+                return false; // we did not reach full pattern
+            }
+            break; // we need to check the final column
+        }
+    }
+
+    vector<length_t> refEnds;
+    matrix->findClusterCenters(i, refEnds, maxED, 0);
+
+    if (refEnds.empty()) {
+        // no match found with clipping
+        return false;
+    }
+
+    std::vector<TextOcc> occ;
+
+    // for each valid end -> calculate CIGAR string and report
+    for (const auto& refEnd : refEnds) {
+        length_t bestScore, bestBegin;
+
+        // we need to track back to find out from where (what position in
+        // the text) this occurrence starts
+        std::string cigar;
+        matrix->traceBack(ref, refEnd, bestBegin, bestScore, cigar);
+
+        if (noCIGAR) {
+            cigar = "";
+        }
+        Range range = Range(t.getBegin() + bestBegin, t.getBegin() + refEnd);
+
+        occ.emplace_back(range, bestScore, cigar, t.getStrand(),
+                         t.getPairStatus());
+    }
+
+    // find the best o in occ using the < operator
+    t = std::move(*std::min_element(occ.begin(), occ.end()));
+    return true; // we found a match
+}
+#endif
 
 SeqNameFound IndexInterface::findSeqName(TextOcc& t, length_t& seqID,
                                          Counters& counters,
@@ -666,14 +806,14 @@ SeqNameFound IndexInterface::findSeqName(TextOcc& t, length_t& seqID,
     // return NOT_FOUND if no name could be found
 
     auto& range = t.getRange();
-    const auto& begin = range.getBegin();
-    const auto& end = range.getEnd();
+    const auto begin = range.getBegin();
+    const auto end = range.getEnd();
 
     // find first start position greater than begin
     auto it = upper_bound(startPos.begin(), startPos.end(), begin);
-    // as startPositions[0] == 0 we know that "it" points to at least the second
-    // element we need to move one back to find the start position of the
-    // sequence in which begin lies
+    // as startPositions[0] == 0 we know that "it" points to at least the
+    // second element we need to move one back to find the start position of
+    // the sequence in which begin lies
     length_t index = distance(startPos.begin(), --it);
 
     // now we check if the end position lies in the same sequence
@@ -726,18 +866,26 @@ SeqNameFound IndexInterface::findSeqName(TextOcc& t, length_t& seqID,
         // no match found with clipping
         return NOT_FOUND;
     }
+
 #else
-    if (t.getRange().width() - (end - begin) + t.getDistance() >
-        largestStratum) {
+
+    // We need to check the trimmed matched string to see if it is still valid
+    // start by initializing a matrix to check the trimmed match
+    bool matrix64 = BitParallelED64::getMaxFirstColRows() > largestStratum &&
+                    BitParallelED64::getMatrixMaxED() >= largestStratum;
+
+    IBitParallelED* matrix;
+    if (matrix64)
+        matrix = fullReadMatrix;
+    else
+        matrix = fullReadMatrix128;
+
+    if (!checkTrimmedMatch(t, begin, largestStratum, matrix, noCIGAR,
+                           pattern)) {
+        // no match found with clipping
         return NOT_FOUND;
-    } else {
-        // as we cannot verify in text using bmove we assume that trimming X
-        // characters increases the score by X characters. In some cases this
-        // can be a too pessimistic assumption.
-        t = TextOcc(range,
-                    t.getDistance() + t.getRange().width() - range.width(),
-                    t.getStrand(), t.getPairStatus());
     }
+
 #endif
 
     seqID = index;
@@ -755,8 +903,8 @@ SeqNameFound IndexInterface::findSeqName(TextOcc& t, length_t& seqID,
 #ifndef RUN_LENGTH_COMPRESSION
 
 /**
- * @brief Verify the exact match in the text. Helper function for exact matching
- * in the FM Index
+ * @brief Verify the exact match in the text. Helper function for exact
+ * matching in the FM Index
  * @param s the string to be matched
  * @param p the positions in the FM Index where the end of the string occurs
  * @param counters the performance counters to be updated
@@ -819,8 +967,8 @@ void IndexInterface::exactMatchesOutput(const string& s, Counters& counters,
         const auto& c = s[i];
         auto pos = sigma.c2i(c);
         if (pos == -1 || !findRangeWithExtraCharBackward(pos, range, range)) {
-            // c is not in alphabet or no updated range is empty, exact match
-            // impossible
+            // c is not in alphabet or no updated range is empty, exact
+            // match impossible
             return;
         }
         counters.inc(Counters::NODE_COUNTER);
@@ -836,9 +984,10 @@ void IndexInterface::exactMatchesOutput(const string& s, Counters& counters,
     // get all positions from the range
     const auto& p = getBeginPositions(range, 0);
 
-#ifndef RUN_LENGTH_COMPRESSION
     // exact match, so all M characters
     std::string CIGAR = getNoCIGAR() ? "*" : fmt::format("{}M", s.size());
+#ifndef RUN_LENGTH_COMPRESSION
+
     if (i != (length_t)-1) {
         verifyInTextExact(s, p, counters, tOcc, s.size() - i, CIGAR, strand,
                           pairStatus, getText());
@@ -852,8 +1001,8 @@ void IndexInterface::exactMatchesOutput(const string& s, Counters& counters,
                        });
     }
 #else
-    std::string CIGAR = "*"; // no CIGAR in RLC
     // directly add occurrences
+    tOcc.reserve(tOcc.size() + p.size());
     std::transform(p.begin(), p.end(), std::back_inserter(tOcc),
                    [&](const length_t& pos) {
                        return TextOcc(Range(pos, pos + s.size()), 0, CIGAR,
@@ -927,9 +1076,14 @@ void IndexInterface::approxMatchesNaive(const std::string& pattern,
     vector<FMPosExt> stack;
     stack.reserve((pattern.size() + maxED + 1) * (sigma.size() - 1));
 
-    extendFMPos(getCompleteRange(), stack, counters, 0);
+    extendFMPos(getEmptyStringFMPos(), stack, counters);
 
     length_t lastCol = pattern.size();
+
+#ifdef RUN_LENGTH_COMPRESSION
+    // initialize the matched string with the empty string
+    std::vector<char> matchStr;
+#endif
 
     while (!stack.empty()) {
         const FMPosExt currentNode = stack.back();
@@ -946,11 +1100,20 @@ void IndexInterface::approxMatchesNaive(const std::string& pattern,
             continue; // backtrack
         }
 
+#ifdef RUN_LENGTH_COMPRESSION
+        updateMatchStr(matchStr, currentNode.getCharacter(), row, 0);
+#endif // RUN_LENGTH_COMPRESSION
+
         if (matrix->inFinalColumn(row)) {
             // full pattern was matched
             if (matrix->at(row, lastCol) <= maxED) {
                 occurrences.addFMOcc(currentNode, matrix->at(row, lastCol),
                                      strand, pairStatus);
+#ifdef RUN_LENGTH_COMPRESSION
+                std::vector<char> forwardMatchStr(matchStr.rbegin(),
+                                                  matchStr.rend());
+                occurrences.setMatchedStrForFinalFMOcc(forwardMatchStr);
+#endif // RUN_LENGTH_COMPRESSION
             }
         }
 
@@ -974,9 +1137,7 @@ void IndexInterface::approxMatchesNaive(const std::string& pattern,
     const auto& bundle = ReadBundle::createBundle(pattern, strand);
     matches = getUniqueTextOccurrences(occurrences, maxED, counters, bundle);
 
-#ifndef RUN_LENGTH_COMPRESSION // CIGAR generation
     generateCIGARS(matches, counters, bundle);
-#endif // end non RLC
 }
 
 void IndexInterface::approxMatchesNaiveHamming(const std::string& pattern,
@@ -996,6 +1157,12 @@ void IndexInterface::approxMatchesNaiveHamming(const std::string& pattern,
 
     extendFMPos(getCompleteRange(), stack, counters, 0);
 
+#ifdef RUN_LENGTH_COMPRESSION
+    // initialize the matched string with the empty string
+    std::vector<char> matchStr;
+
+#endif // RUN_LENGTH_COMPRESSION
+
     while (!stack.empty()) {
         const FMPosExt node = stack.back();
         stack.pop_back();
@@ -1006,7 +1173,9 @@ void IndexInterface::approxMatchesNaiveHamming(const std::string& pattern,
                                       maxED, 0, 0, occ, counters);
             continue;
         }
-#endif // end non RLC
+#else
+        updateMatchStr(matchStr, node.getCharacter(), node.getRow(), 0);
+#endif
 
         length_t row = node.getRow();
         vec[row] = vec[row - 1] +
@@ -1020,6 +1189,13 @@ void IndexInterface::approxMatchesNaiveHamming(const std::string& pattern,
         if (row == pattern.size()) {
             // end of pattern and within edit distance (check above)
             occ.addFMOcc(node, vec[row], strand, pairStatus);
+#ifdef RUN_LENGTH_COMPRESSION
+            std::vector<char> forwardMatchStr(matchStr.rbegin(),
+                                              matchStr.rend());
+            occ.setMatchedStrForFinalFMOcc(forwardMatchStr);
+
+#endif // RUN_LENGTH_COMPRESSION
+       // continue with next node
             continue;
         }
 
@@ -1029,9 +1205,7 @@ void IndexInterface::approxMatchesNaiveHamming(const std::string& pattern,
     const auto& bundle = ReadBundle::createBundle(pattern, strand);
     matches = getTextOccHamming(occ, counters);
 
-#ifndef RUN_LENGTH_COMPRESSION // CIGAR generation
     generateCIGARS(matches, counters, bundle);
-#endif // end non RLC
 }
 
 void IndexInterface::recApproxMatchHamming(const Search& s,
@@ -1054,6 +1228,14 @@ void IndexInterface::recApproxMatchHamming(const Search& s,
     // get stack for current part
     auto& stack = stacks[idx];
 
+    FMPos startPos(startMatch.getRanges(), 0);
+
+#ifdef RUN_LENGTH_COMPRESSION
+    // initialize the matched string with the start match
+    std::vector<char> matchStr = startMatch.getMatchedStr();
+    length_t startDepth = matchStr.size();
+#endif // RUN_LENGTH_COMPRESSION
+
     extendFMPos(startMatch.getRanges(), stack, counters);
 
     while (!stack.empty()) {
@@ -1065,7 +1247,10 @@ void IndexInterface::recApproxMatchHamming(const Search& s,
             inTextVerificationHamming(node, s, parts, idx, occ, counters);
             continue;
         }
-#endif // end non RLC
+#else
+        updateMatchStr(matchStr, node.getCharacter(), node.getRow(),
+                       startDepth);
+#endif
 
         // update the vector
         length_t row = node.getRow();
@@ -1083,10 +1268,28 @@ void IndexInterface::recApproxMatchHamming(const Search& s,
                 FMOcc match =
                     FMOcc(node.getRanges(), vec[row],
                           startMatch.getDepth() + pSize, strand, pairStatus);
+
+#ifdef RUN_LENGTH_COMPRESSION
+                match.setMatchedStr(matchStr);
+#endif
+
                 if (s.isEnd(idx)) {
                     // end of search
+#ifdef RUN_LENGTH_COMPRESSION
+                    // reverse the matched string if the direction is backward
+                    if (dir == BACKWARD) {
+                        match.reverseMatchedStr();
+                    }
+#endif // RUN_LENGTH_COMPRESSION
+
                     occ.addFMOcc(match);
                 } else {
+#ifdef RUN_LENGTH_COMPRESSION
+                    // reverse matched string if direction switch in next part
+                    if (s.getDirectionSwitch(idx + 1)) {
+                        match.reverseMatchedStr();
+                    }
+#endif
                     // continue search
                     recApproxMatchHamming(s, match, occ, parts, counters,
                                           idx + 1);
@@ -1140,10 +1343,8 @@ vector<TextOcc> IndexInterface::getTextOccHamming(Occurrences& occ,
 
     std::string CIGAR = "*"; // default CIGAR string
 
-#ifndef RUN_LENGTH_COMPRESSION
     // Calculate the CIGAR string for hamming distance
     CIGAR = (getNoCIGAR()) ? "*" : fmt::format("{}M", size);
-#endif
 
     for (const auto& fmOcc : fmOccs) {
         // Get the range
@@ -1163,8 +1364,8 @@ vector<TextOcc> IndexInterface::getTextOccHamming(Occurrences& occ,
                            fmStrand, fmPairStatus);
         }
     }
-    // remove doubles
-    occ.eraseDoublesText();
+    // remove doubles (side-effect: sorting)
+    occ.eraseDoublesAndSortText();
     // Named RVO: move elision at best, move construction at worst
     return occ.getTextOccurrencesMove();
 }
@@ -1189,16 +1390,12 @@ vector<TextOcc> IndexInterface::getUniqueTextOccurrences(
         counters.inc(Counters::TOTAL_REPORTED_POSITIONS, saRange.width());
 
         // whether to calculate the CIGAR string. If the CIGAR_THRESHOLD is
-        // lower than or equal to the in-text switch point, the CIGAR string is
-        // calculated for all in-index occurrences. Otherwise, the CIGAR string
-        // is calculated only for those in-index occurrences that occur more
-        // than CIGAR_THRESHOLD times in the text.
+        // lower than or equal to the in-text switch point, the CIGAR string
+        // is calculated for all in-index occurrences. Otherwise, the CIGAR
+        // string is calculated only for those in-index occurrences that
+        // occur more than CIGAR_THRESHOLD times in the text.
         const bool calculateCIGAR =
-#ifndef RUN_LENGTH_COMPRESSION
             (!getNoCIGAR()) && (saRange.width() > CIGAR_THRESHOLD);
-#else
-            false;
-#endif
 
         std::string CIGARstring;
         auto depth = f.getDepth(), distance = f.getDistance();
@@ -1217,16 +1414,21 @@ vector<TextOcc> IndexInterface::getUniqueTextOccurrences(
             // convert to a text occurrence
             TextOcc tOcc = TextOcc(Range(startPos, startPos + depth), distance,
                                    f.getStrand(), f.getPairStatus());
-
+#ifdef RUN_LENGTH_COMPRESSION
+            // only set if CIGAR compile option TODO
+            tOcc.setMatchedStr(f.getMatchedStr());
+#endif // RUN_LENGTH_COMPRESSION
+       // if the CIGAR string is to be calculated, do it for the first
             if (calculateCIGAR) {
-                // this will always be false for RUN_LENGTH_COMPRESSION
                 if (first) {
                     // calculate the CIGAR string for the first encountered
                     // in-text occurrence of this FM occurrence. The CIGAR
-                    // string is equal for all text occurrences within this FM
-                    // occurrence
+                    // string is equal for all text occurrences within this
+                    // FM occurrence
                     const auto& seq = bundle.getSequence(tOcc.getStrand());
+
                     generateCIGAR(tOcc, counters, seq);
+
                     CIGARstring = tOcc.getCigar();
                     first = false;
                 } else {
@@ -1240,7 +1442,7 @@ vector<TextOcc> IndexInterface::getUniqueTextOccurrences(
     // erase equal occurrences from the in-text occurrences, note
     // that an in-text occurrence with calculated CIGAR string takes
     // preference over an equal one without CIGAR string
-    occ.eraseDoublesText();
+    occ.eraseDoublesAndSortText();
 
     // find the non-redundant occurrences
     vector<TextOcc> nonRedundantOcc;

@@ -8,8 +8,8 @@
 #include <vector>
 
 #ifdef _WIN32
-#include <sys/stat.h>
 #include <direct.h>
+#include <sys/stat.h>
 #define stat _stat
 #endif
 
@@ -118,19 +118,49 @@ class InTextOption : public ParameterOption {
     }
 };
 
+#endif
+
+#ifndef RUN_LENGTH_COMPRESSION
+
 /**
- * Option for the command line arguments to turn of CIGAR string generation.
+ * Option to suppress CIGAR string generation.
+ * Default: CIGAR is generated.
  */
 class NoCigarOption : public ParameterOption {
   public:
     NoCigarOption() : ParameterOption("nC", "no-CIGAR", false, NONE, OUTPUT) {
     }
+
     void process(const std::string& arg, Parameters& params) const override {
         params.noCIGAR = true;
+        params.cigarBehaviourChanged = true;
     }
 
     std::string getDescription() const override {
-        return "Do not output CIGAR strings for SAM format.";
+        return "Do not output CIGAR strings for SAM format. Default is FALSE.";
+    }
+};
+
+#else // RUN_LENGTH_COMPRESSION
+
+/**
+ * Option to activate CIGAR string generation.
+ * Default: CIGAR is *not* generated.
+ */
+class ActivateCigarOption : public ParameterOption {
+  public:
+    ActivateCigarOption()
+        : ParameterOption("aC", "activate-CIGAR", false, NONE, OUTPUT) {
+    }
+
+    void process(const std::string& arg, Parameters& params) const override {
+        params.noCIGAR = false;
+        params.cigarBehaviourChanged = true;
+    }
+
+    std::string getDescription() const override {
+        return "Output CIGAR strings for SAM format. Off by default(CIGAR is "
+               "suppressed).";
     }
 };
 #endif
@@ -805,6 +835,62 @@ class VerboseOption : public ParameterOption {
     }
 };
 
+class TrimOption : public ParameterOption {
+  public:
+    TrimOption() : ParameterOption("T", "trim", true, STRING, ADVANCED) {
+    }
+
+    void process(const std::string& arg, Parameters& params) const override {
+        // argument should be in format start-end, with start and end as
+        // integers
+        size_t pos = arg.find("-");
+        if (pos == std::string::npos) {
+            logger.logWarning("Trim argument should be in format start-end, "
+                              "with start and end as positive integers." +
+                              ignoreMessage());
+            return;
+        }
+        std::string start = arg.substr(0, pos);
+        std::string end = arg.substr(pos + 1);
+        try {
+            params.trimStart = std::stoi(start);
+            params.trimEnd = std::stoi(end);
+        } catch (...) {
+            logger.logWarning("Trim argument should be in format start-end, "
+                              "with start and end as positive integers" +
+                              ignoreMessage());
+            return;
+        }
+
+        if (params.trimStart < 0 || params.trimEnd < 0) {
+            logger.logWarning("Trim argument should be in format start-end, "
+                              "with start and end as positive integers" +
+                              ignoreMessage());
+            return;
+        }
+
+        if (params.trimEnd <= params.trimStart) {
+            logger.logWarning("Trim end should be larger than trim start" +
+                              ignoreMessage());
+            return;
+        }
+
+        if (params.trimEnd - params.trimStart < 10) {
+            logger.logWarning(
+                "Trimming to less than 10 bases is not recommended and might "
+                "lead to slow performance!");
+        }
+        params.doTrim = true;
+    }
+
+    std::string getDescription() const override {
+        return "Trim the reads before aligning. Argument should be in format "
+               "start-end, with start and end as positive integers. The reads "
+               "will then be trimmed to the bases between start (inclusive) "
+               "and end (exclusive). This is 0-based.";
+    }
+};
+
 const std::vector<std::shared_ptr<Option>> ParametersInterface::options = {
     std::make_shared<PartitioningOption>(),
     std::make_shared<MetricOption>(),
@@ -831,6 +917,7 @@ const std::vector<std::shared_ptr<Option>> ParametersInterface::options = {
     std::make_shared<NoDynamicSelectionWithCustomOption>(),
     std::make_shared<DynamicSelectionOption>(),
     std::make_shared<ReorderOption>(),
+    std::make_shared<TrimOption>(),
     std::make_shared<StrataAfterBestOption>(),
     std::make_shared<AlignHelpOption>(),
     std::make_shared<VerboseOption>(),
@@ -838,7 +925,9 @@ const std::vector<std::shared_ptr<Option>> ParametersInterface::options = {
                                // compression
     std::make_shared<InTextOption>(),
     std::make_shared<AlignSparsenessOption>(),
-    std::make_shared<NoCigarOption>()
+    std::make_shared<NoCigarOption>(),
+#else // RUN_LENGTH_COMPRESSION
+    std::make_shared<ActivateCigarOption>(),
 #endif
 };
 
@@ -861,6 +950,14 @@ void addSlashCharacter(std::string& path) {
     }
 #endif
 }
+
+// Make an alias for NoCigarOption or ActivateCigarOption based on
+// RUN_LENGTH_COMPRESSION
+#ifdef RUN_LENGTH_COMPRESSION
+using CigarOption = ActivateCigarOption;
+#else
+using CigarOption = NoCigarOption;
+#endif
 
 Parameters Parameters::processOptionalArguments(int argc, char** argv) {
 
@@ -978,14 +1075,14 @@ Parameters Parameters::processOptionalArguments(int argc, char** argv) {
                                   XATagOption().ignoreMessage());
                 params.XATag = false;
             }
-#ifndef RUN_LENGTH_COMPRESSION
-            if (params.noCIGAR) {
+
+            if (params.cigarBehaviourChanged) {
                 logger.logWarning(
                     "CIGAR string is not supported for RHS output. " +
-                    NoCigarOption().ignoreMessage());
-                params.noCIGAR = false;
+                    CigarOption().ignoreMessage());
+                params.noCIGAR = !params.noCIGAR; // toggle CIGAR
+                params.cigarBehaviourChanged = false;
             }
-#endif
         }
     } else {
         // paired-end reads

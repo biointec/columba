@@ -605,16 +605,6 @@ const std::string& BMove::getText() const {
                         " should not be called for this index.");
 }
 
-bool BMove::getNoCIGAR() const {
-    throw runtime_error("Function " + string(__func__) +
-                        " should not be called for this index.");
-}
-
-void BMove::resetInTextMatrices() {
-    throw runtime_error("Function " + string(__func__) +
-                        " should not be called for this index.");
-}
-
 void BMove::inTextVerificationOneString(const length_t startPos,
                                         const length_t endPos,
                                         const length_t& maxED,
@@ -662,18 +652,6 @@ void BMove::verifyExactPartialMatchInTextHamming(
 }
 
 length_t BMove::findSA(length_t index) const {
-    throw runtime_error("Function " + string(__func__) +
-                        " should not be called for this index.");
-}
-
-void BMove::generateCIGARS(std::vector<TextOcc>& occs, Counters& counters,
-                           const ReadBundle& bundle) {
-    throw runtime_error("Function " + string(__func__) +
-                        " should not be called for this index.");
-}
-
-void BMove::generateCIGAR(TextOcc& t, Counters& counters,
-                          const Substring& read) const {
     throw runtime_error("Function " + string(__func__) +
                         " should not be called for this index.");
 }

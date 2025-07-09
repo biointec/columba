@@ -30,7 +30,12 @@ else()
 endif()
 
 # Compiler flags for warnings and C++ standard
-set(COMMON_FLAGS "-Wall -pedantic -mpopcnt -std=gnu++11")
+set(COMMON_FLAGS "-Wall -pedantic -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -std=gnu++11")
+include(CheckCXXCompilerFlag)
+check_cxx_compiler_flag("-mpopcnt" HAS_POPCNT)
+if(HAS_POPCNT)
+    set(COMMON_FLAGS "${COMMON_FLAGS} -mpopcnt")
+endif()
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COMMON_FLAGS}")
 
 # Set default 32-bit or 64-bit type based on RUN_LENGTH_COMPRESSION
@@ -92,6 +97,7 @@ endif()
 add_library(AuxiliaryClasses ${SOURCE_FILES})
 
 # ---- Update Git Submodules ----
+
 find_package(Git QUIET)
 message(STATUS "Checking and updating submodules...")
 execute_process(
@@ -384,5 +390,3 @@ endif()
 
 # Install targets to the bin directory
 install(TARGETS columba columba_build DESTINATION bin)
-
-

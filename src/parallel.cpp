@@ -1054,7 +1054,8 @@ std::unique_ptr<FMIndex> createFMIndex(const Parameters& params) {
  */
 std::unique_ptr<BMove> createBMove(const Parameters& params) {
     try {
-        return std::make_unique<BMove>(params.base, true, params.kmerSize);
+        return std::make_unique<BMove>(params.base, true, params.noCIGAR,
+                                       params.kmerSize);
     } catch (const std::exception& e) {
         logger.logError("Problem with index loading: " + std::string(e.what()));
         return nullptr;
@@ -1092,6 +1093,9 @@ std::unique_ptr<Reader> createReader(const Parameters& params) {
     try {
         auto reader = std::make_unique<Reader>(params.firstReadsFile,
                                                params.secondReadsFile);
+        if (params.doTrim) {
+            reader->setTrimming(params.trimStart, params.trimEnd);
+        }
         size_t targetChunk = 64 * 1;
         reader->startReaderThread(targetChunk, params.nThreads);
         return reader;
@@ -1315,7 +1319,7 @@ int main(int argc, char* argv[]) {
     logAlignmentParameters(params, *indexPtr, strategy);
 
     auto startTime = std::chrono::high_resolution_clock::now();
-    logger.logInfo("Start alignment at " + getTimeAsString(startTime));
+    logger.logInfo("Start alignment at " + getTimeAsString(std::chrono::system_clock::now()));
     writerPtr->setStartTime(startTime);
 
     if (!startWorkerThreads(params, *readerPtr, *writerPtr, strategy)) {

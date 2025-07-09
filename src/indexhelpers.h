@@ -29,7 +29,6 @@
 #include <assert.h>           // for assert
 #include <cmath>              // for log10, round
 #include <cstdint>            // for uint16_t, uint32_t, uint64_t, int16_t
-#include <ext/alloc_traits.h> // for __alloc_traits<>::value_type
 #include <fmt/core.h>         // for format
 #include <fmt/format.h>       // for to_string
 #include <memory>             // for allocator, allocator_traits<>::value_type
@@ -40,9 +39,9 @@
 #include <vector>             // for vector
 
 #ifndef RUN_LENGTH_COMPRESSION
-#include "bitparallelmatrix.h"
-#include "substring.h" // for Substring
-#endif                 // RUN_LENGTH_COMPRESSION
+#include "bitparallelmatrix.h" // for BitParallelED in InTextVerificationTask
+#include "substring.h"         // for Substring
+#endif                         // not RUN_LENGTH_COMPRESSION
 
 // ============================================================================
 // HELPERS
@@ -292,11 +291,7 @@ class TextOcc {
     Range range;       // the range in the text
     length_t distance; // the distance to this range (edit or hamming)
 
-#ifdef RUN_LENGTH_COMPRESSION
-    std::string stringCIGAR = "*"; // Set to *
-#else
     std::string stringCIGAR = ""; // Start with the empty string
-#endif
 
     length_t assignedSequenceID = -1; // the ID of the assigned sequence
 
@@ -311,7 +306,12 @@ class TextOcc {
     std::string outputLine = ""; // the output line for this text Occ
 
     length_t indexBegin; // the position in the indexed text where the
-                         // occurrence starts
+    // occurrence starts
+
+#ifdef RUN_LENGTH_COMPRESSION
+    std::vector<char> matchedStr; // Set to empty string by default.
+
+#endif
 
     /**
      * Get the flags for the SAM line of this occurrence (single-ended).
@@ -450,9 +450,6 @@ class TextOcc {
             Strand strand, PairStatus pairStatus)
         : range(range), distance(distance), stringCIGAR(CIGAR), strand(strand),
           pairStatus(pairStatus), indexBegin(range.getBegin()) {
-#ifdef RUN_LENGTH_COMPRESSION
-        assert(CIGAR == "*"); // CIGAR must be * under RLC
-#endif
     }
 
     TextOcc(TextOcc&& other) noexcept
@@ -462,7 +459,12 @@ class TextOcc {
           seqNameChecked(other.seqNameChecked),
           seqNameFound(other.seqNameFound), strand(other.strand),
           pairStatus(other.pairStatus), outputLine(std::move(other.outputLine)),
-          indexBegin(other.indexBegin) {
+          indexBegin(other.indexBegin)
+#ifdef RUN_LENGTH_COMPRESSION
+          ,
+          matchedStr(std::move(other.matchedStr))
+#endif
+    {
     }
 
     // delete copy and copy assignment
@@ -479,6 +481,9 @@ class TextOcc {
         copy.pairStatus = pairStatus;
         copy.outputLine = outputLine;
         copy.indexBegin = indexBegin;
+#ifdef RUN_LENGTH_COMPRESSION
+        copy.matchedStr = matchedStr;
+#endif
         return copy;
     }
 
@@ -495,6 +500,9 @@ class TextOcc {
             pairStatus = other.pairStatus;
             outputLine = std::move(other.outputLine);
             indexBegin = other.indexBegin;
+#ifdef RUN_LENGTH_COMPRESSION
+            matchedStr = std::move(other.matchedStr);
+#endif
         }
         return *this;
     }
@@ -743,10 +751,28 @@ class TextOcc {
         return seqNameChecked && seqNameFound != NOT_FOUND;
     }
 
+#ifdef RUN_LENGTH_COMPRESSION
+    /**
+     * @returns the matched string of this occurrence
+     */
+    const std::vector<char>& getMatchedStr() const {
+        return matchedStr;
+    }
+
+    /**
+     * Sets the matched string of this occurrence
+     * This makes a copy of the vector.
+     * @param matchedStr the matched string to set
+     */
+    void setMatchedStr(const std::vector<char>& matchedStr) {
+        this->matchedStr = matchedStr;
+    }
+#endif
     /**
      * Operator overloading for sorting the occurrences.
      * Occurrences are first sorted on their begin position, then on their
-     * distance , their length and finally on the existence of the CIGAR string
+     * distance , their length and finally on the existence of the CIGAR
+     * string
      * @param r the occurrence to compare to this (=right hand side of the
      * comparison)
      */
@@ -762,11 +788,8 @@ class TextOcc {
                 // shorter read is smaller...
                 return range.width() < r.getRange().width();
             } else {
-#ifdef RUN_LENGTH_COMPRESSION
-                return false;
-#else
+
                 return hasCigar() && !r.hasCigar();
-#endif
             }
         }
     }
@@ -780,8 +803,8 @@ class TextOcc {
     }
 
     /**
-     * Operator overloading.  Two TextOcc are equal if their ranges and distance
-     * are equal.
+     * Operator overloading.  Two TextOcc are equal if their ranges and
+     * distance are equal.
      * @param r the occurrence to compare to this (=right hand side of the
      * comparison)
      */
@@ -796,15 +819,12 @@ class TextOcc {
         return range.width();
     }
 
-#ifndef RUN_LENGTH_COMPRESSION
     /**
      * @returns true if this occurrence has a CIGAR string, false otherwise
      */
     bool hasCigar() const {
         return !stringCIGAR.empty();
     }
-
-#endif
 
     /**
      * @returns true if this is a valid occurrence
@@ -814,8 +834,8 @@ class TextOcc {
     }
 
     /**
-     * @returns true if the occurrence is along the reverse complemented strand,
-     * false otherwise.
+     * @returns true if the occurrence is along the reverse complemented
+     * strand, false otherwise.
      */
     bool isRevCompl() const {
         return strand == REVERSE_C_STRAND;
@@ -830,19 +850,15 @@ class TextOcc {
      * @param cigar the CIGAR string to set
      */
     void setCigar(const std::string& cigar) {
-#ifndef RUN_LENGTH_COMPRESSION
+
         stringCIGAR = cigar;
-#endif
-        // function does nothing in case of run length compression
     }
 
     /**
      * @returns the CIGAR string of this occurrence.
      */
     std::string& getCigar() {
-#ifdef RUN_LENGTH_COMPRESSION
-        assert(stringCIGAR == "*");
-#endif
+
         return stringCIGAR;
     }
 
@@ -909,8 +925,8 @@ class TextOcc {
 };
 
 /**
- * Struct PairedTextOccs that stores two TextOccs and the fragment size, as well
- as if the pair is discordant.
+ * Struct PairedTextOccs that stores two TextOccs and the fragment size, as
+ well as if the pair is discordant.
 
 */
 class PairedTextOccs {
@@ -1042,18 +1058,19 @@ class ToeholdInterface {
   private:
     length_t toehold; // the toehold, which is one occurrence of the current
                       // match in the text
-    bool toeholdRepresentsEnd; // indicates whether the toehold represents the
-                               // end of the match
+    bool toeholdRepresentsEnd; // indicates whether the toehold represents
+                               // the end of the match
     length_t originalDepth;    // the depth of the original match, needed for
-                            // offsetting the toehold at the end since the FMPos
-                            // depth is decremented with shifts, and there is no
-                            // way of knowing how muc
+                               // offsetting the toehold at the end since the
+                               // FMPos depth is decremented with shifts, and
+                               // there is no way of knowing how muc
 
   public:
     /**
      * Constructor. Creates a toehold interface.
      * @param toehold the toehold
-     * @param toeholdRepresentsEnd indicates whether the toehold represents the
+     * @param toeholdRepresentsEnd indicates whether the toehold represents
+     * the
      * @param originalDepth the depth of the original match (??)
      */
     ToeholdInterface(length_t toehold, bool toeholdRepresentsEnd,
@@ -1122,9 +1139,11 @@ class SARangePair
     /**
      * Constructor. Creates a pair of ranges.
      * @param rangeSA the range over the suffix array
-     * @param rangeSARev the range over the suffix array of the reversed text
+     * @param rangeSARev the range over the suffix array of the reversed
+     * text
      * @param toehold the toehold
-     * @param toeholdRepresentsEnd indicates whether the toehold represents the
+     * @param toeholdRepresentsEnd indicates whether the toehold represents
+     * the
      */
     SARangePair(const SARange& rangeSA, const SARange& rangeSARev,
                 length_t toehold, bool toeholdRepresentsEnd,
@@ -1136,7 +1155,8 @@ class SARangePair
     /**
      * Constructor. Creates a pair of ranges.
      * @param rangeSA the range over the suffix array
-     * @param rangeSARev the range over the suffix array of the reversed text
+     * @param rangeSARev the range over the suffix array of the reversed
+     * text
      */
     SARangePair(const SARange& rangeSA, const SARange& rangeSARev)
         : rangeSA(rangeSA), rangeSARev(rangeSARev) {
@@ -1160,8 +1180,8 @@ class SARangePair
 #ifdef RUN_LENGTH_COMPRESSION
     /**
      * Provides mutable access to the SA range.
-     * Note: Modifying the returned reference directly can lead to unintended
-     * side effects. Use with caution.
+     * Note: Modifying the returned reference directly can lead to
+     * unintended side effects. Use with caution.
      *
      * @returns a mutable reference to the SA Range.
      */
@@ -1171,8 +1191,8 @@ class SARangePair
 
     /**
      * Provides mutable access to the reverse SA range.
-     * Note: Modifying the returned reference directly can lead to unintended
-     * side effects. Use with caution.
+     * Note: Modifying the returned reference directly can lead to
+     * unintended side effects. Use with caution.
      *
      * @returns a mutable reference to the reverse SA Range.
      */
@@ -1191,8 +1211,8 @@ class SARangePair
     }
 
     /**
-     * @returns the width of the ranges, calculated by using the range over the
-     * suffix array
+     * @returns the width of the ranges, calculated by using the range over
+     * the suffix array
      */
     length_t width() const {
         return rangeSA.width();
@@ -1212,8 +1232,9 @@ class SARangePair
     }
 
     /**
-     * Function for debug purposes. With bidirectional search we expect this to
-     * be true. With unidirectional backwards search this should be false.
+     * Function for debug purposes. With bidirectional search we expect this
+     * to be true. With unidirectional backwards search this should be
+     * false.
      * @returns true if the ranges are synchronized, false otherwise
      */
     bool isSynchronized() const {
@@ -1283,14 +1304,15 @@ class FMPos {
 #ifdef RUN_LENGTH_COMPRESSION
     /**
      * Provides mutable access to the ranges.
-     * Note: Modifying the returned reference directly can lead to unintended
-     * side effects. Use with caution.
+     * Note: Modifying the returned reference directly can lead to
+     * unintended side effects. Use with caution.
      *
      * @returns a mutable reference to the ranges.
      */
     SARangePair& getRangesMutable() {
         return ranges;
     }
+
 #endif
 
     const length_t& getDepth() const {
@@ -1337,7 +1359,16 @@ class FMOcc {
     Strand strand = FORWARD_STRAND; // indicates whether this occurrence is
                                     // reverse complemented
     PairStatus pairStatus = FIRST_IN_PAIR; // indicates whether this occurrence
-                                           // is the first read in a pair
+    // is the first read in a pair
+
+#ifdef RUN_LENGTH_COMPRESSION
+    // the matched string of this occurrence
+    // if this is an occurrence in the middle of a search the vector is in
+    // direction of last part of the search
+    // if it is at the end of the search it is in the forward direction
+    std::vector<char> matchedStr;
+
+#endif
 
   public:
     FMOcc() : pos(), distance(0), shift(0) {
@@ -1373,8 +1404,8 @@ class FMOcc {
      * @param shift The right shift to the corresponding positions in the
      * text, defaults to zero
      */
-    FMOcc(const FMPos& pos, length_t distance, Strand strand,
-          PairStatus pairStatus, length_t shift = 0)
+    FMOcc(const FMPos& pos, length_t distance, Strand strand = FORWARD_STRAND,
+          PairStatus pairStatus = FIRST_IN_PAIR, length_t shift = 0)
         : pos(pos), distance(distance), shift(shift), strand(strand),
           pairStatus(pairStatus) {
     }
@@ -1439,6 +1470,31 @@ class FMOcc {
     PairStatus getPairStatus() const {
         return pairStatus;
     }
+
+#ifdef RUN_LENGTH_COMPRESSION
+    /**
+     * @returns the matched string of this occurrence
+     */
+    const std::vector<char>& getMatchedStr() const {
+        return matchedStr;
+    }
+    /**
+     * Sets the matched string of this occurrence
+     * @param matchedStr the matched string to set
+     */
+    void setMatchedStr(const std::vector<char>& matchedStr) {
+        this->matchedStr = matchedStr;
+    }
+
+    /**
+     * Reverses the matched string of this occurrence
+     *
+     */
+    void reverseMatchedStr() {
+        std::reverse(matchedStr.begin(), matchedStr.end());
+    }
+#endif
+
     /**
      * Operator overloading to sort FMOcc
      * First the FMOcc are sorted on the begin of the range over the suffix
@@ -1466,8 +1522,8 @@ class FMOcc {
     }
     /**
      * Operator overloading
-     * Two FMOcc are equal if their ranges, distance, depth and shift are all
-     * equal
+     * Two FMOcc are equal if their ranges, distance, depth and shift are
+     * all equal
      * @returns true if this is equal to rhs
      */
     bool operator==(const FMOcc& rhs) const {
@@ -1498,6 +1554,7 @@ class FMPosExt : public FMPos {
      * @param row the row of this node in the alignment matrix = depth of
      * this node
      */
+
     FMPosExt(char character, const SARangePair& ranges, length_t row)
         : FMPos(ranges, row), c(character), reported(false) {
     }
@@ -1515,6 +1572,35 @@ class FMPosExt : public FMPos {
         reported = true;
     }
 
+#ifdef RUN_LENGTH_COMPRESSION
+    /**
+     * Reports the match (with added depth) at this node (including the
+     * matchStr)
+     * @param occ the match will be stored here
+     * @param startDepth the depth to add to the match
+     * @param EDFound the found edit distance for this node
+     * @param noDoubleReports false if this node is allowed to report more
+     * than once, defaults to false
+     * @param shift right shift of the match, defaults to zero
+     */
+    void report(FMOcc& occ, const length_t& startDepth, const length_t& EDFound,
+                const bool& noDoubleReports = false, length_t shift = 0) {
+        if (!reported) {
+            Strand strand =
+                FORWARD_STRAND; // strand does not matter here-> just choose
+            PairStatus pairStatus =
+                FIRST_IN_PAIR; // pairStatus does not matter here
+
+            occ = FMOcc(getRanges(), EDFound, depth + startDepth, strand,
+                        pairStatus, shift);
+
+            // if finalPiece, report only once
+            if (noDoubleReports) {
+                report();
+            }
+        }
+    }
+#else
     /**
      * Reports the match (with added depth) at this node,
      * @param occ the match will be stored here
@@ -1531,6 +1617,7 @@ class FMPosExt : public FMPos {
                 FORWARD_STRAND; // strand does not matter here-> just choose
             PairStatus pairStatus =
                 FIRST_IN_PAIR; // pairStatus does not matter here
+
             occ = FMOcc(getRanges(), EDFound, depth + startDepth, strand,
                         pairStatus, shift);
 
@@ -1540,6 +1627,7 @@ class FMPosExt : public FMPos {
             }
         }
     }
+#endif
 
     /**
      * Gets the ranges of this node
@@ -1571,35 +1659,58 @@ class FMPosExt : public FMPos {
 // ============================================================================
 
 /**
- * Cluster class to represent the end of an alignment phase in the bidirectional
- * index using a search scheme. The cluster contains the final column of the
- * alignment matrix with the corresponding distance scores and nodes in the
- * index. The cluster can report the centers of the cluster and the deepest
- * local minimum for efficient switching to a the next phase in the search
- * scheme.
+ * MatrixMetaInfo class stores the cluster information of the final column of
+ * the alignment matrix. Additionally, in RLC mode, it keeps track of the
+ * matched string in the index.
+ *
+ *
+ * The cluster represents the end of an alignment phase in the
+ * bidirectional index using a search scheme. The cluster contains the final
+ * column of the alignment matrix with the corresponding distance scores and
+ * nodes in the index. The cluster can report the centers of the cluster and
+ * the deepest local minimum for efficient switching to a the next phase in
+ * the search scheme.
+ *
+ * Additionally, in RLC mode for CIGAR calculation, the cluster keeps track of
+ * the matched string in the index.
  */
-class Cluster {
+class MatrixMetaInfo {
   private:
     std::vector<uint16_t> eds;   // the edit distances of this cluster
     std::vector<FMPosExt> nodes; // the nodes of this cluster
 
     length_t lastCell;   // the lastCell of the cluster that was filled in
     uint16_t maxED;      // the maxEd for this cluster
-    length_t startDepth; // the startDepth for this cluster (= depth of match
-                         // before matrix of this cluster)
+    length_t startDepth; // the startDepth for this cluster (= depth of
+                         // match before matrix of this cluster)
 
     length_t shift; // the right shift of the occurrences in the text
+
+#ifdef RUN_LENGTH_COMPRESSION
+    // the matched string in the index associated with the current point in the
+    // search
+    std::vector<char>& matchedStr;
+#endif
+
   public:
-    /**
-     * Constructor
-     * @param size the size of the cluster
-     * @param maxED the maximal allowed edit distance
-     * @param startDepth the depth before this cluster
-     * @param shift the right shift of the occurrences in the text
-     */
-    Cluster(length_t size, length_t maxED, length_t startDepth, length_t shift)
+/**
+ * Constructor
+ * @param size the size of the cluster
+ * @param maxED the maximal allowed edit distance
+ * @param startDepth the depth before this cluster
+ * @param shift the right shift of the occurrences in the text
+ */
+#ifdef RUN_LENGTH_COMPRESSION
+    MatrixMetaInfo(length_t size, length_t maxED, length_t startDepth,
+                   length_t shift, std::vector<char>& matchedStr)
+        : eds(size, maxED + 1), nodes(size), lastCell(-1), maxED(maxED),
+          startDepth(startDepth), shift(shift), matchedStr(matchedStr) {
+#else
+    MatrixMetaInfo(length_t size, length_t maxED, length_t startDepth,
+                   length_t shift)
         : eds(size, maxED + 1), nodes(size), lastCell(-1), maxED(maxED),
           startDepth(startDepth), shift(shift) {
+#endif
     }
 
     /**
@@ -1639,6 +1750,9 @@ class Cluster {
                 (i == lastCell || eds[i] <= eds[i + 1])) {
                 FMOcc m;
                 nodes[i].report(m, startDepth, eds[i], true, shift);
+#ifdef RUN_LENGTH_COMPRESSION
+                m.setMatchedStr(getMatchedStrUpToRow(nodes[i].getRow()));
+#endif
                 centers.emplace_back(m);
             }
         }
@@ -1674,6 +1788,11 @@ class Cluster {
                 m, startDepth - (deepestBestIdx - highestBestIdx), minED, true,
                 ((dir == BACKWARD) ? (deepestBestIdx - highestBestIdx) : 0) +
                     shift);
+#ifdef RUN_LENGTH_COMPRESSION
+            // matched string corresponds to the highest cluster centre
+            m.setMatchedStr(
+                getMatchedStrUpToRow(nodes[highestBestIdx].getRow()));
+#endif
         }
         return m;
     }
@@ -1682,8 +1801,8 @@ class Cluster {
      * This method returns a match that corresponds to the highest cluster
      * centre. Its descendants and the corresponding initialization edit
      * distances are updated. Eds of descendants that are part of a cluster
-     * centre which is lower than the lower bound will be updated in the initEds
-     * vector
+     * centre which is lower than the lower bound will be updated in the
+     * initEds vector
      * @param lowerBound the lower bound for this iteration
      * @param desc the descendants of the highest cluster centre, these
      * will be inserted during the method
@@ -1697,6 +1816,25 @@ class Cluster {
      */
     FMOcc getClusterCentra(uint16_t lowerBound, std::vector<FMPosExt>& desc,
                            std::vector<uint16_t>& initEds);
+
+#ifdef RUN_LENGTH_COMPRESSION
+    std::vector<char>& getMatchedStr() {
+        return matchedStr;
+    }
+    length_t getStartDepth() const {
+        return startDepth;
+    }
+
+  private:
+    std::vector<char> getMatchedStrUpToRow(length_t row) const {
+        assert(matchedStr.size() >= row + startDepth &&
+               "Matched string is not long enough for the requested row");
+
+        return std::vector<char>(matchedStr.begin(),
+                                 matchedStr.begin() + row + startDepth);
+    }
+
+#endif
 };
 
 // ============================================================================
@@ -1712,22 +1850,23 @@ class Counters {
         TOTAL_REPORTED_POSITIONS, // counts the number of matches reported
                                   // (either via in-text verification or
                                   // in-index matching)
-#ifndef RUN_LENGTH_COMPRESSION    // CIGAR and in-text related counters
+
         CIGARS_IN_INDEX, // counts the number of cigar strings calculated
                          // for matches in the index (non-redundant matches
                          // only)
+#ifndef RUN_LENGTH_COMPRESSION // CIGAR and in-text related counters
         IN_TEXT_STARTED, // counts the number of times in-text verification
                          // was started (look-ups in the suffix array)
         ABORTED_IN_TEXT_VERIF,       // counts the number of aborted in-text
                                      // verifications
         CIGARS_IN_TEXT_VERIFICATION, // counts the number of cigar strings
                                      // calculated for matches in the text
-        IMMEDIATE_SWITCH, // counts the number of times in-text verification is
-                          // started immediately after partitioning
+        IMMEDIATE_SWITCH, // counts the number of times in-text verification
+                          // is started immediately after partitioning
 #endif                    // end not RUN_LENGTH_COMPRESSION
         SEARCH_STARTED,   // counts the number of times a search started
-        DROPPED_UNIQUE_MATCHES, // counts the number of unique  matches dropped
-                                // because of one-line reporting
+        DROPPED_UNIQUE_MATCHES, // counts the number of unique  matches
+                                // dropped because of one-line reporting
 
         // Aggregational counters
         NUMBER_OF_READS,           // counts the number of reads
@@ -1737,8 +1876,8 @@ class Counters {
         MAPPED_PAIRS,              // number of mapped pairs
         DISCORDANTLY_MAPPED_PAIRS, // number of discordantly mapped pairs
         MAPPED_HALF_PAIRS, // number of pairs for which only one read mapped
-        UNPAIRED_BUT_MAPPED_PAIRS, // number of pairs for which both reads map
-                                   // but pairing was not possible
+        UNPAIRED_BUT_MAPPED_PAIRS, // number of pairs for which both reads
+                                   // map but pairing was not possible
 
         COUNTER_TYPE_MAX // To denote the number of counters
     };
@@ -1793,8 +1932,8 @@ class Counters {
     }
 
     /**
-     * @brief Reports statistics based on the counters and a given sequencing
-     * mode.
+     * @brief Reports statistics based on the counters and a given
+     * sequencing mode.
      *
      * @param sMode The sequencing mode to use for reporting statistics.
      */
@@ -1808,11 +1947,12 @@ class Counters {
 // in the fm index into one data structure
 /**
  * @class Occurrences
- * @brief Represents a collection of occurrences in the FM index and the text.
+ * @brief Represents a collection of occurrences in the FM index and the
+ * text.
  *
- * The Occurrences class stores the in-index occurrences (FMOcc) and the in-text
- * occurrences (TextOcc). It provides methods to add occurrences, erase
- * duplicates, and retrieve the occurrences.
+ * The Occurrences class stores the in-index occurrences (FMOcc) and the
+ * in-text occurrences (TextOcc). It provides methods to add occurrences,
+ * erase duplicates, and retrieve the occurrences.
  */
 class Occurrences {
   private:
@@ -1821,7 +1961,8 @@ class Occurrences {
 
   public:
     /**
-     * @brief Constructs an Occurrences object with optional reserve capacity.
+     * @brief Constructs an Occurrences object with optional reserve
+     * capacity.
      *
      * @param reserve The initial capacity to reserve for the occurrences
      * vectors.
@@ -1871,9 +2012,9 @@ class Occurrences {
 
     /**
      * @brief Adds an in-text occurrence to the collection.
-     * @warning This explicit copy is expensive. If the given occurrence is no
-     * longer needed outside this instance, consider using addTextOcc with move
-     * semantics instead.
+     * @warning This explicit copy is expensive. If the given occurrence is
+     * no longer needed outside this instance, consider using addTextOcc
+     * with move semantics instead.
      *
      * @param occ The in-text occurrence to add.
      */
@@ -1911,14 +2052,15 @@ class Occurrences {
      *
      * @param range The range of the occurrence in the text.
      * @param score The score of the occurrence.
-     * @param CIGAR The CIGAR string of the occurrence. INVALIDATED after this
-     * call.
+     * @param CIGAR The CIGAR string of the occurrence. INVALIDATED after
+     * this call.
      * @param strand The strand of the occurrence.
      * @param pairStatus The pair status of the read.
      */
     void addTextOcc(const Range& range, const length_t& score,
                     std::string&& CIGAR, Strand strand, PairStatus pairStatus) {
-        inTextOcc.emplace_back(range, score, std::move(CIGAR), strand, pairStatus);
+        inTextOcc.emplace_back(range, score, std::move(CIGAR), strand,
+                               pairStatus);
     }
 
     /**
@@ -1935,10 +2077,10 @@ class Occurrences {
     }
 
     /**
-     * @brief Adds the given occurrences to the inTextOcc vector via explicit
-     * copies.
-     * @warning This is expensive, if the given occurrences are no longer needed
-     * outside this instance, consider using addTextOccs instead.
+     * @brief Adds the given occurrences to the inTextOcc vector via
+     * explicit copies.
+     * @warning This is expensive, if the given occurrences are no longer
+     * needed outside this instance, consider using addTextOccs instead.
      *
      * @param occs The occurrences to add.
      */
@@ -1962,14 +2104,14 @@ class Occurrences {
     /**
      * @brief Sets the inTextOcc vector to the given occurrences.
      * @warning Explicitly copies the elements of the given vector. This is
-     * expensive, if the given vector is no longer needed outside this instance,
-     * consider using setTextOccs instead.
+     * expensive, if the given vector is no longer needed outside this
+     * instance, consider using setTextOccs instead.
      *
      * @param occs The occurrences to set.
      */
     void setTextOccsWithCopy(const std::vector<TextOcc>& occs) {
-        // explicitly use the copy() method to copy the elements of the given
-        // vector
+        // explicitly use the copy() method to copy the elements of the
+        // given vector
         inTextOcc.clear();
         inTextOcc.reserve(occs.size());
         // Use std::transform to copy elements using the copy() method
@@ -2004,7 +2146,7 @@ class Occurrences {
      * @brief Erases all duplicate in-text occurrences and sorts the
      * occurrences.
      */
-    void eraseDoublesText() {
+    void eraseDoublesAndSortText() {
 #ifdef DEVELOPER_MODE
         stable_sort(inTextOcc.begin(), inTextOcc.end());
 #else
@@ -2050,7 +2192,8 @@ class Occurrences {
     }
 
     /**
-     * @brief Returns the maximum size between in-text and in-index occurrences.
+     * @brief Returns the maximum size between in-text and in-index
+     * occurrences.
      *
      * @return The maximum size between in-text and in-index occurrences.
      */
@@ -2066,6 +2209,20 @@ class Occurrences {
     bool empty() const {
         return inTextOcc.empty() && inFMOcc.empty();
     }
+
+#ifdef RUN_LENGTH_COMPRESSION
+    /**
+     * Set the matched string for the final FMOcc
+     * @param matchedStr the matched string to set
+     *
+     */
+    void setMatchedStrForFinalFMOcc(const std::vector<char>& matchedStr) {
+        assert(!inFMOcc.empty() &&
+               "Cannot set matched string for empty FMOcc vector");
+        inFMOcc.back().setMatchedStr(matchedStr);
+    }
+
+#endif
 };
 
 #ifndef RUN_LENGTH_COMPRESSION // no in-text verification task in RLC

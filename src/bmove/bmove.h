@@ -234,7 +234,7 @@ class BMove : public IndexInterface {
     /**
      * Verifies the text occurrences in the text and adds them to the
      * occurrences for the edit distance metric. WARNING: This function
-     * makes use of the inTextMatrix pointer. Before calling this function
+     * makes use of the fullReadMatrix pointer. Before calling this function
      * make sure the pointer points to the correct bit-parallel matrix and
      * that the sequence for this matrix has been set.
      * @param sPos The start positions to be verified.
@@ -259,7 +259,7 @@ class BMove : public IndexInterface {
     /**
      * Verifies an in-text occurrence and adds it to the occurrences for the
      * edit distance metric. WARNING: This function makes use of the
-     * inTextMatrix pointer. Before calling this function make sure the
+     * fullReadMatrix pointer. Before calling this function make sure the
      * pointer points to the correct bit-parallel matrix and that the
      * sequence for this matrix has been set.
      * @param startPos the start position of the in-text occurrence to
@@ -332,12 +332,13 @@ class BMove : public IndexInterface {
      * about the index.
      * @param verbose If true, the steps will be written to cout. [default =
      * true]
+     * @param noCIGAR If true, the CIGAR string will not be calculated.
      * @param wordSize The size of the mers to be stored in the hashtable.
      * Used for quick look-ups of exact seeds. [default = 10]
      */
-    BMove(const std::string& baseFile, bool verbose = true,
+    BMove(const std::string& baseFile, bool verbose = true, bool noCIGAR = true,
           length_t wordSize = 10)
-        : IndexInterface(baseFile, verbose, wordSize) {
+        : IndexInterface(baseFile, verbose, noCIGAR, wordSize) {
 
         // read in files
         fromFiles(baseFile, verbose);
@@ -371,6 +372,10 @@ class BMove : public IndexInterface {
                            getInitialToehold(), false, 0);
     }
 
+    virtual FMPos getEmptyStringFMPos() const override {
+        return FMPos(getCompleteRange(), 0);
+    }
+
     /**
      * Get the original text
      */
@@ -380,11 +385,6 @@ class BMove : public IndexInterface {
      * Get the cross-over point form in-index to in-text verification
      */
     virtual length_t getSwitchPoint() const override;
-
-    /**
-     * @brief Check if the CIGAR string must be reported
-     */
-    virtual bool getNoCIGAR() const override;
 
     /**
      * Find the range of an exact match of single character in this index.
@@ -397,8 +397,6 @@ class BMove : public IndexInterface {
     // ROUTINES FOR APPROXIMATE MATCHING
     // ----------------------------------------------------------------------------
 
-    virtual void resetInTextMatrices() override;
-
     /**
      * Sets the index in the correct mode. All found occurrences will now be
      * be labeled as found along this strand and as an occurrence of this
@@ -410,6 +408,11 @@ class BMove : public IndexInterface {
     virtual void setIndexInMode(Strand reverseComplement,
                                 PairStatus firstRead = FIRST_IN_PAIR) override {
         setIndexInModeSubRoutine(reverseComplement, firstRead);
+
+        // TODO extra compile option to disable this for if CIGAR not required
+        // point to the correct fullReadMatrix based on the two parameters
+        fullReadMatrix = &getFullReadMatrix(strand, pairStatus);
+        fullReadMatrix128 = &getFullReadMatrix128(strand, pairStatus);
     }
 
     /**
@@ -489,28 +492,6 @@ class BMove : public IndexInterface {
     virtual void getTextPositionsFromSARange(
         const SARangePair& ranges,
         std::vector<length_t>& positions) const override;
-
-    /**
-     * Generate the CIGAR strings for the in-index occurrences that do not
-     * have one yet. This function assumes that the in-text verification
-     * matrices have correctly been set.
-     * @param occs The occurrences to generate the CIGAR strings for.
-     * @param counters The performance counters.
-     * @param bundle The read bundle with info about the read
-     */
-    virtual void generateCIGARS(std::vector<TextOcc>& occs, Counters& counters,
-                                const ReadBundle& bundle) override;
-
-    /**
-     * Generate the CIGAR string for the in-index occurrence. This function
-     * assumes that the in-text verification matrix associated with the
-     * strand and pairStatus of the occurrence has been correctly set.
-     * @param t The occurrence to generate the CIGAR string for.
-     * @param counters The performance counters.
-     * @param read The read to which t is a match
-     */
-    virtual void generateCIGAR(TextOcc& t, Counters& counters,
-                               const Substring& read) const override;
 };
 
 #endif // BMOVE_H

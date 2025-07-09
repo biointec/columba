@@ -19,9 +19,7 @@
  ******************************************************************************/
 
 #include "indexhelpers.h"
-#ifndef RUN_LENGTH_COMPRESSION
-#include "bitparallelmatrix.h" // for BitParallelED
-#endif
+
 #include "logger.h"     // for logger
 #include <cstdint>      // for uint16_t, uint64_t
 #include <fmt/core.h>   // for format
@@ -275,8 +273,9 @@ ostream& operator<<(ostream& o, const FMOcc& m) {
 // CLASS CLUSTER
 // ============================================================================
 
-FMOcc Cluster::getClusterCentra(uint16_t lowerBound, vector<FMPosExt>& desc,
-                                vector<uint16_t>& initEds) {
+FMOcc MatrixMetaInfo::getClusterCentra(uint16_t lowerBound,
+                                       vector<FMPosExt>& desc,
+                                       vector<uint16_t>& initEds) {
     desc.reserve(eds.size());
     initEds.reserve(eds.size());
     FMOcc m;
@@ -290,6 +289,9 @@ FMOcc Cluster::getClusterCentra(uint16_t lowerBound, vector<FMPosExt>& desc,
         if (betterThanParent && betterThanChild) {
             // this is a valid centre
             nodes[i].report(m, startDepth, eds[i], false, shift);
+#ifdef RUN_LENGTH_COMPRESSION
+            m.setMatchedStr(getMatchedStrUpToRow(nodes[i].getRow()));
+#endif
 
             // get all the descendants
             initEds.emplace_back(eds[i]);

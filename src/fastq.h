@@ -23,6 +23,7 @@
 
 #include "definitions.h"  // for SequencingMode, length_t
 #include "indexhelpers.h" // for TextOcc, PairedTextOccs, Counters
+#include "logger.h"       // for Logger
 #include "reads.h"        // for Read
 #include "seqfile.h"      // for FileType
 
@@ -68,13 +69,44 @@ class SequenceRecord : public ReadBundle {
     void writeToFileFASTA(SeqFile& input) const;
     void writeToFileFASTQ(SeqFile& input) const;
 
+    bool doTrim = false;
+    length_t trimStart = 0;
+    length_t trimEnd = 0;
+
+    void trimRead() {
+        // Store original values before modifying
+        std::string originalRead = read;
+        std::string originalQual = qual;
+
+        try {
+            assert(read.size() == qual.size());
+            read = read.substr(trimStart, trimEnd - trimStart);
+            qual = qual.substr(trimStart, trimEnd - trimStart);
+     
+        } catch (const std::out_of_range& e) {
+            // Reset to original values if an error occurs
+            read = originalRead;
+            qual = originalQual;
+
+            logger.logWarning("Trimming failed for read " + seqID +
+                              ". The read is too short for the specified "
+                              "trimming positions. The read will not be "
+                              "trimmed.");
+        }
+    }
+
+    void dummyTrim() {
+    }
+
+    std::function<void()> trimFunc;
     std::function<bool(SeqFile&)> readFunc;
     std::function<void(SeqFile&)> writeFunc;
 
   public:
     bool readFromFile(SeqFile& input) {
         if (readFunc(input)) {
-            std::transform(read.begin(), read.end(), read.begin(), ::toupper);
+            trimFunc(); // trim read if necessary
+            makeReverseComplement();
             return true;
         }
         return false;
@@ -84,7 +116,8 @@ class SequenceRecord : public ReadBundle {
         writeFunc(input);
     }
 
-    SequenceRecord(bool fastq) : ReadBundle() {
+    SequenceRecord(bool fastq, bool trim, length_t trimStart, length_t trimEnd)
+        : ReadBundle(), doTrim(trim), trimStart(trimStart), trimEnd(trimEnd) {
         readFunc = fastq ? std::bind(&SequenceRecord::readFromFileFASTQ, this,
                                      std::placeholders::_1)
                          : std::bind(&SequenceRecord::readFromFileFASTA, this,
@@ -93,8 +126,9 @@ class SequenceRecord : public ReadBundle {
                                       std::placeholders::_1)
                           : std::bind(&SequenceRecord::writeToFileFASTA, this,
                                       std::placeholders::_1);
-        // convert read to upper case
-        std::transform(read.begin(), read.end(), read.begin(), ::toupper);
+
+        trimFunc = doTrim ? std::bind(&SequenceRecord::trimRead, this)
+                          : std::bind(&SequenceRecord::dummyTrim, this);
     }
 };
 
@@ -161,9 +195,13 @@ class ReadBlock : public std::vector<SequenceRecord> {
      * fasta file
      * @param fastq2 True if the second file is a fastq file, false if it is a
      * fasta file
+     * @param doTrim True if the reads should be trimmed, false otherwise
+     * @param trimStart Start position for trimming
+     * @param trimEnd End position for trimming
      */
     void readFromFile(SeqFile& file1, SeqFile& file2, size_t targetBlockSize,
-                      bool fastq1, bool fastq2);
+                      bool fastq1, bool fastq2, bool doTrim, length_t trimStart,
+                      length_t trimEnd);
 
     /**
      * Read a block from file (paired-end reads)
@@ -171,8 +209,12 @@ class ReadBlock : public std::vector<SequenceRecord> {
      * @param targetBlockSize Desired number of nucleotides in this block
      * @param fastq True if the file is a fastq file, false if it is a fasta
      * file
+     * @param doTrim True if the reads should be trimmed, false otherwise
+     * @param trimStart Start position for trimming
+     * @param trimEnd End position for trimming
      */
-    void readFromFile(SeqFile& file1, size_t targetBlockSize, bool fastq);
+    void readFromFile(SeqFile& file1, size_t targetBlockSize, bool fastq,
+                      bool doTrim, length_t trimStart, length_t trimEnd);
 
     /**
      * Write a block to file (paired-end reads)
@@ -229,6 +271,10 @@ class Reader {
     bool fastq1 = true; // true if first file is fastq, false otherwise
     bool fastq2 = true; // true if second file is fastq, false otherwise
 
+    bool doTrim = false; // true if reads should be trimmed, false otherwise
+    length_t trimStart;  // start position for trimming
+    length_t trimEnd;    // end position for trimming
+
     bool pairedEnd; // true for paired-end reads, false
                     // for single-end reads (ignore file 2)
 
@@ -277,6 +323,18 @@ class Reader {
      * @param filename2 Name of the input file /2.
      */
     Reader(const std::string& filename1, const std::string& filename2);
+
+    /**
+     * Set trimming positions for the reads.
+     * All reads will be trimmed to the specified positions.
+     * @param trimStart Start position for trimming.
+     * @param trimEnd End position for trimming.
+     */
+    void setTrimming(length_t trimStart, length_t trimEnd) {
+        doTrim = true;
+        this->trimStart = trimStart;
+        this->trimEnd = trimEnd;
+    }
 
     /**
      * Return the filename without the extension /1.
@@ -359,13 +417,13 @@ class OutputRecord {
         : unpairedOcc(
               std::make_shared<std::vector<TextOcc>>(std::move(unpairedOcc))),
           pairOcc(std::make_shared<std::vector<PairedTextOccs>>(
-              std::move(pairedOccurrences))) {};
+              std::move(pairedOccurrences))){};
 
     // Move constructor
     OutputRecord(OutputRecord&& other) noexcept
         : outputOcc(std::move(other.outputOcc)),
           unpairedOcc(std::move(other.unpairedOcc)),
-          pairOcc(std::move(other.pairOcc)) {};
+          pairOcc(std::move(other.pairOcc)){};
 
     // Move assignment operator
     OutputRecord& operator=(OutputRecord&& other) noexcept {

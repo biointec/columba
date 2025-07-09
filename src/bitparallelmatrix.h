@@ -37,18 +37,37 @@ using UInt128 = __uint128_t;
 #include <tuple>     // for array
 #include <vector>    // for vector
 
-#ifndef RUN_LENGTH_COMPRESSION // includes for CIGAR string
-#include <fmt/core.h>          // for format
-#include <fmt/format.h>        // for to_string
-#include <string>              // for string
-#include <utility>             // for pair
-#endif                         // end not RUN_LENGTH_COMPRESSION
+#include <fmt/core.h>   // for format
+#include <fmt/format.h> // for to_string
+#include <string>       // for string
+#include <utility>      // for pair
+
+#include "logger.h" // for Logger, logger
 
 //  ============================================================================
 //  CLASS BIT-PARALLEL-ED MATRIX
 //  ============================================================================
 
 #define N_MATCH_VECTORS (5) // Currently only ACTG and N are supported
+
+template <typename Container> struct RefAccessor {
+    const Container& ref;
+
+    char forwardAccessor(size_t i) const {
+        return ref[i];
+    }
+    size_t size() const {
+        return ref.size();
+    }
+
+    std::string toString() const {
+        std::string result;
+        for (size_t i = 0; i < ref.size(); ++i) {
+            result += forwardAccessor(i);
+        }
+        return result;
+    }
+};
 
 /**
  * Interface for bit-parallel edit distance matrices, regardless of the
@@ -141,7 +160,21 @@ class IBitParallelED {
      */
     virtual bool inFinalColumn(const uint32_t i) const = 0;
 
-#ifndef RUN_LENGTH_COMPRESSION // functions related to CIGAR strings
+#ifdef RUN_LENGTH_COMPRESSION // functions related to CIGAR strings
+    /**
+     * Find the CIGAR string of the alignment of a reference substring to
+     * the query sequence the matrix was initialized with. The sequence
+     * should be set before calling this function
+     * @param ref the reference string that was aligned. Will be accessed using
+     * [] operator
+     * @param score the alignment score between ref and query
+     * @return The CIGAR string of the alignment, must be empty
+     */
+
+    virtual void findCIGAR(const std::vector<char>& ref, const uint32_t score,
+                           std::string& CIGAR) = 0;
+
+#else  // functions related to CIGAR strings
     /**
      * Find the CIGAR string of the alignment of a reference substring to
      * the query sequence the matrix was initialized with. The sequence
@@ -153,7 +186,7 @@ class IBitParallelED {
      */
     virtual void findCIGAR(const Substring& ref, const uint32_t score,
                            std::string& CIGAR) = 0;
-
+#endif // end not RUN_LENGTH_COMPRESSION
     /**
      * Trace the alignment and compute CIGAR string
      * @param ref reference sequence (will be accessed in forward direction),
@@ -166,7 +199,7 @@ class IBitParallelED {
     virtual void traceBack(const Substring& ref, const length_t refEnd,
                            length_t& refBegin, length_t& ED,
                            std::string& CIGAR) const = 0;
-#endif // end not RUN_LENGTH_COMPRESSION
+
     /**
      *
      * Find cluster centers in the final column of the matrix. These centers
@@ -405,19 +438,28 @@ class BitParallelED : public IBitParallelED {
         return i >= getNumberOfRows() - getSizeOfFinalColumn();
     }
 
-#ifndef RUN_LENGTH_COMPRESSION // functions related to CIGAR strings
-
     /**
      * Letters in CIGAR string M (match/mismatch), I (insertion), D (deletion)
      * or NOTHING (not initialized)
      */
-    enum CIGARstate{M, I, D, NOTHING};
+    enum CIGARstate { M, I, D, NOTHING };
 
-    /**
-     * @see IBitParallelED::findCIGAR
-     */
-    void findCIGAR(const Substring& ref, const uint32_t score,
+/**
+ * @see IBitParallelED::findCIGAR
+ */
+#ifdef RUN_LENGTH_COMPRESSION
+
+    void findCIGAR(const std::vector<char>& ref, uint32_t score,
                    std::string& CIGAR) override final {
+        findCIGARImpl(RefAccessor<std::vector<char>>{ref}, score, CIGAR);
+    }
+
+    void findCIGARImpl(const RefAccessor<std::vector<char>>& ref,
+                       uint32_t score, std::string& CIGAR) {
+#else
+    virtual void findCIGAR(const Substring& ref, uint32_t score,
+                           std::string& CIGAR) override final {
+#endif // RUN_LENGTH_COMPRESSION
         assert(CIGAR.empty());
         // initialize the matrix with the alignment score
         initializeMatrix(score);
@@ -435,7 +477,7 @@ class BitParallelED : public IBitParallelED {
         // if the score is higher than what was found here that means there was
         // an error close to the border of a parts that caused one cluster to be
         // above the lower bound of that part, while another cluster was below
-        // that lower bound. Another search will have found the occurrence on
+        // that lower bound. Another search will have found the occurrence at
         // this place with the correct score
         assert(operator()(i, j) <= score);
 
@@ -542,7 +584,6 @@ class BitParallelED : public IBitParallelED {
             CIGAR += fmt::format("{}{}", it->second, it->first);
         }
     }
-#endif // end not RUN_LENGTH_COMPRESSION
 
     /**
      * @see IBitParallelED::findClusterCenters
