@@ -83,7 +83,6 @@ struct Parameters : public ParametersInterface {
 
     // Non-bmove parameters
 #ifndef RUN_LENGTH_COMPRESSION
-    // Input/Output
 
     // Numerical
     length_t sparsenessFactor =

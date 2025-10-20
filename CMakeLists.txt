@@ -432,4 +432,3 @@ endif()
 
 # Install targets to the bin directory
 install(TARGETS columba columba_build DESTINATION bin)
-
