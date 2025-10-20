@@ -28,7 +28,7 @@ When selecting the appropriate Columba flavor for your needs, consider the follo
 - **Operating System Compatibility**: If you are using a Windows system, Columba Vanilla is your only option.
 - **Memory and Reference Text Considerations**:
   - _Columba Vanilla_ loads the entire reference text (or combined reference texts) and the full FM Index into memory. It offers superior speed, making it ideal if memory usage is not a concern or if your reference text is not too large. Loading the reference text allows for the calculation of CIGAR strings.
-  - _Columba RLC_, however, employs a run-length compressed index and does not require loading the reference text into memory. This makes it a better choice for handling large pan-genomes or when memory is limited but it comes with slower execution time and no calculation of CIGAR strings.
+  - _Columba RLC_, however, employs a run-length compressed index and does not require loading the reference text into memory. This makes it a better choice for handling large pan-genomes or when memory is limited but it comes with slower execution times.
 - **Accuracy**: Columba RLC does not perform in-text verification, which may lead to an overestimation of the edit distance at the edge of certain reference sequences in rare cases.
 
 ## Installation
@@ -355,10 +355,11 @@ Unmapped reads are given a SAM record with the unmapped flag set.
 If you are not interested in unmapped records, you can choose to suppress them with the `-nU` (`--no-unmapped`) flag.
 This option can slightly improve Columba's runtime.
 
-In Columba Vanilla, each SAM record has a CIGAR string.
+In Columba, each SAM record has a CIGAR string.
 The calculation of this string takes some time.
-If you are not interested in the CIGAR string you can suppress its calculation using the `-nC` (`--no-cigar`)flag.
-Columba RLC does not output CIGAR strings and instead places an asterisk (\*) in the corresponding column.
+If you are not interested in the CIGAR string you can suppress its calculation using the `-nC` (`--no-cigar`)flag in Columba Vanilla. 
+In Columba RLC the CIGAR string is not calculated by default, you can activate its calculation by using the `-aC`(`--activate-CIGAR`) flag.  
+
 
 ##### Read Hit Summary (RHS) format
 
@@ -393,7 +394,9 @@ Note that this slows down the runtime.
 
 ```console
   -nU, --no-unmapped            Do not output unmapped reads.
-  -nC, --no-CIGAR               Do not output CIGAR strings for SAM format. (only in Vanilla)
+  -nC, --no-CIGAR               (Only in Vanilla) Do not output CIGAR strings for SAM format. By
+                                default CIGAR strings are caclulated
+   -aC, --activate-CIGAR        (Only in RLC) Output CIGAR strings for SAM format. Off by default.
   -XA, --XA-tag                 Output secondary alignments in XA tag for SAM format.
   -o, --output-file       STR   Path to the output file. Should be .sam or .rhs.
                                 Default is ColumbaOutput.sam.
@@ -442,4 +445,5 @@ Columba makes use of the [{fmt} library](https://github.com/fmtlib/fmt) and fall
 Columba also makes use of the [libsais](https://github.com/IlyaGrebnov/libsais), [divsufsort](https://github.com/y-256/libdivsufsort) and [parallel-hashmap](https://github.com/greg7mdp/parallel-hashmap) libraries. Libsais and parallel-hashmap fall under [Apache-2.0 license](./licenses_dependencies/Apache-2.0_LICENSE), which is included in the repository.
 Divsufsort falls under MIT license and [its license](./licenses_dependencies/divsufsort_MIT_LICENSE) is also included in the repository.
 Columba RLC with prefix-free parsing makes use of [Big-BWT](https://gitlab.com/manzai/Big-BWT).
+
 
