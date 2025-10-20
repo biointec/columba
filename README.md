@@ -5,6 +5,7 @@
 Fast Approximate Pattern Matching using Search Schemes
 
 Columba is a powerful open-source read-mapper developed to significantly enhance the performance of lossless approximate pattern matching. This README provides an overview of the [key features and benefits](#key-features-and-benefits) of Columba, along with instructions for [installation](#installation), [usage](#usage), [result reproduction](#result-reproduction) and [citation](#citation).
+Additionally, [quick start instructions with an example](./example/README.md) are provided.
 Finally, [contact information](#contact) and [license details](#license-and-dependencies) are provided.
 
 ## Key features and benefits
@@ -47,12 +48,6 @@ It is recommended that you also install CMake and Ninja via MSYS2.
 
 To make use of gzipped files, ensure that you have the [`zlib` library](https://zlib.net/) installed.
 
-#### Extra Prerequisite RLC
-
-Columba RLC needs the [SDSL-lite library](https://github.com/simongog/sdsl-lite).
-You can follow their install instructions to install it on your system.
-
-**WARNING** SDSL-lite installs a version of google test that might be incompatible (see [issue](https://github.com/simongog/sdsl-lite/issues/458)). You can safely delete the google test files added by SDSL in the lib/ (libgtest.a and libgtest_main.a) and include/ (gtest/) directories.
 
 ### Installing Columba Vanilla
 
@@ -101,11 +96,10 @@ bash build_script.sh RLC
 ```
 
 For users that work directly with CMake, the only difference is that you must add `-DRUN_LENGTH_COMPRESSION=ON` to the CMake command.
-However, currently Columba RLC is not compatible with Windows as it requires SDSL.
+However, currently Columba RLC is not compatible with Windows as it requires SDSL-lite.
 
-If you have installed SDSL to a non-standard location, you can point CMake to the installation location by adding `-DSDSL_INCLUDE_DIR=<path-to-sdsl>/` and `-DSDSL_LIBRARY=<path-to-sdsl-lib>` to the CMake command.
+If you have installed SDSL-lite to a non-standard location, you can point CMake to the installation location by adding `-DSDSL_INCLUDE_DIR=<path-to-sdsl>/` and `-DSDSL_LIBRARY=<path-to-sdsl-lib>` to the CMake command.
 
-Currently, the build script does allow you to set the SDSL CMake installation directory.
 
 ### Installing Both Flavors
 
@@ -448,3 +442,4 @@ Columba makes use of the [{fmt} library](https://github.com/fmtlib/fmt) and fall
 Columba also makes use of the [libsais](https://github.com/IlyaGrebnov/libsais), [divsufsort](https://github.com/y-256/libdivsufsort) and [parallel-hashmap](https://github.com/greg7mdp/parallel-hashmap) libraries. Libsais and parallel-hashmap fall under [Apache-2.0 license](./licenses_dependencies/Apache-2.0_LICENSE), which is included in the repository.
 Divsufsort falls under MIT license and [its license](./licenses_dependencies/divsufsort_MIT_LICENSE) is also included in the repository.
 Columba RLC with prefix-free parsing makes use of [Big-BWT](https://gitlab.com/manzai/Big-BWT).
+
