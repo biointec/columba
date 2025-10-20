@@ -31,7 +31,7 @@
 
 #define VERSION_NUMBER_COLUMBA 2     // The version number of Columba
 #define SUB_VERSION_NUMBER_COLUMBA 0 // The sub version number of Columba
-#define SUB_SUB_VERSION_NUMBER_COLUMBA 2 // The sub version number of Columba
+#define SUB_SUB_VERSION_NUMBER_COLUMBA 3 // The sub version number of Columba
 #define COLUMBA_BUILD_INDEX_TAG 21   // the tag for building the index
 #ifndef RUN_LENGTH_COMPRESSION
 #define COLUMBA_FLAVOUR "VANILLA" // the flavour of Columba (vanilla)

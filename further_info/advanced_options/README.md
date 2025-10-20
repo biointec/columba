@@ -65,6 +65,7 @@ If you want to provide optimal static partitioning you can create a file named `
 This file should contain one line with percentages (values between 0 and 1) separated by spaces.
 The ith percentage corresponds to the starting position (relative to the size of the pattern) of the (i + 1)th part (again this is zero-based).
 The starting position of the first part is always zero and should **not** be provided.
+Note that these values are only used if dynamic selection is turned off using `-nD/--no-dynamic-selection`. 
 
 ### Dynamic Partitioning
 
@@ -72,6 +73,8 @@ Similarly, to provide values for dynamic partitioning you can create a file call
 This file should contain two lines.
 The first line consists of percentages (again between 0 and 1) that correspond to the seeding positions, relative to the size of the pattern, of all parts, except the first and last part.
 The second line should contain space-separated integers corresponding to the weights of each part.
+Note that these values are only used if dynamic selection is turned off using `-nD/--no-dynamic-selection`. 
+Note that the program will check if your seeding positions in combination with the k-mer size are valid for patterns of length 50 and greater. The seeds are centered on the provided seeding positions and must not overlap with neighbouring seeds. 
 
 ### Example
 

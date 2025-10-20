@@ -161,7 +161,7 @@ class MoveRange : public Range {
     /**
      * Default constructor, initializes an empty range
      */
-    MoveRange() : Range(), beginRun(0), endRun(0), runIndicesValid(false) {
+    MoveRange() : Range(), beginRun(0), endRun(0), runIndicesValid(true) {
     }
 
     /**
