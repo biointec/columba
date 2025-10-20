@@ -12,6 +12,8 @@ endif(SDSL_INCLUDE_DIR AND SDSL_LIBRARY)
 find_path(SDSL_INCLUDE_DIR
     NAMES sdsl
     HINTS
+        ${CMAKE_BINARY_DIR}/external/sdsl_install
+        ${CMAKE_BINARY_DIR}/external/sdsl_install/include
         ENV CPATH
         ENV HOME
         ENV C_INCLUDE_PATH
@@ -19,18 +21,22 @@ find_path(SDSL_INCLUDE_DIR
         /usr/include
         /usr/local/include
     PATH_SUFFIXES include
-    NO_DEFAULT_PATH)
+)
 
 find_library(SDSL_LIBRARY
-    NAMES libsdsl.a 
+    NAMES sdsl libsdsl.a
     HINTS
+        ${CMAKE_BINARY_DIR}/external/sdsl_install
+        ${CMAKE_BINARY_DIR}/external/sdsl_install/lib
         ENV LD_LIBRARY_PATH
         ENV HOME
         ENV LIBRARY_PATH
         /usr/lib
         /usr/local/lib
     PATH_SUFFIXES lib
-    NO_DEFAULT_PATH)
+)
+
+
 
 # handle the QUIETLY and REQUIRED arguments and set SDSL_FOUND to TRUE if
 # all listed variables are TRUE

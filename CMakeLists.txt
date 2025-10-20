@@ -110,6 +110,7 @@ if(NOT GIT_SUBMOD_RESULT EQUAL "0")
     message(FATAL_ERROR "Failed to initialize git submodules. Please run 'git submodule update --init --recursive' manually.")
 endif()
 
+
 # Update the Big-BWT submodule
 
 if(RUN_LENGTH_COMPRESSION)
@@ -179,7 +180,7 @@ if(RUN_LENGTH_COMPRESSION)
                 message(FATAL_ERROR "git submodule update --init failed with ${GIT_SUBMOD_RESULT}, please checkout submodules")
             endif()
         else()
-            message(WARNING "Prefix-free parsing is not usable due to missing dependencies (Python 3.8 or psutil).")
+            message(WARNING "Prefix-free parsing is not usable due to missing dependencies (Python 3.8 and psutil), if you do not want to use prefix-free parsing you can ignore this message.")
         endif()
     endif()
 endif()
@@ -188,7 +189,6 @@ endif()
 
 add_executable(columba src/parallel.cpp src/fastq.cpp src/seqfile.cpp src/util.cpp)
 target_link_libraries(columba AuxiliaryClasses)
-
 
 if(RUN_LENGTH_COMPRESSION)
     add_executable(columba_build src/logger.cpp src/buildindex.cpp src/bmove/moverepr.cpp src/parameters/buildparameters.cpp src/seqfile.cpp src/util.cpp)
@@ -319,6 +319,7 @@ FetchContent_MakeAvailable(fmtlib)
 
 target_link_libraries(AuxiliaryClasses fmt::fmt)
 target_link_libraries(columba  fmt::fmt)
+
 if(RUN_LENGTH_COMPRESSION)
 target_link_libraries(columba_build fmt::fmt)
 endif()
@@ -367,26 +368,68 @@ target_link_libraries(columba Threads::Threads)
 if(RUN_LENGTH_COMPRESSION)
   # Set the path to your custom FindSDSL.cmake module
     set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
-    find_package(SDSL)
+    find_package(SDSL QUIET)
 
     if(SDSL_FOUND)
         message(STATUS "Found SDSL library at ${SDSL_LIBRARY}")
         message(STATUS "SDSL include directory: ${SDSL_INCLUDE_DIR}")
 
-        # Include directories
         include_directories(${SDSL_INCLUDE_DIR})
-        # Link the SDSL library
         target_link_libraries(columba ${SDSL_LIBRARY})
         target_link_libraries(columba_build ${SDSL_LIBRARY})
-    else()
-        message(FATAL_ERROR "\nFATAL ERROR: SDSL library not found. Please install it and try again. If "
-            "you installed SDSL in a non-standard location, you can point cmake to the "
-            "installation location as follows: \ncmake -DSDSL_INCLUDE_DIR=<path-to-sdsl>/include .")
-    endif()
+      
 
+    else()
+        message(STATUS "SDSL-lite not found, fetching and installing it locally...")
+
+        include(ExternalProject)
+
+        set(SDSL_INSTALL_DIR "${CMAKE_BINARY_DIR}/external/sdsl_install")
+
+        ExternalProject_Add(sdsl-lite_ext
+            GIT_REPOSITORY https://github.com/simongog/sdsl-lite.git
+            GIT_TAG master
+            CONFIGURE_COMMAND ""
+            BUILD_COMMAND ""
+            INSTALL_COMMAND bash <SOURCE_DIR>/install.sh ${SDSL_INSTALL_DIR}
+            UPDATE_DISCONNECTED 1
+            LOG_DOWNLOAD ON
+            LOG_UPDATE ON
+            LOG_CONFIGURE ON
+            LOG_BUILD ON
+            LOG_INSTALL ON
+        )
+
+        # Post-install cleanup of gtest that sdsl-lite installs
+        add_custom_command(
+            TARGET sdsl-lite_ext
+            POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "Removing unnecessary gtest from SDSL-lite install..."
+            COMMAND ${CMAKE_COMMAND} -E remove_directory "${SDSL_INSTALL_DIR}/include/gtest"
+            COMMAND ${CMAKE_COMMAND} -E remove "${SDSL_INSTALL_DIR}/lib/libgtest.a"
+            COMMAND ${CMAKE_COMMAND} -E remove "${SDSL_INSTALL_DIR}/lib/libgtest_main.a"
+        )
+
+
+
+        # Point to where it’ll be installed
+        set(SDSL_INCLUDE_DIR "${SDSL_INSTALL_DIR}/include")
+        set(SDSL_LIBRARY "${SDSL_INSTALL_DIR}/lib/libsdsl.a")
+
+        include_directories(${SDSL_INCLUDE_DIR})
+        target_link_libraries(columba ${SDSL_LIBRARY})
+        target_link_libraries(columba_build ${SDSL_LIBRARY})
+
+        # Ensure your targets wait until SDSL is built
+        add_dependencies(AuxiliaryClasses sdsl-lite_ext)
+        add_dependencies(columba sdsl-lite_ext)
+        add_dependencies(columba_build sdsl-lite_ext)
+
+    endif()
 endif()
 
 # ---- Installation ----
 
 # Install targets to the bin directory
 install(TARGETS columba columba_build DESTINATION bin)
+
