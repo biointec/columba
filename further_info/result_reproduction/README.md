@@ -17,10 +17,12 @@ First download and compile the source code of [Columba 1.0](https://github.com/b
 
 We used the [human genome](https://www.ncbi.nlm.nih.gov/assembly/GCF_000001405.26/) as our reference genome. From this text we removed all N's and substituted them with a random nucleotide.
 Then we removed the first line, concatenated the chromosomes, removed newline characters and added a dollar to the end of file by executing the following command
+
 ```bash
 tail -n +2 hs.grch38.fasta.non | sed "s/>.*//g" | tr -d '\n' | cat - dollar > hs.grch38.txt
 ```
-Where `hs.grch38.fasta.non` is the result of the substitution of the N's and `hs.grch38.txt` is the reference text used to build the index. `dollar` is a text file containing a single character `$`. This file should be present in your directory before executing the above command. 
+
+Where `hs.grch38.fasta.non` is the result of the substitution of the N's and `hs.grch38.txt` is the reference text used to build the index. `dollar` is a text file containing a single character `$`. This file should be present in your directory before executing the above command.
 
 For this reference text the index needs to be build according to the build instructions described above.
 
@@ -59,6 +61,7 @@ This python script takes an input name and requested output name. It samples 100
 The sampled dataset we used for the results in the paper is available [here](https://github.com/biointec/columba/releases/download/v1.0/sampled_illumina_reads.fastq).
 
 ### Partitioning strategies
+
 To reproduce the results from table 1, run Columba with `kuch1` as option for search scheme and the different partitioning strategies `[part]` and maximal edit distances `[k]`, from the `build` folder.
 
 ```bash
@@ -80,7 +83,7 @@ Navigate to file `src/bwtrepr.h`, on line 40 replace:
 BitvecIntl<S - 1> bv; // bitvector representation of the BWT
 ```
 
-by 
+by
 
 ```c++
 BitvecNonIntl<S - 1> bv; // bitvector representation of the BWT
@@ -101,13 +104,14 @@ After rebuilding the index you can get the results with non-interleaved bitvecto
 ```
 
 ---
+
 **NOTE**
 
-Make sure to undo these changes before using the tool, as interleaved bitvectors are superior to non-interleaved bitvectors. To undo the changes, simply revert `src/bwtrepr.h` back to the original, compile again with the `make` command and rebuild the index. 
+Make sure to undo these changes before using the tool, as interleaved bitvectors are superior to non-interleaved bitvectors. To undo the changes, simply revert `src/bwtrepr.h` back to the original, compile again with the `make` command and rebuild the index.
 
 ---
 
-### Effect of reducing the redundancy 
+### Effect of reducing the redundancy
 
 Table 3 compares the effect of a naive and optimized implementation of the edit distance metric. The results for the optimized implementation are the same as achieved [in the section partitioning strategies](#partitioning-strategies) with dynamic partitioning. The results for a naive implementation can be reproduced for different values of k by running:
 
@@ -126,6 +130,7 @@ Tables 4, 6, 7, 8, 9 and 10 contain results for other search schemes. To reprodu
 where `[search scheme]` is one of: `kuch2`, `kianfar`, `manbest`, `pigeon`, `01*0`, and `[p]` is one of: `uniform`, `static`, `dynamic`
 
 ---
+
 **NOTE**
 
 `manbest` only accepts k = 4
@@ -134,7 +139,7 @@ where `[search scheme]` is one of: `kuch2`, `kianfar`, `manbest`, `pigeon`, `01*
 
 ### Results on PacBio Data
 
-Table 5 contains results on 100 000 PacBio seeds. These seeds are sampled from  [this PacBio experiment](https://www.ebi.ac.uk/ena/browser/view/SRR1304331).
+Table 5 contains results on 100 000 PacBio seeds. These seeds are sampled from [this PacBio experiment](https://www.ebi.ac.uk/ena/browser/view/SRR1304331).
 
 The sampled dataset we used for the results in the paper is available [here](https://github.com/biointec/columba/releases/download/v1.0/sampled_pacbio_seeds.fastq)
 To reproduce the results run:
@@ -154,7 +159,7 @@ Download and compile the source code of [Columba 1.1](https://github.com/biointe
 
 #### Reference 2
 
-We reuse the reference as in the experiments of Columba 1.0 ([see above](#reference)).  Note that we need to rebuild the index for this newer version of Columba.
+We reuse the reference as in the experiments of Columba 1.0 ([see above](#reference)). Note that we need to rebuild the index for this newer version of Columba.
 
 #### Reads 2
 
@@ -215,22 +220,22 @@ To reproduce the comparison of the different search schemes run:
 ./columba -ss custom [path] -e [k] -p uniform [base] [readsfile]
 ```
 
-Where `[path]` is the path to the folder containing the search scheme and `k` is the number of allowed errors. 
+Where `[path]` is the path to the folder containing the search scheme and `k` is the number of allowed errors.
 
 Below, a table is provided that links the search scheme name, as used in the paper, to the name of the directory in [the search schemes folder](../search_schemes).
 
-| Name in paper             | Name of directory                 | 
-| --------                  | --------                          | 
-| Kucherov k + 1            | kuch_k+1/                         | 
-| Kucherov k + 2            | kuch_k+2/                         | 
-| Pigeonhole principle      | pigeon/                           | 
-| 01*0                      | 01star0/                          | 
-| Man<sub>best</sub>        | manbest/                          | 
-| Kianfar                   | kianfar/                          | 
-| Greedy Kucherov k + 1     | kuch_k+1_adapted/                 | 
-| Greedy Pigeonhole princ.  | pigeon_adapted/                   | 
-| Greedy 01*0               | 01star0_adapted/                  | 
-| minU (ILP)                | multiple_opt/individual_schemes/  | 
+| Name in paper            | Name of directory                |
+| ------------------------ | -------------------------------- |
+| Kucherov k + 1           | kuch_k+1/                        |
+| Kucherov k + 2           | kuch_k+2/                        |
+| Pigeonhole principle     | pigeon/                          |
+| 01\*0                    | 01star0/                         |
+| Man<sub>best</sub>       | manbest/                         |
+| Kianfar                  | kianfar/                         |
+| Greedy Kucherov k + 1    | kuch_k+1_adapted/                |
+| Greedy Pigeonhole princ. | pigeon_adapted/                  |
+| Greedy 01\*0             | 01star0_adapted/                 |
+| minU (ILP)               | multiple_opt/individual_schemes/ |
 
 Note that for the minU schemes, the average value was reported over the co-optimal schemes in the respective directory.
 
@@ -245,7 +250,6 @@ To get the results with dynamic selection run:
 ### Comparison with the State-of-the-art
 
 To get the timings for Columba 1.2 used in the comparison with the state of the art run:
-
 
 ```bash
 ./columba -ss multiple ../search_schemes/multiple_opt -e [k] -i 5 [base] [readsfile]

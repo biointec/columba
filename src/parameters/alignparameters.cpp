@@ -4,7 +4,9 @@
 #include "../searchstrategy.h"
 #include <algorithm>
 #include <thread> // for thread
+#include <unordered_map>
 
+#include <cmath>
 #include <vector>
 
 #ifdef _WIN32
@@ -14,8 +16,7 @@
 #endif
 
 const std::vector<std::string> schemes = {
-    "kuch1",  "kuch2", "kianfar",  "pigeon", "01*0",
-    "custom", "naive", "multiple", "minU",   "columba"};
+    "kuch1", "kuch2", "kianfar", "pigeon", "01*0", "naive", "minU", "columba"};
 
 /**
  * Option for the command line arguments considering the partitioning strategy.
@@ -959,6 +960,159 @@ using CigarOption = ActivateCigarOption;
 using CigarOption = NoCigarOption;
 #endif
 
+// Calculate seed start and end positions for given pSizeMin, W, and seedPercent
+std::vector<int> computeSeeds(int pSizeMin, int W,
+                              const std::vector<double>& seedPercent,
+                              int numParts) {
+    std::vector<int> seeds;
+
+    // First seed starts at 0
+    seeds.push_back(0);
+
+    if (numParts == 1) {
+        // If there's only one part, the seed is at the start
+        return seeds;
+    }
+
+    // Middle seeds centered on seedPercent * pSizeMin, so start = center - W/2
+    for (int i = 1; i < numParts - 1; i++) {
+        seeds.emplace_back((seedPercent[i - 1] * pSizeMin) - (W / 2));
+    }
+
+    // Last seed starts at pSizeMin - W
+    seeds.push_back(pSizeMin - W);
+
+    return seeds;
+}
+
+// Check if seeds overlap
+bool seedsOverlap(const std::vector<int>& seeds, int W) {
+    for (size_t i = 0; i < seeds.size() - 1; ++i) {
+        if (seeds[i] + W > seeds[i + 1]) {
+            return true; // overlap detected
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief Computes the maximal kmer word size for a given number of parts, seed
+ * percentages, and a minimum pattern length for a given strategy.
+ *
+ * @param numParts The number of parts to consider.
+ * @param seedPercent The seed percentages for each part.
+ * @param pSizeMinStrategy The minimal pattern size for which kmer seeds are
+ * used.
+ * @return int The maximal kmer word size that can be used without overlap.
+ */
+length_t computeMaxWordSize(int numParts,
+                            const std::vector<double>& seedPercent,
+                            int pSizeMinStrategy) {
+    length_t maxW = 1;
+
+    for (int W = 1; W <= 15; ++W) {
+        int pSizeMin =
+            std::max(pSizeMinStrategy,
+                     static_cast<int>(std::ceil((3.0 * numParts * W) / 2.0)));
+
+        auto seeds = computeSeeds(pSizeMin, W, seedPercent, numParts);
+
+        if (!seedsOverlap(seeds, W)) {
+            maxW = W;
+        } else {
+            // overlap detected, no need to check larger W
+            break;
+        }
+    }
+
+    return maxW;
+}
+
+/**
+ * Computes the maximal kmer word size for a given maximum edit distance and
+ * search strategy with dynamic partitioning. This is based on the seeding.
+ *
+ * @param maxD The maximum edit distance to consider.
+ * @param searchStrategy The search strategy to use for calculating the number
+ * of parts and seeding positions.
+ * @return int The maximal word size that can be used without overlap.
+ */
+length_t computeMaxWordSize(int maxD, const SearchStrategy& searchStrategy) {
+    // iterate over edit distance 1 to maxD
+    length_t maxW = 15;
+    for (int e = 1; e <= maxD; ++e) {
+        // get the number of parts for this edit distance
+        int numParts = searchStrategy.calculateNumParts(e);
+
+        // get the seed percentages for this edit distance
+        std::vector<double> seedPercent =
+            searchStrategy.getSeedingPositions(numParts, e);
+
+        // compute the maximal word size for this edit distance
+        length_t W = computeMaxWordSize(numParts, seedPercent,
+                                        searchStrategy.getUseKmerCutOff());
+        if (W < maxW) {
+            maxW = W;
+        }
+    }
+    return maxW;
+}
+
+/**
+ * Function that is used when dynamic partitioning is on for custom search
+ * schemes. It checks the maximal size of k-mers in the k-mer table implied by
+ * the seeds the scheme sets.
+ *
+ * @param params The parameters object containing the k-mer size and the search
+ * scheme.
+ * @return int
+ */
+void checkMaximalKMerValue(const Parameters& params,
+                           const SearchStrategy& searchStrategy) {
+
+    int maxED = (params.mMode == ALL)
+                    ? params.maxDistance
+                    : std::min(BEST_CUTOFF_COLUMBA,
+                               (int)searchStrategy.getMaxSupportedDistance());
+
+    length_t maxW = computeMaxWordSize(maxED, searchStrategy);
+
+    if (maxW < params.kmerSize) {
+
+        throw std::runtime_error(
+            "The maximal k-mer size for the custom search scheme " +
+            params.searchScheme +
+            " with custom seeding positions in dynamic partitioning mode, with "
+            "no "
+            "dynamic selection, " +
+            " is " + std::to_string(maxW) + ", but the k-mer size is set to " +
+            std::to_string(params.kmerSize) +
+            ". Please set the k-mer size to a value smaller than or equal to " +
+            std::to_string(maxW) + " or space out the seeds more.");
+    }
+}
+
+/**
+ * @brief Enforce a hardcoded maximum k-mer size for a specific search scheme.
+ *
+ * @param params The parameters object containing the search scheme and k-mer
+ * size.
+ * @param name  The name of the search scheme to check against.
+ * @param maxKmerSize The maximum k-mer size allowed for the search scheme.
+ */
+void enforceMaxKmerSize(Parameters& params, const std::string& name,
+                        length_t maxKmerSize) {
+    if (params.searchScheme == name && params.kmerSize > maxKmerSize) {
+        logger.logWarning(
+            "Hardcoded " + name +
+            " search scheme with dynamic partitioning is only available for "
+            "k-mer sizes up to " +
+            std::to_string(maxKmerSize) + ". Setting k-mer size to " +
+            std::to_string(maxKmerSize) + ".");
+        params.kmerSize = maxKmerSize;
+    }
+}
+
 Parameters Parameters::processOptionalArguments(int argc, char** argv) {
 
     Parameters params;
@@ -973,8 +1127,9 @@ Parameters Parameters::processOptionalArguments(int argc, char** argv) {
         if (params.searchScheme != "minU" && params.searchScheme != "columba") {
 
             throw std::runtime_error(
-                "Hard-coded search schemes are only available for "
-                "up to 4 errors. Use a custom search scheme instead.");
+                "Hard-coded search scheme is only available for "
+                "up to 4 errors. Use a custom search scheme, the minU search "
+                "scheme or the default Columba search scheme instead.");
         } else if (params.searchScheme == "minU" && params.maxDistance > 7) {
             throw std::runtime_error(
                 "MinU search scheme is only available for up to 7 errors.");
@@ -1114,6 +1269,15 @@ Parameters Parameters::processOptionalArguments(int argc, char** argv) {
         }
     }
 
+    // checks on maximal k-mer size if dynamic partitioning is used
+    if (params.pStrategy == DYNAMIC && params.custom.empty() &&
+        params.dynamicSelectionPath.empty()) {
+        enforceMaxKmerSize(params, "kuch2", KucherovKPlus2::MAX_K_MER_SIZE);
+        enforceMaxKmerSize(params, "01*0",
+                           O1StarSearchStrategy::MAX_K_MER_SIZE);
+        enforceMaxKmerSize(params, "kianfar", OptimalKianfar::MAX_K_MER_SIZE);
+    }
+
     return params;
 }
 
@@ -1165,6 +1329,11 @@ Parameters::createStrategy(IndexInterface& index) const {
         } else {
             strategy.reset(new CustomSearchStrategy(index, custom, pStrategy,
                                                     metric, mMode, sMode));
+            if (pStrategy == DYNAMIC) {
+                // check if the maximal k-mer value is not exceeded with
+                // possible custom seeding positions
+                checkMaximalKMerValue(*this, *strategy);
+            }
         }
 
         sanityCheckSearchScheme(strategy, mMode, maxDistance, custom, true);

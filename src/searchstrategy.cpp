@@ -35,9 +35,9 @@ using namespace std;
 
 SearchStrategy::SearchStrategy(IndexInterface& argument, PartitionStrategy p,
                                DistanceMetric distanceMetric, MappingMode m,
-                               SequencingMode sequencingMode)
+                               SequencingMode sequencingMode, length_t useKmerCutOff)
     : index(argument), distanceMetric(distanceMetric), partitionStrategy(p),
-      mode(m) {
+      mode(m), useKmerCutOff(useKmerCutOff) {
 
     // set the partition strategy
     switch (p) {
@@ -230,6 +230,11 @@ void SearchStrategy::setParts(const string& pattern, vector<Substring>& parts,
         parts.emplace_back(pattern, begins[i] * pSize, begins[i + 1] * pSize);
     }
     parts.emplace_back(pattern, begins.back() * pSize, pattern.size());
+
+    // assert part i ends where part i+1 begins
+    for (unsigned int i = 0; i < parts.size() - 1; i++) {
+        assert(parts[i].end() == parts[i + 1].begin());
+    }
 }
 
 // Dynamic Partitioning
@@ -377,7 +382,7 @@ int SearchStrategy::seed(const string& pattern, vector<Substring>& parts,
                          const int& numParts, const int& maxScore,
                          vector<SARangePair>& exactMatchRanges) const {
     auto pSize = pattern.size();
-    bool useKmerTable = (numParts * index.getWordSize() < (pSize * 2) / 3);
+    bool useKmerTable = (numParts * index.getWordSize() < (pSize * 2) / 3) && useKmerTableInSeeding(pSize);
     int wSize = (useKmerTable) ? index.getWordSize() : 1;
 
     const auto& seedPercent = getSeedingPositions(numParts, maxScore);
@@ -398,13 +403,18 @@ int SearchStrategy::seed(const string& pattern, vector<Substring>& parts,
     // push the seeds for the final parts
     parts.emplace_back(pattern, pSize - wSize, pSize);
 
+    // assert part i ends before part i+1 starts
+    for (int i = 0; i < numParts - 1; i++) {
+        assert(parts[i].end() <= parts[i + 1].begin());
+    }
+
     exactMatchRanges.resize(numParts);
     for (int i = 0; i < numParts; i++) {
-
         exactMatchRanges[i] = (useKmerTable)
                                   ? index.lookUpInKmerTable(parts[i])
                                   : index.getRangeOfSingleChar(parts[i][0]);
     }
+
     return numParts * wSize;
 }
 

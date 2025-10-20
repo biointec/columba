@@ -93,9 +93,12 @@ bool MoveLFReprBP::initialize(length_t nrOfRuns, length_t textSize) {
     logger.logDeveloper("\tTotal bits per row: " + std::to_string(totalBits));
     logger.logDeveloper("\tTotal bytes per row: " + std::to_string(totalBytes));
 
-    // Manually allocate buffer memory
+    // Manually allocate buffer memory. 16 additional bytes are allocated
+    // as padding to ensure valid memory access when using _uint128_t
+    // for the buffer.
     buffer = new uint8_t[static_cast<uint64_t>(totalBytes) *
-                         static_cast<uint64_t>(nrOfRuns + 1)]();
+                             static_cast<uint64_t>(nrOfRuns + 1) +
+                         16]();
 
     return true;
 }
@@ -123,9 +126,12 @@ bool MoveLFReprBP::load(const std::string& baseFile) {
     totalBytes =
         (totalBits + 7) / 8; // Convert total bits to bytes (rounded up)
 
-    // Manually allocate buffer memory
+    // Manually allocate buffer memory. 16 additional bytes are allocated
+    // as padding to ensure valid memory access when using _uint128_t
+    // for the buffer.
     buffer = new uint8_t[static_cast<uint64_t>(totalBytes) *
-                         static_cast<uint64_t>(nrOfRuns + 1)]();
+                             static_cast<uint64_t>(nrOfRuns + 1) +
+                         16]();
 
     // Load the packed rows into the buffer
     ifs.read(reinterpret_cast<char*>(buffer),
@@ -387,8 +393,12 @@ bool MovePhiReprBP::initialize(length_t nrOfRuns, length_t textSize) {
     logger.logDeveloper("\tTotal bits per row: " + std::to_string(totalBits));
     logger.logDeveloper("\tTotal bytes per row: " + std::to_string(totalBytes));
 
-    // Manually allocate buffer memory
-    buffer = new uint8_t[static_cast<uint64_t>(totalBytes) * static_cast<uint64_t>(nrOfRuns + 1)]();
+    // Manually allocate buffer memory. 16 additional bytes are allocated
+    // as padding to ensure valid memory access when using _uint128_t
+    // for the buffer.
+    buffer = new uint8_t[static_cast<uint64_t>(totalBytes) *
+                             static_cast<uint64_t>(nrOfRuns + 1) +
+                         16]();
 
     return true;
 }
@@ -412,8 +422,12 @@ bool MovePhiReprBP::load(const std::string& fileName) {
     totalBytes =
         (totalBits + 7) / 8; // Convert total bits to bytes (rounded up)
 
-    // Manually allocate buffer memory
-    buffer = new uint8_t[static_cast<uint64_t>(totalBytes) * static_cast<uint64_t>(nrOfRuns + 1)]();
+    // Manually allocate buffer memory. 16 additional bytes are allocated
+    // as padding to ensure valid memory access when using _uint128_t
+    // for the buffer.
+    buffer = new uint8_t[static_cast<uint64_t>(totalBytes) *
+                             static_cast<uint64_t>(nrOfRuns + 1) +
+                         16]();
 
     // Load the packed rows into the buffer
     ifs.read(reinterpret_cast<char*>(buffer), static_cast<uint64_t>(totalBytes) * static_cast<uint64_t>(nrOfRuns + 1));

@@ -181,7 +181,7 @@ class SearchStrategy {
 #ifndef RUN_LENGTH_COMPRESSION
     InTextVerificationPtr
         inTextVerificationPtr; // pointer to the correct in-text verification
-    // (edit or hamming based)
+                               // (edit or hamming based)
 #endif
 
     // pointer for generating Single End output lines (SAM or RHS)
@@ -203,6 +203,9 @@ class SearchStrategy {
     // ----------------------------------------------------------------------------
 
   protected:
+    length_t useKmerCutOff; // the cut-off for using k-mers in seeding, patterns
+                            // with a length smaller than this will not use
+                            // k-mers, but 1-mers
     /**
      * Constructor
      * @param index the index to be used
@@ -210,10 +213,13 @@ class SearchStrategy {
      * @param distanceMetric the distance metric to be used
      * @param mode whether all or best matches should be found
      * @param sm whether single or paired end mode should be used
+     * @param useKmerCutOff the cut-off for using k-mers in seeding, patterns
+     * with a length smaller than this will not use k-mers, but 1-mers, default
+     * is 20
      */
     SearchStrategy(IndexInterface& index, PartitionStrategy p,
                    DistanceMetric distanceMetric, MappingMode mode,
-                   SequencingMode sm);
+                   SequencingMode sm, length_t useKmerCutOff = 20);
 
     /**
      * Copy constructor
@@ -222,13 +228,6 @@ class SearchStrategy {
 
     // PROTECTED FUNCTIONS: PARTITIONING
     // ----------------------------------------------------------------------------
-
-    /**
-     * Calculates the number of parts for a certain max edit distance. This
-     * calculation is strategy dependent
-     * @param maxED the maximal allowed edit distance for the aligning
-     */
-    virtual uint32_t calculateNumParts(unsigned int maxED) const = 0;
 
     // PROTECTED FUNCTIONS: PARTITIONING (STATIC)
     // ----------------------------------------------------------------------------
@@ -258,27 +257,6 @@ class SearchStrategy {
     // ----------------------------------------------------------------------------
 
     /**
-     * Default function that retrieves the seeding positions for dynamic
-     * partitioning. If derived class does not implement this function then
-     * uniform seeds are given.
-     * @param numParts how many parts are needed
-     * @param maxScore the maximal allowed score, (irrelevant for this default
-     * function)
-     * @returns vector with doubles indicating the position (relative to the
-     * length of the pattern) where a seed should be placed.
-     */
-    virtual const std::vector<double>
-    getSeedingPositions(const int& numParts, const int& maxScore) const {
-
-        double u = 1.0 / (numParts - 1);
-        std::vector<double> s;
-        for (int i = 1; i < numParts - 1; i++) {
-            s.push_back(i * u);
-        }
-        return s;
-    }
-
-    /**
      * Helper function for dynamic partitioning. Seeds the parts.
      * @param pattern the pattern to partition
      * @param parts empty vector tro which the seeds are added
@@ -292,6 +270,7 @@ class SearchStrategy {
     int seed(const std::string& pattern, std::vector<Substring>& parts,
              const int& numParts, const int& maxScore,
              std::vector<SARangePair>& exactMatchRanges) const;
+
     /**
      * Function that retrieves the weights for dynamic partitioning.
      * If derived class does not implement this function then uniform weights
@@ -312,11 +291,6 @@ class SearchStrategy {
 
     // PROTECTED FUNCTIONS: ACCESS
     // ----------------------------------------------------------------------------
-
-    /**
-     * Find the maximum supported distance score of this strategy.
-     */
-    virtual length_t getMaxSupportedDistance() const = 0;
 
     /**
      * Static function that calculates the number of elements in an OccVector.
@@ -1826,8 +1800,69 @@ class SearchStrategy {
         length_t cutOff = (seqSize * (100 - minIdentity)) / 100;
         const length_t distanceCutoff = BEST_CUTOFF_COLUMBA;
 
-        return std::min(std::min(distanceCutoff, getMaxSupportedDistance()),
-                        cutOff);
+        return std::min(
+            std::min(distanceCutoff, getMaxSupportedDistanceForBestMapping()),
+            cutOff);
+    }
+
+    /**
+     * Calculates the number of parts for a certain max edit distance. This
+     * calculation is strategy dependent
+     * @param maxED the maximal allowed edit distance for the aligning
+     */
+    virtual uint32_t calculateNumParts(unsigned int maxED) const = 0;
+
+    /**
+     * Default function that retrieves the seeding positions for dynamic
+     * partitioning. If derived class does not implement this function then
+     * uniform seeds are given.
+     * @param numParts how many parts are needed
+     * @param maxScore the maximal allowed score, (irrelevant for this default
+     * function)
+     * @returns vector with doubles indicating the position (relative to the
+     * length of the pattern) where a seed should be placed.
+     */
+    virtual const std::vector<double>
+    getSeedingPositions(const int& numParts, const int& maxScore) const {
+
+        double u = 1.0 / (numParts - 1);
+        std::vector<double> s;
+        for (int i = 1; i < numParts - 1; i++) {
+            s.push_back(i * u);
+        }
+        return s;
+    }
+
+    /**
+     * @brief Whether to use the kmer table in seeding. If the size of the
+     * pattern is larger than the cutoff, the kmer table will be used for
+     * seeding.
+     *
+     * @param pSize
+     * @return true if the kmer table should be used for seeding
+     * @return false if the kmer table should not be used for seeding
+     */
+    bool useKmerTableInSeeding(const length_t pSize) const {
+        // default implementation, can be overridden in derived classes
+        return pSize >= useKmerCutOff;
+    }
+
+    /**
+     * @brief Get the Use Kmer Cut Off size (the minimum size of the pattern
+     * that allows use of the kmer table in seeding).
+     *
+     */
+    length_t getUseKmerCutOff() const {
+        return useKmerCutOff;
+    }
+
+    /**
+     * Find the maximum supported distance score of this strategy.
+     */
+    virtual length_t getMaxSupportedDistance() const = 0;
+
+    virtual length_t getMaxSupportedDistanceForBestMapping() const {
+        return getMaxSupportedDistance();
     }
 
     /**
@@ -1948,7 +1983,7 @@ class SearchStrategy {
     bool supportsBestMapping(int& max) const {
         max = 0;
         for (length_t i = 0; i < MAX_K; i++) {
-            if (supportsDistanceScore(i)) {
+            if (!supportsDistanceScore(i)) {
                 return (max == 0) ? false : true;
             }
             max = i;
@@ -2270,7 +2305,7 @@ class CustomSearchStrategy : public SearchStrategy {
                          PartitionStrategy p, DistanceMetric metric,
                          MappingMode mode, SequencingMode sMode,
                          bool verbose = false)
-        : SearchStrategy(index, p, metric, mode, sMode) {
+        : SearchStrategy(index, p, metric, mode, sMode, 50) {
 
         // resize and fill the vectors
         schemePerED.resize(MAX_K);
@@ -2296,22 +2331,27 @@ class CustomSearchStrategy : public SearchStrategy {
         assert(supportsMaxScore[maxED - 1]);
         return schemePerED[maxED - 1];
     }
+
     length_t getMaxSupportedDistance() const override {
-        // find biggest value for which supportsMaxScore[0: value -1] is
-        // true
-        length_t max = 0;
-        for (length_t i = 0; i < MAX_K; i++) {
-            if (supportsMaxScore[i]) {
-                max++;
-            } else {
-                break;
-            }
-        }
-        return max;
+        // find biggest value for which supportsMaxScore[v-1] is true
+        auto rit =
+            std::find_if(supportsMaxScore.rbegin(), supportsMaxScore.rend(),
+                         [](bool b) { return b; });
+
+        return (rit == supportsMaxScore.rend())
+                   ? 0
+                   : std::distance(rit, supportsMaxScore.rend());
+    }
+
+    length_t getMaxSupportedDistanceForBestMapping() const override {
+        // find largest prefix where all supportsMaxScore[i] are true
+        auto it = std::find_if(supportsMaxScore.begin(), supportsMaxScore.end(),
+                               [](bool b) { return !b; });
+        return std::distance(supportsMaxScore.begin(), it);
     }
 
     bool supportsDistanceScore(const int& maxScore) const override {
-        return supportsMaxScore[maxScore - 1];
+        return maxScore == 0 || supportsMaxScore[maxScore - 1];
     }
 };
 
@@ -2692,11 +2732,26 @@ class MultipleSchemesStrategy : public SearchStrategy {
     }
 
     length_t getMaxSupportedDistance() const override {
-        return schemesPerED.size();
+        // find biggest value v for which schemesPerED[v-1] is not empty
+        auto rit = std::find_if(
+            schemesPerED.rbegin(), schemesPerED.rend(),
+            [](const MultipleSchemes& scheme) { return !scheme.isEmpty(); });
+        return (rit == schemesPerED.rend())
+                   ? 0
+                   : std::distance(rit, schemesPerED.rend());
     }
+
+    length_t getMaxSupportedDistanceForBestMapping() const override {
+        // find largest prefix where all schemesPerED[i] are not empty
+        auto it = std::find_if(
+            schemesPerED.begin(), schemesPerED.end(),
+            [](const MultipleSchemes& scheme) { return scheme.isEmpty(); });
+        return std::distance(schemesPerED.begin(), it);
+    }
+
     bool supportsDistanceScore(const int& maxScore) const override {
-        return (length_t)maxScore - 1 < schemesPerED.size() &&
-               !schemesPerED[maxScore - 1].isEmpty();
+        return maxScore == 0 || ((length_t)maxScore - 1 < schemesPerED.size() &&
+                                 !schemesPerED[maxScore - 1].isEmpty());
     }
 
     /**
@@ -2849,7 +2904,7 @@ class KucherovKPlus1 : public SearchStrategy {
     KucherovKPlus1(IndexInterface& index, PartitionStrategy p,
                    DistanceMetric metric, MappingMode mode,
                    SequencingMode sMode)
-        : SearchStrategy(index, p, metric, mode, sMode) {
+        : SearchStrategy(index, p, metric, mode, sMode, 100) {
         name = "KUCHEROV K + 1";
     };
     bool supportsDistanceScore(const int& maxScore) const override {
@@ -2952,13 +3007,17 @@ class KucherovKPlus2 : public SearchStrategy {
     KucherovKPlus2(IndexInterface& index, PartitionStrategy p,
                    DistanceMetric metric, MappingMode mode,
                    SequencingMode sMode)
-        : SearchStrategy(index, p, metric, mode, sMode) {
+        : SearchStrategy(index, p, metric, mode, sMode, 100) {
         name = "KUCHEROV K + 2";
     };
 
     bool supportsDistanceScore(const int& maxScore) const override {
         return maxScore >= 1 && maxScore <= 4;
     }
+
+    // the maximum allowed k-mer size for seeding is 4 this is implied by the
+    // seedingPositions vector and a pattern length of 100
+    const static int MAX_K_MER_SIZE = 4;
 };
 
 /**
@@ -3030,13 +3089,16 @@ class OptimalKianfar : public SearchStrategy {
   public:
     OptimalKianfar(IndexInterface& index, PartitionStrategy p,
                    DistanceMetric metric, MappingMode m, SequencingMode sMode)
-        : SearchStrategy(index, p, metric, m, sMode) {
+        : SearchStrategy(index, p, metric, m, sMode, 100) {
         name = "OPTIMAL KIANFAR";
     };
 
     bool supportsDistanceScore(const int& maxScore) const override {
         return maxScore >= 1 && maxScore <= 4;
     }
+    // the maximum allowed k-mer size for seeding is 11 this is implied by the
+    // seedingPositions vector and a pattern length of 100
+    const static int MAX_K_MER_SIZE = 11;
 };
 
 // ============================================================================
@@ -3129,13 +3191,17 @@ class O1StarSearchStrategy : public SearchStrategy {
     O1StarSearchStrategy(IndexInterface& index, PartitionStrategy p,
                          DistanceMetric metric, MappingMode mode,
                          SequencingMode sMode)
-        : SearchStrategy(index, p, metric, mode, sMode) {
+        : SearchStrategy(index, p, metric, mode, sMode, 100) {
         name = "01*0";
     };
 
     bool supportsDistanceScore(const int& maxScore) const override {
         return maxScore >= 1 && maxScore <= 4;
     }
+
+    // the maximum allowed k-mer size for seeding is 4 this is implied by the
+    // seedingPositions vector and a pattern length of 100
+    const static int MAX_K_MER_SIZE = 4;
 };
 
 // ============================================================================
