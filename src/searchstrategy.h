@@ -1893,7 +1893,11 @@ class SearchStrategy {
     void setSamOutput(bool samOutput) {
         this->samOutput = samOutput;
         if (samOutput) {
-            generateOutputSEPtr = &SearchStrategy::generateSE_SAM;
+            if (xaTag) {
+                generateOutputSEPtr = &SearchStrategy::generateSE_SAM_XATag;
+            } else {
+                generateOutputSEPtr = &SearchStrategy::generateSE_SAM;
+            }  
             createUnmappedSEPtr = &TextOcc::createUnmappedSAMOccurrenceSE;
         } else {
             generateOutputSEPtr = &SearchStrategy::generateSE_RHS;
