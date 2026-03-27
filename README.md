@@ -8,6 +8,28 @@ Columba is a powerful open-source read-mapper developed to significantly enhance
 Additionally, [quick start instructions with an example](./example/README.md) are provided.
 Finally, [contact information](#contact) and [license details](#license-and-dependencies) are provided.
 
+## TL;DR
+
+Columba aligns DNA reads to a reference genome, finding **all** matches up to a given distance. Two flavors: **Vanilla** (faster) and **RLC** (lower memory). Unix and Windows supported (Vanilla only on Windows).
+
+```bash
+# 1. Clone and build
+git clone "https://github.com/biointec/columba.git"
+bash build_script.sh Vanilla
+cd build_Vanilla
+
+# 2. Build the index from your reference genome
+./columba_build -r <reference_base_name> -f <reference.fasta>
+
+# 3. Align your reads
+./columba -r <reference_base_name> -f <reads.fastq>
+# Output: ColumbaOutput.sam
+```
+
+That's it for a basic run. Working with a **large pan-genome**? Consider **Columba RLC** instead; see [Choosing the Right Columba Flavor](#choosing-the-right-columba-flavor).
+
+For a guided walkthrough with a test dataset, see the [example instructions](./example/README.md). For all options, keep reading.
+
 ## Key features and benefits
 
 - Columba is a **lossless** read-mapper, meaning that **all** occurrences up to the provided distance or **all-best** occurrences with the minimum identity are found. Both the edit distance and the hamming distance are supported.
